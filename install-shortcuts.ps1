@@ -42,4 +42,22 @@ try {
     Write-Warning "开始菜单快捷方式创建失败（不影响桌面快捷方式）"
 }
 
+# 开始菜单「卸载」入口：指向安装目录里的 uninstall.bat（卸载前会自动备份用户数据到桌面）
+$uninstallBat = Join-Path $InstallDir 'uninstall.bat'
+if (Test-Path $uninstallBat) {
+    try {
+        $ulink = (New-Object -ComObject WScript.Shell).CreateShortcut((Join-Path $startMenu '卸载 Academy辩论教练.lnk'))
+        $ulink.TargetPath = $uninstallBat
+        $ulink.WorkingDirectory = $InstallDir
+        $ulink.IconLocation = (Join-Path $InstallDir 'appicon.ico')
+        $ulink.Description = '卸载 Academy 辩论教练（会先自动备份你的数据到桌面）'
+        $ulink.Save()
+        Write-Output "  OK created: 卸载 Academy辩论教练.lnk"
+    } catch {
+        Write-Warning "卸载快捷方式创建失败（可手动运行安装目录里的 uninstall.bat）"
+    }
+} else {
+    Write-Warning "未找到 uninstall.bat，跳过卸载快捷方式"
+}
+
 Write-Output "== 完成 =="

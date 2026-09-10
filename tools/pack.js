@@ -24,8 +24,8 @@ const DSH_BIN = DSH_BIN_CANDIDATES.find((p) => fs.existsSync(p)) || DSH_BIN_CAND
 
 const ITEMS = [
   'start.bat', '一键打包.bat', '一键安装.bat', 'setup.bat', 'uninstall.bat',
-  'launch.vbs', '启动辩论助手(桌面版).vbs', '启动辩论助手(Electron桌面版).vbs', 'install-shortcuts.ps1', 'appicon.ico', '安装说明.txt',
-  'README.md', '使用说明.txt',
+  'launch.vbs', '启动辩论助手(Electron桌面版).vbs', 'install-shortcuts.ps1', 'appicon.ico', '安装说明.txt',
+  'README.md', '使用说明.txt', '小白安装指南.md',
   'AGENTS.md', 'SOUL.md', 'TOOLS.md', 'LICENSE.md',
   'app', '.dsh',
   // runtime 逐项列出：dsh-old-010 / dsh-new 是历史试验内核，绝不能进分发包
@@ -62,7 +62,7 @@ try {
 function normalizeCrlf(text) {
   return text.replace(/^\uFEFF/, '').replace(/\r\n/g, '\n').replace(/\r/g, '\n').replace(/\n/g, '\r\n');
 }
-for (const name of ['setup.bat', '一键安装.bat', 'uninstall.bat', 'launch.vbs', '启动辩论助手(桌面版).vbs', '启动辩论助手(Electron桌面版).vbs', '安装说明.txt', '使用说明.txt']) {
+for (const name of ['setup.bat', '一键安装.bat', 'uninstall.bat', 'launch.vbs', '启动辩论助手(Electron桌面版).vbs', '安装说明.txt', '使用说明.txt']) {
   const p = path.join(ROOT, name);
   if (fs.existsSync(p)) fs.writeFileSync(p, normalizeCrlf(fs.readFileSync(p, 'utf8')));
 }
