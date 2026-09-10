@@ -1,0 +1,31 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>Academy MD 阅读</title>
+<link rel="stylesheet" href="reader.css" />
+</head>
+<body>
+  <header class="topbar">
+    <button id="pin" class="tbtn" title="窗口常置顶（钉住）">📌</button>
+    <span class="grow file" id="fileName" title="">未命名</span>
+    <span class="toolgroup">
+      <button id="dec" class="tbtn" title="减小字号">A−</button>
+      <span id="sizeVal">16</span>
+      <button id="inc" class="tbtn" title="增大字号">A＋</button>
+      <span class="csep"></span>
+      <button id="theme" class="tbtn" title="浅色 / 深色 / 跟随系统">🌓</button>
+      <button id="copy" class="tbtn" title="复制全文">📋 复制</button>
+      <button id="word" class="tbtn" title="导出为 Word 文档">⬇ 存 Word</button>
+    </span>
+    <button id="academy" class="academy" title="把这个文件交给 Academy 完整版继续处理">🎓 在 Academy 接着做</button>
+  </header>
+  <div class="meta" id="meta"></div>
+  <article class="md" id="content"><p class="hint">正在打开…</p></article>
+
+  <div id="toast" class="toast">…</div>
+  <script src="md-view.js"></script>
+  <script src="reader.js"></script>
+</body>
+</html>

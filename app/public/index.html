@@ -1,0 +1,646 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>逻敏 · Academy 辩论教练</title>
+  <link rel="stylesheet" href="/style.css?v=3.24.0" />
+  <link rel="icon" href="data:image/svg+xml,<svg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 100 100%22><text y=%22.9em%22 font-size=%2290%22>🎓</text></svg>" />
+</head>
+<body>
+  <div class="qfud-watermarks" aria-hidden="true">
+    <span class="wm wm1">QFUD · 驻青四校联合辩论培训计划</span>
+    <span class="wm wm2">逻敏 · Academy 辩论教练</span>
+    <span class="wm wm3">备赛 / 复盘 / 评判 全链路</span>
+    <span class="wm wm4">QFUD · 驻青四校联合辩论培训计划</span>
+  </div>
+  <div id="app">
+    <header class="topbar">
+      <div class="brand">
+        <span class="brand-logo">🎓</span>
+        <div class="brand-text">
+          <h1>逻敏 · Academy 辩论教练</h1>
+          <p>华语辩论全链路 AI 教练 · 备赛 / 复盘 / 评判</p>
+        </div>
+      </div>
+      <div class="topbar-actions">
+        <span id="statusPill" class="status-pill status-warn">检测引擎中…</span>
+        <button id="btnTools" class="btn ghost" title="打开工具箱">🧰 工具箱</button>
+        <button id="btnNew" class="btn ghost" title="新建对话">＋ 新对话</button>
+        <button id="btnSettings" class="btn primary" title="设置">⚙️ 设置</button>
+      </div>
+    </header>
+
+    <div class="layout">
+      <div class="sidebar-toggle" id="sidebarToggle" title="收起 / 展开侧边栏">◀</div>
+      <aside class="sidebar">
+        <nav class="modes" id="modeNav">
+          <button class="mode-btn active" data-mode="free"><span>💬</span><div><b>自由问答</b><small>任何辩论问题</small></div></button>
+          <button class="mode-btn" data-mode="prep"><span>📋</span><div><b>备赛</b><small>立论 · 质询 · 攻防</small></div></button>
+          <button class="mode-btn" data-mode="review"><span>🔍</span><div><b>复盘</b><small>文字稿逐帧纠偏</small></div></button>
+          <button class="mode-btn" data-mode="judge"><span>⚖️</span><div><b>评判</b><small>三票制 · 述票</small></div></button>
+        </nav>
+
+        <section class="side-section history-section">
+          <div class="side-head">
+            <h3>🕘 对话历史</h3>
+            <button id="btnClearHistory" class="link-btn" title="清空本地历史">清空</button>
+          </div>
+          <div class="history-search">
+            <input type="text" id="historySearchInput" placeholder="搜索全部对话内容…" autocomplete="off" />
+            <button type="button" id="btnHistorySearchClear" class="history-search-clear hidden" title="清除搜索">×</button>
+          </div>
+          <div id="historyList" class="history-list"></div>
+        </section>
+
+        <footer class="side-foot">
+          <span id="engineInfo">引擎检测中…</span>
+        </footer>
+      </aside>
+
+      <main class="main">
+        <div class="chat-head">
+          <div>
+            <h2 id="modeTitle">自由问答</h2>
+            <p id="modeDesc">直接提问：辩题分析、方法论、辩手风格、赛制规则，都可以问。</p>
+          </div>
+          <div class="chat-head-actions">
+            <button id="btnLibrary" class="btn ghost small" title="个人资料库：上传自己的备赛包/文字稿，备赛复盘时自动检索引用">📚 资料库</button>
+            <button id="btnDeliver" class="btn ghost small" title="产物空间：Agent 输出的文件（md/csv/…），可转 Word/Excel/PDF 并导出到任意文件夹">📦 产物</button>
+            <button id="btnMemory" class="btn ghost small" title="查看/管理长程记忆">🧠 记忆</button>
+            <button id="btnCompact" class="btn ghost small" title="把当前对话压缩成摘要，释放上下文空间">🧹 压缩上下文</button>
+            <div class="export-menu" id="exportMenu">
+              <button id="btnExportSession" class="btn ghost small" title="导出当前会话，可选 Word / Markdown / PDF 格式">⬇ 导出当前会话 <span class="caret">▾</span></button>
+              <div class="export-dropdown hidden" id="exportDropdown" role="menu">
+                <button type="button" class="export-item" data-export="word">📄 Word 文档（.docx）</button>
+                <button type="button" class="export-item" data-export="markdown">📝 Markdown（.md）</button>
+                <button type="button" class="export-item" data-export="pdf">📕 PDF 文档</button>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <div id="messages" class="messages"></div>
+
+        <div class="composer-wrap">
+          <div id="keyBanner" class="key-banner hidden">
+            ⚠️ 还没配置 DeepSeek API Key，<button id="bannerToSettings" class="link-btn">点此配置</button>
+          </div>
+          <div id="attachList" class="attach-list"></div>
+          <div class="composer">
+            <button id="btnAttach" class="icon-btn" title="上传资料：Word / PDF / txt / md / srt（可多选）">📎</button>
+            <input type="file" id="fileInput" accept=".txt,.md,.markdown,.srt,.pdf,.docx,text/plain,application/pdf,application/vnd.openxmlformats-officedocument.wordprocessingml.document" multiple hidden />
+            <div class="composer-model">
+              <span class="composer-model-label">模型</span>
+              <select id="composerModelSelect" title="切换当前使用的 AI 配置（对话中随时切换）"></select>
+            </div>
+            <textarea id="input" rows="2" placeholder="输入辩题、比赛文字稿或任何辩论问题…（Ctrl+Enter 发送）" autocomplete="off" autocapitalize="off" spellcheck="false" name="academy-input"></textarea>
+            <div class="composer-side">
+              <span id="charCount" class="char-count">0 字</span>
+              <button id="btnSend" class="send-btn">发送</button>
+              <button id="btnStop" class="stop-btn hidden">■ 停止</button>
+            </div>
+          </div>
+          <div id="usageSummaryBar" class="usage-summary" title="本对话累计 Token 用量（无数据时显示占位）"></div>
+        </div>
+      </main>
+    </div>
+  </div>
+
+  <!-- 设置弹窗（二级导航：左侧分组标签 + 右侧面板） -->
+  <div id="settingsModal" class="modal hidden">
+    <div class="modal-box settings-box">
+      <div class="modal-head">
+        <h2>⚙️ 设置</h2>
+        <span id="settingsBadge" class="settings-badge"></span>
+        <button class="modal-close" data-close="settingsModal">×</button>
+      </div>
+      <div class="settings-layout">
+        <!-- 左侧导航 -->
+        <nav class="settings-nav">
+          <button type="button" class="settings-nav-item active" data-settings-pane="model"><span>🤖</span> AI 模型</button>
+          <button type="button" class="settings-nav-item" data-settings-pane="general"><span>🎛</span> 通用</button>
+          <button type="button" class="settings-nav-item" data-settings-pane="search"><span>🔍</span> 联网搜索</button>
+          <button type="button" class="settings-nav-item" data-settings-pane="advanced"><span>⚙️</span> 高级</button>
+          <button type="button" class="settings-nav-item" data-settings-pane="backup"><span>💾</span> 数据备份</button>
+          <button type="button" class="settings-nav-item" data-settings-pane="skills"><span>🧩</span> 技能 / 插件</button>
+          <button type="button" class="settings-nav-item" data-settings-pane="stats"><span>📊</span> 使用统计</button>
+        </nav>
+
+        <!-- 右侧面板 -->
+        <div class="settings-panes">
+          <!-- 面板：AI 模型（多配置） -->
+          <div class="settings-pane active" data-settings-pane="model">
+            <div class="welcome-note hidden" id="welcomeNote">
+              <b>欢迎使用逻敏辩论教练！</b> 配置一套「服务商 + Key + 模型」并保存，可保存多套随时切换。
+            </div>
+            <div class="profiles-layout">
+              <!-- 左侧：配置列表 -->
+              <div class="profiles-list" id="profilesList">
+                <div class="profiles-list-head">
+                  <span>已保存配置</span>
+                  <button type="button" class="btn ghost small" id="btnNewProfile">＋ 新建</button>
+                </div>
+                <div id="profilesListBody" class="profiles-list-body"><div class="profile-empty">加载中…</div></div>
+              </div>
+              <!-- 右侧：编辑器 -->
+              <div class="profile-editor">
+                <div class="set-step">
+                  <div class="set-step-title">服务商</div>
+                  <div class="provider-grid" id="providerGrid">
+                    <button type="button" class="provider-card" data-baseurl="https://api.deepseek.com" data-id="deepseek" data-recommend>
+                      <b>DeepSeek 官方</b><small>api.deepseek.com</small><em class="tag">推荐</em>
+                    </button>
+                    <button type="button" class="provider-card" data-baseurl="https://api.siliconflow.cn/v1" data-id="siliconflow">
+                      <b>硅基流动</b><small>api.siliconflow.cn</small>
+                    </button>
+                    <button type="button" class="provider-card" data-baseurl="https://api.moonshot.cn/v1" data-id="moonshot">
+                      <b>Moonshot Kimi</b><small>api.moonshot.cn</small>
+                    </button>
+                    <button type="button" class="provider-card" data-baseurl="https://open.bigmodel.cn/api/paas/v4" data-id="zhipu">
+                      <b>智谱 GLM</b><small>open.bigmodel.cn</small>
+                    </button>
+                    <button type="button" class="provider-card" data-baseurl="https://api.openai.com/v1" data-id="openai">
+                      <b>OpenAI</b><small>api.openai.com</small>
+                    </button>
+                    <button type="button" class="provider-card provider-card-custom" data-id="custom">
+                      <b>＋ 自定义接口</b><small>填自己的 OpenAI 兼容地址</small>
+                    </button>
+                  </div>
+                </div>
+                <div class="set-step">
+                  <div class="set-step-title">配置名称</div>
+                  <input type="text" id="profileNameInput" placeholder="如：DeepSeek 主力 / 硅基流动" autocomplete="off" />
+                </div>
+                <div class="set-step">
+                  <div class="set-step-title">API Key <span class="require-dot">*</span></div>
+                  <div class="key-row">
+                    <input type="password" id="apiKeyInput" placeholder="粘贴你的 sk-... Key" autocomplete="off" />
+                    <button id="btnToggleKey" class="icon-btn" title="显示/隐藏">👁</button>
+                  </div>
+                  <small class="field-hint">Key 只保存在本机 <code>data/profiles.json</code>，只发给你选的地址，不上传任何服务器。
+                    <button id="btnClearKey" class="link-btn danger-inline">清除 Key</button></small>
+                </div>
+                <div class="set-step">
+                  <div class="set-step-title">模型</div>
+                  <div class="model-row">
+                    <input type="text" id="modelInput" list="modelPresets" placeholder="填好 Key 后点「获取模型」自动拉取；也可手动输入" autocomplete="off" />
+                    <button id="btnLoadModels" class="btn primary">获取模型</button>
+                  </div>
+                  <select id="modelSelect" class="model-select hidden" title="从服务商获取的模型列表"></select>
+                  <datalist id="modelPresets">
+                    <option value="deepseek-chat"></option><option value="deepseek-reasoner"></option>
+                    <option value="deepseek-v4-flash"></option><option value="deepseek-v4-pro"></option>
+                    <option value="Qwen/Qwen2.5-72B-Instruct"></option><option value="deepseek-ai/DeepSeek-V3"></option>
+                    <option value="moonshot-v1-8k"></option><option value="glm-4-flash"></option><option value="gpt-4o-mini"></option>
+                  </datalist>
+                  <small class="field-hint" id="modelHelp">不点「获取模型」也行，直接手输模型名。</small>
+                </div>
+                <div class="profile-edit-actions">
+                  <button type="button" class="btn primary" id="btnSaveProfile">保存配置</button>
+                  <button type="button" class="btn ghost" id="btnTestKey">🔌 测试连接</button>
+                </div>
+                <p class="profile-edit-result" id="settingsResult"></p>
+              </div>
+            </div>
+          </div>
+          <!-- 面板：通用 -->
+          <div class="settings-pane" data-settings-pane="general">
+            <div class="general-section">
+              <div class="gen-row">
+                <span class="gen-label">外观</span>
+                <div class="gen-choices" id="themeChoices">
+                  <button type="button" class="gen-choice" data-theme-val="light">☀️ 浅色</button>
+                  <button type="button" class="gen-choice" data-theme-val="dark">🌙 深色</button>
+                  <button type="button" class="gen-choice" data-theme-val="system">🖥 跟随系统</button>
+                </div>
+              </div>
+              <div class="gen-row">
+                <span class="gen-label">界面语言</span>
+                <div class="gen-choices" id="localeChoices">
+                  <button type="button" class="gen-choice" data-locale-val="zh-CN">简体</button>
+                  <button type="button" class="gen-choice" data-locale-val="zh-TW">繁體</button>
+                </div>
+              </div>
+              <div class="gen-row">
+                <span class="gen-label">对话字体大小</span>
+                <div class="gen-choices gen-fontsize">
+                  <input type="range" id="chatFontRange" min="12" max="22" step="1" value="15" />
+                  <span class="fs-value" id="chatFontValue">15px</span>
+                  <button type="button" class="btn ghost small" id="btnResetFont" title="恢复默认 15px">默认</button>
+                </div>
+              </div>
+              <div class="gen-row">
+                <span class="gen-label">新手引导</span>
+                <div class="gen-choices">
+                  <button type="button" class="btn ghost small" id="btnShowWizard">重新查看引导</button>
+                </div>
+              </div>
+            </div>
+          </div>
+
+          <!-- 面板：联网搜索 -->
+          <div class="settings-pane" data-settings-pane="search">
+            <div class="general-section">
+              <div class="set-step-title">搜索方式</div>
+              <div class="gen-choices" id="searchModeChoices" style="justify-content:flex-start; flex-wrap:wrap; gap:8px;">
+                <button type="button" class="gen-choice" data-search-mode="server">🛰 服务侧搜索（用当前模型 Key，走当前模型商）</button>
+                <button type="button" class="gen-choice" data-search-mode="free">🆓 端侧搜索（免费 Bing/DuckDuckGo，0 扣费）</button>
+              </div>
+              <small class="field-hint" style="margin-top:8px; display:block;">
+                <b>服务侧</b>：Agent 联网时调当前模型提供商的搜索 API，结果更准、扣当前模型余额。<br>
+                <b>端侧</b>：无需任何 Key，本地抓取 Bing/DuckDuckGo，不扣费。<br>
+                此设置决定 Agent 任务内联网用的通道；「🔍 搜资料」面板在工具箱里，搜索时可单独切换端侧 / 服务侧。<br>
+                切换后立即生效，无需额外填 Key。
+              </small>
+              <p id="searchResultMsg" class="settings-result"></p>
+            </div>
+          </div>
+
+          <!-- 面板：高级 -->
+          <div class="settings-pane" data-settings-pane="advanced">
+            <label class="field">
+              <span>API 地址（OpenAI 兼容）</span>
+              <input type="text" id="baseUrlInput" placeholder="https://api.deepseek.com" autocomplete="off" />
+              <small class="field-hint">一般不用改：选服务商时已自动填好。手填到域名或 /v1 即可，程序会自动补 /chat/completions。</small>
+            </label>
+            <div class="general-section">
+              <div class="gen-row">
+                <span class="gen-label">文档处理（扩展）</span>
+                <div class="gen-choices">
+                  <label class="lib-switch"><input type="checkbox" id="extendedToolsToggle" /><span id="extendedToolsLabel">关（默认）</span></label>
+                  <small class="field-hint" style="display:block;width:100%;margin-top:4px;color:var(--amber)">
+                    默认关闭。开启后，教练可以按你的要求<b>读写你指定的文件夹</b>——比如把整份备赛资料整理成
+                    Word / Excel / PDF，直接存到你选好的位置。<b>⚠️ 开启等于让教练能动你电脑上的文件，
+                    开之前请想清楚、重要文件先备份。</b>开启时会先弹出确认，从下一条消息起生效。
+                  </small>
+                </div>
+              </div>
+            </div>
+          </div>
+          <!-- 面板：数据备份 -->
+          <div class="settings-pane" data-settings-pane="backup">
+            <div class="general-section">
+              <div class="set-step-title">💾 个人数据备份</div>
+              <p class="field-hint" style="margin-bottom:10px">
+                把<strong>对话历史、记忆、模型配置</strong>打包成一个文件，换电脑时在新电脑上「导入」即可全部恢复。
+              </p>
+              <div class="backup-actions">
+                <button type="button" class="btn primary" id="btnExportBackup">📦 一键导出全部数据</button>
+                <button type="button" class="btn" id="btnImportBackup">📥 从备份文件导入</button>
+              </div>
+              <p id="backupResult" class="settings-result"></p>
+            </div>
+            <div class="general-section">
+              <div class="set-step-title">📁 数据位置</div>
+              <p class="field-hint">
+                所有个人数据都保存在程序目录的 <code>data</code> 文件夹里（<code>data/chats</code> 对话、<code>data/memory.md</code> 记忆、<code>data/config.json</code> 配置）。
+                整个文件夹复制走就等于完整备份；也可以用上面的按钮生成单文件备份。
+              </p>
+              <p class="field-hint" style="color:var(--amber)">
+                ⚠️ 备份文件包含你的 API Key，请只保存在自己的设备或网盘，不要发给别人。
+              </p>
+            </div>
+          </div>
+
+          <!-- 面板：技能 / 插件 -->
+          <div class="settings-pane" data-settings-pane="skills">
+            <div class="general-section">
+              <div class="set-step-title">🧩 技能 / 插件</div>
+              <p class="field-hint" style="margin-bottom:10px">
+                技能 = 一份带说明的 <code>.md</code> 指令文件（YAML frontmatter 含 <code>name</code> 与 <code>description</code>）。
+                装上后，备赛 / 复盘等任务会提示 Agent 按需加载它。存放在本机 <code>data/.dsh/skills/</code>，随包分发不会覆盖，重装不丢。
+              </p>
+              <div class="backup-actions">
+                <button type="button" class="btn primary" id="btnSkillImport">⬆ 导入技能文件</button>
+                <button type="button" class="btn" id="btnSkillNew">＋ 新建（粘贴）</button>
+              </div>
+              <input type="file" id="skillFileInput" accept=".md,.markdown,.txt" multiple hidden />
+              <div id="skillMsg" class="settings-result"></div>
+              <div id="skillEditor" class="skill-editor hidden">
+                <div class="skill-editor-head">
+                  <b id="skillEditorTitle">新建技能</b>
+                  <span class="skill-editor-hint"># ---
+# name: my-skill
+# description: 一句话说清何时用
+# ---
+正文…</span>
+                </div>
+                <textarea id="skillContent" rows="10" spellcheck="false" placeholder="---
+name: 技能名（英文短横线）
+description: 这个技能什么时候用、做什么。
+whenToUse: 可选：触发条件描述。
+---
+
+技能正文（Markdown）…"></textarea>
+                <div class="skill-editor-actions">
+                  <button type="button" class="btn ghost small" id="btnSkillEditorCancel">取消</button>
+                  <button type="button" class="btn primary small" id="btnSkillEditorSave">保存</button>
+                </div>
+              </div>
+              <div class="set-step-title" style="margin-top:12px">我的技能（<span id="skillCount">0</span>）</div>
+              <div id="skillList" class="skill-list"></div>
+              <details class="lib-synonyms" style="margin-top:10px">
+                <summary>📦 内置技能（只读，随 App 分发）</summary>
+                <div class="lib-syn-body"><div id="skillBundledList" class="skill-list"></div></div>
+              </details>
+              <p class="field-hint" style="margin-top:8px">💡 想装别人的技能？把 <code>.md</code> 技能文件放进 <code>data/.dsh/skills/</code>，或在这里点「导入技能文件」。</p>
+            </div>
+          </div>
+
+          <!-- 面板：使用统计 -->
+          <div class="settings-pane" data-settings-pane="stats">
+            <div class="stats-section">
+              <h3 class="stats-title">聊天热力图</h3>
+              <div id="statsHeatmap" class="stats-heatmap"></div>
+              <div class="stats-legend"><span>少</span><div class="stats-legend-cells"></div><span>多</span></div>
+            </div>
+            <div class="stats-grid" id="statsGrid"></div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- 工具弹窗 -->
+  <div id="toolsModal" class="modal hidden">
+    <div class="modal-box small">
+      <div class="modal-head">
+        <h2>🧰 工具箱</h2>
+        <button class="modal-close" data-close="toolsModal">×</button>
+      </div>
+      <div class="modal-body">
+        <div id="toolsList" class="tools-list"></div>
+      </div>
+    </div>
+  </div>
+
+  <!-- 搜索弹窗 -->
+  <div id="searchModal" class="modal hidden">
+    <div class="modal-box search-box">
+      <div class="modal-head">
+        <h2>🔍 联网搜资料</h2>
+        <div class="search-mode-switch" id="searchModeSwitch" role="group" aria-label="搜索方式">
+          <button type="button" class="gen-choice" data-panel-mode="free" title="本地抓取 Bing/DuckDuckGo，免费不扣费">🆓 端侧</button>
+          <button type="button" class="gen-choice" data-panel-mode="server" title="走当前模型商的原生搜索（扣模型余额，目前仅 DeepSeek 官方支持）">🛰 服务侧</button>
+        </div>
+        <button class="modal-close" data-close="searchModal">×</button>
+      </div>
+      <div class="modal-body">
+        <div class="search-bar">
+          <input type="text" id="searchQuery" placeholder="输入要搜的辩题/概念/政策/事件…（回车搜索）" autocomplete="off" />
+          <button id="btnDoSearch" class="btn primary">搜索</button>
+        </div>
+        <div class="search-mode-note" id="searchModeNote"></div>
+        <div class="search-meta hidden" id="searchMeta"></div>
+        <div id="searchResults" class="search-results"></div>
+      </div>
+    </div>
+  </div>
+
+  <!-- 产物空间弹窗 -->
+  <div id="deliverModal" class="modal hidden">
+    <div class="modal-box deliver-box">
+      <div class="modal-head">
+        <h2>📦 产物空间</h2>
+        <button class="modal-close" data-close="deliverModal">×</button>
+      </div>
+      <div class="modal-body">
+        <p class="memory-hint">Agent 的长篇交付会写成文件保存在 <code>data/deliverables/</code>。在这里<b>预览 / 转 Word / 转 Excel / 存 PDF / 导出到任意文件夹</b>。</p>
+        <div class="lib-search">
+          <input type="text" id="deliverSearch" placeholder="筛选文件名…" autocomplete="off" />
+          <button type="button" class="btn ghost small" id="btnDeliverFolder" title="打开产物目录文件夹">📂 打开目录</button>
+          <button type="button" class="btn ghost small" id="btnDeliverRefresh">↻ 刷新</button>
+        </div>
+        <div id="deliverMeta" class="lib-meta" style="margin:6px 0"></div>
+        <div id="deliverList" class="deliver-list"></div>
+        <div id="deliverPreview" class="deliver-preview hidden">
+          <div class="deliver-preview-head"><b id="deliverPreviewTitle">预览</b><button type="button" class="btn ghost small" id="btnDeliverPreviewClose">×</button></div>
+          <div id="deliverPreviewBody" class="deliver-preview-body md"></div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- 长程记忆弹窗 -->
+  <div id="memoryModal" class="modal hidden">
+    <div class="modal-box memory-box">
+      <div class="modal-head">
+        <h2>🧠 记忆中心</h2>
+        <button class="modal-close" data-close="memoryModal">×</button>
+      </div>
+      <div class="modal-body">
+        <p class="memory-hint" id="memoryHint">记忆分两层：<b>长期记忆</b>（精炼持久事实）与<b>每日流水</b>（当天观察/备忘）。Agent 自动读写，也可点下方按钮手动清空。</p>
+        <div id="memoryMeta" class="memory-meta"></div>
+        <div class="memory-tabs">
+          <button type="button" class="memory-tab active" data-mtab="long">📚 长期记忆</button>
+          <button type="button" class="memory-tab" data-mtab="daily">🗓 每日流水</button>
+          <button type="button" class="memory-tab" data-mtab="stats">📊 统计</button>
+        </div>
+        <div id="memoryLongPanel" class="memory-panel active"></div>
+        <div id="memoryDailyPanel" class="memory-panel"></div>
+        <div id="memoryStatsPanel" class="memory-panel"></div>
+        <div class="modal-actions">
+          <button id="btnMemoryClear" class="btn ghost">清空全部记忆</button>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- 个人资料库弹窗 -->
+  <div id="libraryModal" class="modal hidden">
+    <div class="modal-box library-box">
+      <div class="modal-head">
+        <h2>📚 个人资料库</h2>
+        <button class="modal-close" data-close="libraryModal">×</button>
+      </div>
+      <div class="modal-body">
+        <p class="memory-hint">
+          把你自己的 <b>备赛包 / 模辩文字稿 / 期刊 / 笔记</b> 存进来（txt / md / srt / pdf / docx）。
+          之后<b>备赛与复盘</b>时，Agent 会自动检索这些资料，优先用你自己的口径、数据和话术。
+          资料只保存在本机 <code>data/library/</code>，不上传任何服务器。
+        </p>
+        <div class="lib-switch-row">
+          <label class="lib-switch"><input type="checkbox" id="libEnabledToggle" checked /><span>备赛 / 复盘时自动检索资料库</span></label>
+          <span id="libMeta" class="lib-meta">—</span>
+        </div>
+        <div class="lib-drop" id="libDrop">
+          <div class="lib-drop-inner">
+            <span class="lib-drop-icon">📥</span>
+            <span>把文件拖到这里，或</span>
+            <button type="button" class="btn primary small" id="btnLibPick">选择文件</button>
+            <button type="button" class="btn ghost small" id="btnLibPaste">粘贴文本</button>
+          </div>
+          <small class="field-hint">支持 txt / md / srt / pdf / docx / 图片（png、jpg、bmp），单份 ≤ 16MB，可多选；图片会自动做本地 OCR</small>
+        </div>
+        <input type="file" id="libFileInput" accept=".txt,.md,.markdown,.srt,.pdf,.docx,.png,.jpg,.jpeg,.bmp,.tif,.tiff" multiple hidden />
+        <div id="libUploadState" class="lib-upload-state hidden"></div>
+        <div id="libOcrInfo" class="lib-ocr-info hidden"></div>
+        <div id="libPasteForm" class="lib-paste-form hidden">
+          <input type="text" id="libPasteName" placeholder="资料名称，如：校赛_人工智能版权_反方备赛包" autocomplete="off" />
+          <textarea id="libPasteText" rows="5" placeholder="粘贴正文（一辩稿、攻防预案、复盘笔记、期刊摘录都可以）"></textarea>
+          <div class="lib-paste-actions">
+            <button type="button" class="btn primary small" id="btnLibPasteSave">存入资料库</button>
+            <button type="button" class="btn ghost small" id="btnLibPasteCancel">取消</button>
+          </div>
+        </div>
+        <div class="lib-search">
+          <input type="text" id="libSearchInput" placeholder="输入关键词试检索，看会召回哪些资料（回车检索）" autocomplete="off" />
+          <button type="button" class="btn ghost small" id="btnLibSearch">试检索</button>
+        </div>
+        <div id="libSearchResults" class="lib-search-results hidden"></div>
+        <details class="lib-synonyms">
+          <summary>🔁 同义词（让「AI」也能召回「人工智能」的资料）</summary>
+          <div class="lib-syn-body">
+            <textarea id="libSynonymsText" rows="5" placeholder="人工智能,AI,AIGC,大模型&#10;版权,著作权,知识产权"></textarea>
+            <small class="field-hint">一行一组，同组内词互相等价；检索命中任意一词时，同组其他词也会参与召回（权重略低）。</small>
+            <div class="lib-syn-actions">
+              <button type="button" class="btn primary small" id="btnLibSynSave">保存同义词</button>
+              <button type="button" class="btn ghost small" id="btnLibSynReset">恢复默认</button>
+            </div>
+          </div>
+        </details>
+        <div class="lib-list-head"><span id="libCount">共 0 份</span></div>
+        <div id="libList" class="lib-list"></div>
+      </div>
+    </div>
+  </div>
+
+<!-- 首次使用欢迎引导 -->
+  <div id="welcomeModal" class="modal hidden">
+    <div class="modal-box wizard-box">
+      <div class="modal-head">
+        <h2 id="wizardTitle">👋 欢迎使用逻敏 · 辩论教练</h2>
+        <button class="modal-close" data-close="welcomeModal">×</button>
+      </div>
+      <div class="modal-body">
+        <div class="wizard-progress" id="wizardProgress">
+          <span class="wp-dot active"></span><span class="wp-dot"></span><span class="wp-dot"></span><span class="wp-dot"></span>
+        </div>
+
+        <!-- 步骤 1：欢迎 -->
+        <div class="wizard-pane active" data-wstep="1">
+          <p class="wizard-lead">这是一个<b>本地运行</b>的 AI 辩论教练。</p>
+          <ul class="wizard-list">
+            <li>✅ 对话、资料、记忆都只存在<b>你自己的电脑</b>上，不上传任何服务器</li>
+            <li>✅ 覆盖<b>备赛 / 复盘 / 评判 / 自由问答</b>四种模式，各自独立</li>
+            <li>⚙️ 只需配置一次：填一个 AI 服务的密钥（API Key）</li>
+          </ul>
+          <p class="wizard-hint">下面三步，大约 3 分钟就能搞定。</p>
+          <div class="wizard-actions">
+            <button type="button" class="btn primary" data-wnext="2">开始配置 →</button>
+          </div>
+        </div>
+
+        <!-- 步骤 2：申请 Key -->
+        <div class="wizard-pane" data-wstep="2">
+          <p class="wizard-lead">第 1 步：申请一个 API Key</p>
+          <ol class="wizard-steps">
+            <li>点下面的按钮打开 <b>DeepSeek 开放平台</b>（国内可直连，价格便宜）</li>
+            <li>用手机号注册并登录</li>
+            <li>左侧菜单找到 <b>「API Keys」</b> → 点 <b>「创建 API Key」</b></li>
+            <li>复制那串 <code>sk-</code> 开头的密钥（只显示一次，先粘到记事本）</li>
+            <li>在平台里<b>充值几块钱</b>（按用量扣费，很便宜）</li>
+          </ol>
+          <div class="wizard-actions">
+            <button type="button" class="btn ghost" id="wizardOpenSite">🔗 打开申请页面</button>
+            <button type="button" class="btn primary" data-wnext="3">我已经拿到 Key →</button>
+          </div>
+          <p class="wizard-hint">💡 不会操作？找队里用过 AI 的队友帮忙，5 分钟就能弄好。</p>
+        </div>
+
+        <!-- 步骤 3：填写并验证 -->
+        <div class="wizard-pane" data-wstep="3">
+          <p class="wizard-lead">第 2 步：把 Key 粘贴进来</p>
+          <div class="key-row">
+            <input type="password" id="wizardKeyInput" placeholder="sk-...（粘贴你的密钥）" autocomplete="off" spellcheck="false" />
+            <button type="button" id="wizardToggleKey" class="icon-btn" title="显示/隐藏">👁</button>
+          </div>
+          <p class="field-hint">Key 只保存在本机 <code>data/profiles.json</code>，不会上传到任何第三方服务器。</p>
+
+          <!-- 高级选项：想用其他模型服务商的人展开这里 -->
+          <details class="wizard-advanced" id="wizardAdvanced">
+            <summary>⚙️ 高级选项（使用其他模型服务商）</summary>
+            <div class="wizard-adv-body">
+              <label class="field">
+                <span>服务商</span>
+                <select id="wizardProvider">
+                  <option value="deepseek">DeepSeek 官方（推荐）</option>
+                  <option value="siliconflow">硅基流动</option>
+                  <option value="moonshot">Moonshot Kimi</option>
+                  <option value="zhipu">智谱 GLM</option>
+                  <option value="openai">OpenAI</option>
+                  <option value="custom">自定义接口…</option>
+                </select>
+              </label>
+              <label class="field">
+                <span>API 地址（OpenAI 兼容）</span>
+                <input type="text" id="wizardBaseUrl" value="https://api.deepseek.com" autocomplete="off" spellcheck="false" />
+              </label>
+              <label class="field">
+                <span>模型名</span>
+                <input type="text" id="wizardModel" value="deepseek-v4-flash" list="wizardModelPresets" autocomplete="off" spellcheck="false" />
+                <datalist id="wizardModelPresets"></datalist>
+              </label>
+              <label class="field">
+                <span>配置名称（可选）</span>
+                <input type="text" id="wizardProfileName" placeholder="留空自动命名" autocomplete="off" />
+              </label>
+              <small class="field-hint">填好后点下面的「测试并保存」，会用这里的地址和模型去验证。</small>
+            </div>
+          </details>
+
+          <div class="wizard-actions">
+            <button type="button" class="btn primary" id="wizardTestBtn">🔌 测试并保存</button>
+            <button type="button" class="btn ghost" data-wnext="2">← 返回上一步</button>
+          </div>
+          <p id="wizardKeyResult" class="settings-result"></p>
+        </div>
+
+        <!-- 步骤 4：完成 -->
+        <div class="wizard-pane" data-wstep="4">
+          <p class="wizard-lead">✅ 配置完成，可以开始用了！</p>
+          <ul class="wizard-list">
+            <li>顶部选模式：<b>备赛 / 复盘 / 评判 / 自由问答</b>（各模式对话互相独立）</li>
+            <li>输入内容后按 <b>Ctrl+Enter</b> 发送</li>
+            <li>📎 可上传 <b>Word / PDF / txt</b> 资料，🔍 可联网搜资料</li>
+            <li>🧰 工具箱里有<b>辩案工作台、流水单、语音练习</b>等，🧠 会记住你的偏好</li>
+          </ul>
+          <p class="wizard-hint">随时可在 ⚙️ 设置里更换模型、开关联网搜索、备份数据。</p>
+          <div class="wizard-actions">
+            <button type="button" class="btn primary" id="wizardDoneBtn">开始使用 →</button>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <div id="toast" class="toast hidden"></div>
+  <div id="dropOverlay" class="drop-overlay hidden">
+    <div class="drop-overlay-box">📎 松开上传文件</div>
+  </div>
+
+  <!-- Markdown 阅读器 -->
+  <div id="mdModal" class="modal hidden">
+    <div class="modal-box md-reader-box">
+      <div class="modal-head">
+        <h2 id="mdReaderTitle">📖 Markdown 阅读器</h2>
+        <button class="modal-close" data-close="mdModal">×</button>
+      </div>
+      <div class="modal-body md-reader-body">
+        <div class="md-reader-bar">
+          <span id="mdReaderPath" class="md-reader-path">—</span>
+          <span class="md-reader-actions">
+            <button id="btnMdOpen" class="btn ghost small">打开文件</button>
+            <button id="btnMdCopy" class="btn ghost small">复制原文</button>
+            <button id="btnMdExport" class="btn ghost small">导出 Word</button>
+          </span>
+        </div>
+        <div id="mdReaderContent" class="md-reader-content"><p class="md-reader-empty">点击「打开文件」选择本地 .md 文档，或直接把文件拖进窗口。</p></div>
+      </div>
+    </div>
+  </div>
+  <script src="/locale.js?v=1.0.0"></script>
+  <script src="/app.js?v=3.26.0"></script>
+</body>
+</html>

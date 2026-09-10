@@ -1,0 +1,25 @@
+# Academy 辩论教练 · 开发目录 .gitignore
+# 原则：只跟踪「自己写的代码和文档」，运行时/缓存/用户数据一律不跟踪
+
+# ---- 运行时（几百 MB，由 tools/setup-runtime.js 补齐，绝不入库）----
+runtime/
+
+# ---- 构建产物 ----
+dist/
+.build/
+
+# ---- 用户数据 / 隐私（含 API Key，绝不入库）----
+data/
+
+# ---- 备份快照 ----
+.backup/
+
+# ---- 系统 / 编辑器和临时文件 ----
+Thumbs.db
+desktop.ini
+*.tmp
+*.log
+.DS_Store
+
+# ---- Node ----
+node_modules/
