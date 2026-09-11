@@ -1602,6 +1602,31 @@ function listSessionLogs() {
 function createSessionWatcher(startedAt) {
   return { startedAt, offsets: new Map(), buffers: new Map(), toolNames: new Map() };
 }
+/* 兼容新旧内核 session 格式提取 usage chunk：
+   0.1.1 旧格式：rec.type === 'assistant/chunk'，usage 在 rec.data.chunk
+   0.1.5 新格式：rec.type === 'assistant/message'，各 chunk 装进 rec.data.stream[] 项的 .chunk
+  （stream 项形如 {type:'chunk', time, chunk:{type:'usage', usage:{…}}}），chunk 本体结构与旧版一致 */
+function usageChunksFromRecord(rec) {
+  const out = [];
+  if (rec.type === 'assistant/chunk' && rec.data?.chunk?.type === 'usage' && rec.data.chunk.usage) {
+    out.push(rec.data.chunk.usage);
+  } else if (rec.type === 'assistant/message' && Array.isArray(rec.data?.stream)) {
+    for (const item of rec.data.stream) {
+      const c = item ? (item.chunk || item) : null;
+      if (c && c.type === 'usage' && c.usage) out.push(c.usage);
+    }
+  }
+  return out;
+}
+function normalizeUsage(u) {
+  return {
+    inputTokens: Number(u.inputTokens) || 0,
+    outputTokens: Number(u.outputTokens) || 0,
+    cacheReadTokens: Number(u.cacheReadTokens) || 0,
+    cacheWriteTokens: Number(u.cacheWriteTokens) || 0,
+    reasoningTokens: Number(u.reasoningTokens) || 0,
+  };
+}
 /* 从本次运行的最后 session 文件中读取最后一条 usage chunk（headless 模式 watcher 常漏读，这里兜底） */
 function extractFinalUsage(startedAt, model) {
   try {
@@ -1626,15 +1651,9 @@ function extractFinalUsage(startedAt, model) {
     for (let i = lines.length - 1; i >= 0; i--) {
       try {
         const o = JSON.parse(lines[i]);
-        if (o.type === 'assistant/chunk' && o.data?.chunk?.type === 'usage' && o.data.chunk.usage) {
-          const u = o.data.chunk.usage;
-          usage = {
-            inputTokens: Number(u.inputTokens) || 0,
-            outputTokens: Number(u.outputTokens) || 0,
-            cacheReadTokens: Number(u.cacheReadTokens) || 0,
-            cacheWriteTokens: Number(u.cacheWriteTokens) || 0,
-            reasoningTokens: Number(u.reasoningTokens) || 0,
-          };
+        const us = usageChunksFromRecord(o);
+        if (us.length) {
+          usage = normalizeUsage(us[us.length - 1]);
           break;
         }
       } catch (_) {}
@@ -1718,18 +1737,12 @@ function drainSessionWatcher(w) {
           const callId = String(rec.data?.message?.source?.callId || '');
           const name = w.toolNames.get(callId) || '工具';
           events.push({ type: 'tool', state: 'done', callId, name, detail: toolResultSummary(rec.data?.message) });
-        } else if (rec.type === 'assistant/chunk' && chunk && chunk.type === 'usage' && chunk.usage) {
-          const u = chunk.usage;
-          events.push({
-            type: 'usage',
-            usage: {
-              inputTokens: Number(u.inputTokens) || 0,
-              outputTokens: Number(u.outputTokens) || 0,
-              cacheReadTokens: Number(u.cacheReadTokens) || 0,
-              cacheWriteTokens: Number(u.cacheWriteTokens) || 0,
-              reasoningTokens: Number(u.reasoningTokens) || 0,
-            },
-          });
+        } else {
+          // usage：新旧内核格式都走这里（旧=assistant/chunk，新=assistant/message 的 stream 数组）
+          const us = usageChunksFromRecord(rec);
+          if (us.length) {
+            events.push({ type: 'usage', usage: normalizeUsage(us[us.length - 1]) });
+          }
         }
       }
     } catch (_) {
