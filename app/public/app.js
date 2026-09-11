@@ -438,6 +438,15 @@ function latestContextUsed() {
   }
   return null;
 }
+/* Token 栏右侧的压缩上下文入口（与顶部 🧹 按钮同一处理函数） */
+function appendCompactBtn(bar) {
+  const b = el('button', 'sum-compact', '🧹 压缩上下文');
+  b.type = 'button';
+  b.title = '把当前对话压缩成摘要，释放上下文空间';
+  b.onclick = () => compactContext();
+  bar.appendChild(b);
+}
+
 function renderUsageSummary() {
   const bar = $('#usageSummaryBar');
   if (!bar) return;
@@ -450,6 +459,7 @@ function renderUsageSummary() {
     t.innerHTML = '<b>📊 本对话 Token</b> 暂无用量（发消息后显示）';
     bar.innerHTML = '';
     bar.appendChild(t);
+    appendCompactBtn(bar);
     return;
   }
   const p = (label, val, cls) => {
@@ -478,6 +488,7 @@ function renderUsageSummary() {
   bar.appendChild(p('输出', u.output));
   if (u.cacheWrite) bar.appendChild(p('缓存写', u.cacheWrite));
   if (u.reasoning) bar.appendChild(p('推理', u.reasoning));
+  appendCompactBtn(bar);
 }
 
 /* 隐藏回复末尾的记忆归档内容：剥离 <!-- MEMORY: ... --> 块及常见记忆尾巴 */
@@ -583,10 +594,6 @@ function renderMessage(idx, m) {
     if (!(window.academyElectron && window.academyElectron.exportPdf)) exportPdfBtn.classList.add('hidden');
     const exportMd = el('button', null, '导出');
     exportMd.onclick = () => exportMarkdown(m);
-    // 压缩上下文：与顶部 🧹 同一处理函数，对话变长后在这里顺手就能压
-    const compact = el('button', null, '🧹 压缩');
-    compact.title = '把当前对话压缩成摘要，释放上下文空间（同顶部按钮）';
-    compact.onclick = () => compactContext();
     actions.appendChild(copy);
     actions.appendChild(toDeliver);
     actions.appendChild(star);
@@ -594,7 +601,6 @@ function renderMessage(idx, m) {
     actions.appendChild(exportOne);
     actions.appendChild(exportPdfBtn);
     actions.appendChild(exportMd);
-    actions.appendChild(compact);
     meta.appendChild(actions);
     if (m.starred) who.appendChild(el('span', 'msg-star-badge', '⭐'));
   }

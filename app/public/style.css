@@ -611,6 +611,13 @@ button.tool-link:hover { background: var(--primary-soft); }
 .usage-summary b { font-weight: 700; color: var(--text); }
 .usage-summary .sum-hit b { color: var(--green); }
 .usage-summary .sum-ctx b { color: var(--amber); }
+/* 压缩上下文入口：贴到 Token 栏最右，用 margin-left:auto 顶过去 */
+.usage-summary .sum-compact {
+  margin-left: auto; flex: 0 0 auto;
+  font-size: 11px; border: none; background: none; color: var(--muted);
+  cursor: pointer; padding: 1px 6px; border-radius: 5px; font-family: inherit;
+}
+.usage-summary .sum-compact:hover { color: var(--primary); background: var(--primary-soft); }
 
 /* ── 侧边栏收起 / 展开 ── */
 .layout { position: relative; }
