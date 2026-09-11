@@ -2143,7 +2143,11 @@ function fetchModels({ apiKey, baseUrl } = {}) {
   return new Promise((resolve) => {
     const key = String(apiKey || '').trim();
     if (!key) return resolve({ ok: false, error: '请先填写 / 配置 API Key 再获取模型列表。' });
-    const u = new URL('/models', normalizeBaseUrl(baseUrl) || DEFAULT_BASE_URL);
+    // 拼 /models 时必须保留 base 里的路径段（如 /v1、/api/paas/v4）。
+    // 不能用 new URL('/models', base)：前导斜杠会把 base 的路径整个丢掉，
+    // 变成 api.moonshot.cn/models（正确是 /v1/models）——除 DeepSeek 外全会 404。
+    const baseNorm = String(normalizeBaseUrl(baseUrl) || DEFAULT_BASE_URL).replace(/\/+$/, '');
+    const u = new URL(baseNorm + '/models');
     const mod = u.protocol === 'https:' ? https : require('http');
     const req = mod.get(u, {
       headers: { Authorization: 'Bearer ' + key, Accept: 'application/json' },
