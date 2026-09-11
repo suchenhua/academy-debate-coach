@@ -67,6 +67,18 @@ namespace AcademySetup
         private string extractDir;
         private bool finished;
 
+        // 安装目标目录。必须与 setup.bat 里的 DEST=%LOCALAPPDATA%\AcademyDebateCoach 保持一致：
+        // setup.bat 是真正的安装执行者，这里只用于「显示给用户看」和「装完打开文件夹」。
+        internal static string InstallDir
+        {
+            get
+            {
+                return Path.Combine(
+                    Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
+                    "AcademyDebateCoach");
+            }
+        }
+
         public SetupForm()
         {
             Text = "Academy \u8fa9\u8bba\u6559\u7ec3 \u5b89\u88c5\u5411\u5bfc";
@@ -74,7 +86,7 @@ namespace AcademySetup
             MaximizeBox = false;
             MinimizeBox = false;
             StartPosition = FormStartPosition.CenterScreen;
-            ClientSize = new Size(480, 190);
+            ClientSize = new Size(560, 250);
             try { Icon = Icon.ExtractAssociatedIcon(Application.ExecutablePath); } catch { }
 
             statusLabel = new Label
@@ -87,19 +99,48 @@ namespace AcademySetup
             var detailLabel = new Label
             {
                 AutoSize = true,
-                Location = new Point(28, 72),
+                Location = new Point(28, 66),
                 Font = new Font("Microsoft YaHei UI", 9F),
-                Text = "\u9996\u6b21\u5b89\u88c5\u9700\u8981\u89e3\u538b\u5e76\u590d\u5236\u7a0b\u5e8f\u6587\u4ef6\uff0c\u5927\u7ea6 1~3 \u5206\u949f\u3002"
+                Text = "\u9996\u6B21\u5B89\u88C5\u9700\u8981\u89E3\u538B\u5E76\u590D\u5236\u7A0B\u5E8F\u6587\u4EF6\uFF0C\u5927\u7EA6 1~3 \u5206\u949F\u3002"
+            };
+            // 让用户一眼看到装到哪 —— 之前只写「正在解压」，装完完全不知道装在哪了
+            var pathCaption = new Label
+            {
+                AutoSize = true,
+                Location = new Point(28, 94),
+                Font = new Font("Microsoft YaHei UI", 9F, FontStyle.Bold),
+                Text = "\u5B89\u88C5\u4F4D\u7F6E\uFF1A"
+            };
+            var pathLabel = new Label
+            {
+                AutoSize = false,
+                Location = new Point(28, 116),
+                Size = new Size(504, 20),
+                Font = new Font("Microsoft YaHei UI", 9F),
+                ForeColor = Color.FromArgb(60, 90, 160),
+                AutoEllipsis = true,
+                Text = InstallDir
+            };
+            var keepLabel = new Label
+            {
+                AutoSize = true,
+                Location = new Point(28, 146),
+                Font = new Font("Microsoft YaHei UI", 8.5F),
+                ForeColor = Color.FromArgb(120, 120, 120),
+                Text = "\u5B89\u88C5\u6B63\u5728\u5168\u901F\u8FDB\u884C\uFF0C\u8BF7\u4E0D\u8981\u5173\u95ED\u6B64\u7A97\u53E3\u3002"
             };
             progressBar = new ProgressBar
             {
                 Style = ProgressBarStyle.Marquee,
                 MarqueeAnimationSpeed = 28,
-                Location = new Point(28, 118),
-                Size = new Size(424, 24)
+                Location = new Point(28, 178),
+                Size = new Size(504, 24)
             };
             Controls.Add(statusLabel);
             Controls.Add(detailLabel);
+            Controls.Add(pathCaption);
+            Controls.Add(pathLabel);
+            Controls.Add(keepLabel);
             Controls.Add(progressBar);
         }
 
@@ -184,7 +225,7 @@ namespace AcademySetup
                 try { File.Delete(zipPath); } catch { }
                 zipPath = null;
 
-                SetStatus("\u6b63\u5728\u5b89\u88c5\u7a0b\u5e8f\u6587\u4ef6\u2026");
+                SetStatus("\u6B63\u5728\u5B89\u88C5\u7A0B\u5E8F\u6587\u4EF6\u2026\uFF08\u590D\u5236\u5230\u4E0A\u65B9\u76EE\u5F55\uFF09");
                 ProcessStartInfo psi = new ProcessStartInfo
                 {
                     FileName = Path.Combine(extractDir, "setup.bat"),
@@ -203,9 +244,11 @@ namespace AcademySetup
                 if (p.ExitCode != 0)
                 {
                     throw new Exception(
-                        "\u5b89\u88c5\u5931\u8d25\uff08\u9519\u8bef\u7801 " + p.ExitCode + "\uff09\u3002" +
-                        "\u8bf7\u5173\u95ed\u6740\u6bd2\u8f6f\u4ef6\u540e\u91cd\u8bd5\uff0c" +
-                        "\u6216\u89e3\u538b\u540e\u53cc\u51fb\u201c\u4e00\u952e\u5b89\u88c5.bat\u201d\u3002");
+                        "\u5B89\u88C5\u5931\u8D25\uFF08\u9519\u8BEF\u7801 " + p.ExitCode + "\uFF09\u3002\r\n\r\n" +
+                        "\u76EE\u6807\u4F4D\u7F6E\uFF1A" + InstallDir + "\r\n\r\n" +
+                        "\u8BF7\u5173\u95ED\u6740\u6BD2\u8F6F\u4EF6\u540E\u91CD\u8BD5\uFF0C" +
+                        "\u6216\u628A\u672C\u7A0B\u5E8F\u540C\u76EE\u5F55\u7684 zip \u89E3\u538B\u540E" +
+                        "\u53CC\u51FB\u201C\u4E00\u952E\u5B89\u88C5.bat\u201D\u3002");
                 }
 
                 BeginInvoke((MethodInvoker)delegate
@@ -213,12 +256,30 @@ namespace AcademySetup
                     Program.Log("install success");
                     finished = true;
                     Close();
-                    MessageBox.Show(
-                        "\u5b89\u88c5\u5b8c\u6210\uff01\u6d4f\u89c8\u5668\u5c06\u81ea\u52a8\u6253\u5f00\u6559\u7ec3\u9875\u9762\u3002\r\n\r\n" +
-                        "\u4ee5\u540e\u53cc\u51fb\u684c\u9762\u4e0a\u7684\u300cAcademy \u8fa9\u8bba\u6559\u7ec3\u300d\u56fe\u6807\u5373\u53ef\u3002",
-                        "Academy \u8fa9\u8bba\u6559\u7ec3 \u5b89\u88c5\u5411\u5bfc",
-                        MessageBoxButtons.OK,
+                    DialogResult openIt = MessageBox.Show(
+                        "\u5B89\u88C5\u5B8C\u6210\uFF01\r\n\r\n\u5DF2\u5B89\u88C5\u5230\uFF1A\r\n" + InstallDir + "\r\n\r\n" +
+                        "\u4EE5\u540E\u53CC\u51FB\u684C\u9762\u4E0A\u7684\u300CAcademy \u8FA9\u8BBA\u6559\u7EC3\u300D\u56FE\u6807\u5373\u53EF\u4F7F\u7528\u3002\r\n" +
+                        "\u4E0D\u60F3\u7528\u4E86\uFF1F\u5F00\u59CB\u83DC\u5355\u91CC\u6709\u300C\u5378\u8F7D\u300D\uFF0C\u5378\u8F7D\u524D\u4F1A\u81EA\u52A8\u5907\u4EFD\u4F60\u7684\u6570\u636E\u3002\r\n\r\n" +
+                        "\u8981\u73B0\u5728\u6253\u5F00\u5B89\u88C5\u6587\u4EF6\u5939\u770B\u770B\u5417\uFF1F",
+                        "Academy \u8FA9\u8BBA\u6559\u7EC3 \u5B89\u88C5\u5411\u5BFC",
+                        MessageBoxButtons.YesNo,
                         MessageBoxIcon.Information);
+                    if (openIt == DialogResult.Yes)
+                    {
+                        try
+                        {
+                            if (Directory.Exists(InstallDir))
+                            {
+                                Process.Start(new ProcessStartInfo
+                                {
+                                    FileName = "explorer.exe",
+                                    Arguments = "\"" + InstallDir + "\"",
+                                    UseShellExecute = true
+                                });
+                            }
+                        }
+                        catch (Exception ex2) { Program.Log("open folder failed: " + ex2.Message); }
+                    }
                 });
             }
             catch (Exception ex)
