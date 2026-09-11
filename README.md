@@ -1,4 +1,6 @@
-# Academy 辩论教练 · 本地桌面版（逻敏 v1.1）
+# Academy 辩论教练 · 本地桌面版（逻敏 v2.0.0）
+
+> 当前发行版本：**v2.0.0**　|　App 内可在「⚙ 设置 → ℹ️ 关于应用」查看版本、开源许可与联系方式
 
 > 📄 本知识库由 QFUD（驻青四校联合辩论培训计划）整理发布，
 > 采用 知识共享署名-非商业性使用-相同方式共享 4.0 国际 (CC BY-NC-SA 4.0) 许可。
@@ -63,6 +65,7 @@
 
 ## 五、许可与来源
 
+- 当前发行版本：**v2.0.0**
 - 本应用知识库采用 **CC BY-NC-SA 4.0** 许可，完整声明见 `LICENSE.md`
 - 方法论体系改编自开源项目 [debate-coach《辩论筑基》](https://github.com/MoonTzai/debate-coach)（精靈Moon著）
 - 教练质询协议改编自 [grill-me](https://github.com/mattpocock/skills/tree/main/skills/productivity/grill-me)（Matt Pocock，MIT License）
@@ -73,3 +76,8 @@
 - API Key 仅存于本地 `data/config.json`，通过子进程环境变量传递，不上传任何云
 - `data/` 目录不参与打包分发
 - 本地会话记录仅保存在本机 `data/sessions`
+
+## 七、联系我们
+
+- **QQ 交流群：386631298**（使用问题、报 bug、提建议、版本更新同步）
+- 也可在 App 内「⚙ 设置 → ℹ️ 关于应用」查看本页信息与版本号

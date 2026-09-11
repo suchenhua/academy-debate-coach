@@ -125,6 +125,7 @@
           <button type="button" class="settings-nav-item" data-settings-pane="backup"><span>💾</span> 数据备份</button>
           <button type="button" class="settings-nav-item" data-settings-pane="skills"><span>🧩</span> 技能 / 插件</button>
           <button type="button" class="settings-nav-item" data-settings-pane="stats"><span>📊</span> 使用统计</button>
+          <button type="button" class="settings-nav-item" data-settings-pane="about"><span>ℹ️</span> 关于应用</button>
         </nav>
 
         <!-- 右侧面板 -->
@@ -357,6 +358,82 @@ whenToUse: 可选：触发条件描述。
               <div class="stats-legend"><span>少</span><div class="stats-legend-cells"></div><span>多</span></div>
             </div>
             <div class="stats-grid" id="statsGrid"></div>
+          </div>
+
+          <!-- 面板：关于应用 -->
+          <div class="settings-pane" data-settings-pane="about">
+            <div class="about-hero">
+              <div class="about-logo">逻</div>
+              <div class="about-titles">
+                <div class="about-name">逻敏 · Academy 辩论教练</div>
+                <div class="about-sub">华语辩论全链路 AI 教练 · 备赛 / 复盘 / 评判</div>
+                <div class="about-verline">
+                  <span class="about-ver" id="aboutVersion">v2.0.0</span>
+                  <span class="about-engine" id="aboutEngine"></span>
+                </div>
+              </div>
+            </div>
+
+            <div class="about-section">
+              <h3 class="about-h">📜 开源许可</h3>
+              <p class="about-p">
+                本应用的知识库采用
+                <b>知识共享署名-非商业性使用-相同方式共享 4.0 国际（CC BY-NC-SA 4.0）</b> 许可协议。
+              </p>
+              <ul class="about-ul">
+                <li><b>署名（BY）</b>：允许复制、分发、展示本作品，但必须按原作品指定方式署名。</li>
+                <li><b>非商业性使用（NC）</b>：允许非商业性使用，但不得用于商业目的。</li>
+                <li><b>相同方式共享（SA）</b>：允许演绎，但演绎作品必须采用相同许可协议发布。</li>
+              </ul>
+              <p class="about-p">
+                整理发布：<b>QFUD（驻青四校联合辩论培训计划）</b>　作品名：logisme-debate-coach
+              </p>
+              <p class="about-p">
+                <button type="button" class="link-btn" id="aboutOpenLicense">查看完整许可声明（LICENSE.md）</button>
+                <button type="button" class="link-btn" id="aboutOpenCC">访问 CC 官方协议文本</button>
+              </p>
+            </div>
+
+            <div class="about-section">
+              <h3 class="about-h">🙏 第三方来源与致谢</h3>
+              <ul class="about-ul">
+                <li>方法论体系改编自开源项目 <b>《辩论筑基》</b>（精靈 Moon 著）</li>
+                <li>教练质询协议改编自 <b>grill-me</b>（Matt Pocock，MIT License）</li>
+                <li>运行内核：DeepSeek Harness（DSH）极简 Agent 内核 + 内置 Node.js + Electron</li>
+              </ul>
+              <p class="about-p about-muted">
+                内容均为公开赛事 / 出版物 / 开源项目整理改编；文中辩手、评委姓名及赛事信息
+                均来自公开渠道，仅用于方法论说明，不代表本人立场，亦不构成对任何个体的评价。
+              </p>
+            </div>
+
+            <div class="about-section">
+              <h3 class="about-h">💬 联系我们</h3>
+              <div class="about-contact">
+                <div class="about-contact-row">
+                  <span class="about-contact-label">QQ 交流群</span>
+                  <span class="about-contact-val" id="aboutQQ">386631298</span>
+                  <button type="button" class="btn ghost small" id="aboutCopyQQ">复制群号</button>
+                </div>
+                <small class="field-hint">
+                  使用问题、报 bug、提建议都欢迎进群说。群里也会同步版本更新。
+                </small>
+              </div>
+            </div>
+
+            <div class="about-section">
+              <h3 class="about-h">🔒 隐私说明</h3>
+              <ul class="about-ul">
+                <li>API Key 仅保存在本机，通过子进程环境变量传递，<b>不上传任何云端</b>。</li>
+                <li>对话记录、个人资料库、产物文件都只存在本机数据目录。</li>
+                <li>对话内容只发送给你在设置里填写的那个 AI 服务商地址。</li>
+              </ul>
+            </div>
+
+            <div class="about-foot">
+              <span id="aboutFootVer">Academy 辩论教练 v2.0.0</span> ·
+              CC BY-NC-SA 4.0 · QFUD
+            </div>
           </div>
         </div>
       </div>

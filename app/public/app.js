@@ -1318,6 +1318,71 @@ function switchSettingsPane(pane) {
   document.querySelectorAll('.settings-pane').forEach((p) => p.classList.toggle('active', p.dataset.settingsPane === pane));
   if (pane === 'stats') { try { renderStatsPane(); } catch (_) {} }
   if (pane === 'skills') { try { loadSkillsUI(); } catch (_) {} }
+  if (pane === 'about') { try { renderAboutPane(); } catch (_) {} }
+}
+
+
+/* ———— 关于应用 ———— */
+const ABOUT_LICENSE_URL = 'https://creativecommons.org/licenses/by-nc-sa/4.0/deed.zh';
+function renderAboutPane() {
+  const ver = (state.status && state.status.version) || '2.0.0';
+  const v = 'v' + String(ver).replace(/^v/i, '');
+  const elVer = $('#aboutVersion');
+  if (elVer) elVer.textContent = v;
+  const elFoot = $('#aboutFootVer');
+  if (elFoot) elFoot.textContent = 'Academy 辩论教练 ' + v;
+
+  // 引擎信息：让用户能自查运行环境是否完整
+  const s = state.status || {};
+  const parts = [];
+  if (s.engine) parts.push('内核 ' + s.engine);
+  parts.push('Node ' + (s.node ? '就绪' : '缺失'));
+  parts.push('DSH ' + (s.dsh ? '就绪' : '缺失'));
+  const elEng = $('#aboutEngine');
+  if (elEng) elEng.textContent = parts.join(' · ');
+}
+function copyAboutQQ() {
+  const qq = ($('#aboutQQ') && $('#aboutQQ').textContent || '').trim();
+  if (!qq) return;
+  const done = () => toast('QQ 群号已复制：' + qq);
+  if (navigator.clipboard && navigator.clipboard.writeText) {
+    navigator.clipboard.writeText(qq).then(done).catch(() => fallbackCopyQQ(qq, done));
+  } else {
+    fallbackCopyQQ(qq, done);
+  }
+}
+function fallbackCopyQQ(text, done) {
+  try {
+    const ta = document.createElement('textarea');
+    ta.value = text;
+    ta.style.position = 'fixed';
+    ta.style.opacity = '0';
+    document.body.appendChild(ta);
+    ta.select();
+    document.execCommand('copy');
+    document.body.removeChild(ta);
+    done();
+  } catch (_) { toast('复制失败，请手动记录群号：' + text); }
+}
+function bindAboutPane() {
+  const btnQQ = $('#aboutCopyQQ');
+  if (btnQQ) btnQQ.onclick = copyAboutQQ;
+  const openCC = $('#aboutOpenCC');
+  if (openCC) openCC.onclick = () => { try { window.open(ABOUT_LICENSE_URL, '_blank'); } catch (_) {} };
+  // 本机 LICENSE.md：优先让 Electron 用系统默认程序打开，浏览器模式则退回提示
+  const openLic = $('#aboutOpenLicense');
+  if (openLic) openLic.onclick = async () => {
+    try {
+      const r = await fetchJSON('/api/about/license');
+      if (r && r.ok && r.path) {
+        const ae = window.academyElectron;
+        if (ae && ae.showInFolder) { ae.showInFolder(r.path); toast('已在文件夹中定位 LICENSE.md'); }
+        else toast('许可文件位置：' + r.path);
+      } else {
+        toast('未找到 LICENSE.md');
+      }
+    } catch (e) { toast('打开失败：' + (e.message || '')); }
+  };
 }
 
 /* ———— 服务商卡片管理（DSH 风格：选服务商即自动填地址） ———— */
@@ -3282,6 +3347,7 @@ function bindEvents() {
     b.onclick = () => setSearchMode(b.dataset.searchMode);
   });
   bindProviderCards();
+  try { bindAboutPane(); } catch (_) {}
   bindComposerModelSelect();
   // 多配置档案：保存 / 新建
   const btnSaveProf = $('#btnSaveProfile');

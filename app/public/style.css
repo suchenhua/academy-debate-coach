@@ -733,6 +733,51 @@ body.sidebar-collapsed .sidebar-toggle { left: 54px; transform: translate(50%, -
 .stats-card .sc-icon { font-size: 20px; }
 .stats-card .sc-val { font-size: 24px; font-weight: 800; color: var(--text); margin-top: 6px; }
 .stats-card .sc-label { font-size: 12px; color: var(--muted); margin-top: 2px; }
+/* ── 关于应用 ── */
+.about-hero {
+  display: flex; align-items: center; gap: 14px;
+  padding: 14px; margin-bottom: 14px;
+  background: linear-gradient(135deg, var(--primary-soft), var(--green-soft));
+  border: 1px solid var(--border); border-radius: 14px;
+}
+.about-logo {
+  width: 52px; height: 52px; flex: 0 0 auto; border-radius: 13px;
+  display: grid; place-items: center; font-size: 26px; font-weight: 800;
+  color: #fff; background: linear-gradient(135deg, var(--primary), #4b8bff);
+  box-shadow: 0 4px 14px rgba(31, 94, 255, .28);
+}
+.about-titles { min-width: 0; }
+.about-name { font-size: 15.5px; font-weight: 800; color: var(--text); }
+.about-sub { font-size: 12px; color: var(--muted); margin-top: 3px; }
+.about-verline { display: flex; align-items: center; gap: 8px; margin-top: 7px; flex-wrap: wrap; }
+.about-ver {
+  font-size: 12px; font-weight: 700; padding: 2px 9px; border-radius: 999px;
+  background: var(--primary); color: #fff; letter-spacing: .3px;
+}
+.about-engine {
+  font-size: 11.5px; color: var(--muted);
+  padding: 2px 9px; border-radius: 999px; border: 1px solid var(--border);
+  background: var(--panel);
+}
+.about-section {
+  padding: 12px 14px; margin-bottom: 10px;
+  background: var(--bg); border: 1px solid var(--border); border-radius: 12px;
+}
+.about-h { font-size: 13.5px; font-weight: 700; margin: 0 0 8px; }
+.about-p { font-size: 12.5px; line-height: 1.7; color: var(--text); margin: 6px 0; }
+.about-muted { color: var(--muted); font-size: 11.5px; }
+.about-ul { margin: 6px 0; padding-left: 20px; }
+.about-ul li { font-size: 12.5px; line-height: 1.75; color: var(--text); }
+.about-contact-row { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
+.about-contact-label { font-size: 12.5px; font-weight: 600; color: var(--muted); flex: 0 0 auto; }
+.about-contact-val {
+  font-size: 17px; font-weight: 800; letter-spacing: 1.2px; color: var(--primary);
+  font-variant-numeric: tabular-nums; user-select: text;
+}
+.about-foot {
+  text-align: center; font-size: 11.5px; color: var(--muted);
+  padding: 10px 0 4px;
+}
 /* ── 对话历史全文搜索 ── */
 .history-search { position: relative; margin-bottom: 8px; flex: 0 0 auto; }
 .history-search input {

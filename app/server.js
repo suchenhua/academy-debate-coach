@@ -39,7 +39,9 @@ const CONFIG_FILE = path.join(DATA_DIR, 'config.json');
 const SETTINGS_FILE = path.join(DSH_HOME, 'settings.yaml');
 const PERSONA_PATCH = path.join(ROOT, 'runtime', 'persona.patch.yml');
 
-const APP_VERSION = '1.10.0';
+// 发行版本号（单一来源：/api/status 下发给前端「设置 → 关于应用」）
+// 发版时改这里，并同步 electron-main.js 的 AssemblyVersion、README、打包产物名
+const APP_VERSION = '2.0.0';
 const DEFAULT_MODEL = 'deepseek-chat';
 const DEFAULT_PORT = 8787;
 const MAX_BODY = 6 * 1024 * 1024; // 允许粘贴很长的比赛文字稿
@@ -2549,6 +2551,12 @@ function handleRequest(req, res) {
       const act = activateProfile(hit);
       return sendJson(res, 200, { ok: true, activeId: id, profile: profilePublic(hit), cfg: act ? act.cfg : undefined });
     }).catch((e) => sendJson(res, 500, { ok: false, error: e.message }));
+  }
+
+  /* 「设置 → 关于应用」用：告诉前端本机 LICENSE.md 的真实路径（前端交给系统打开） */
+  if (req.method === 'GET' && p === '/api/about/license') {
+    const lic = path.join(ROOT, 'LICENSE.md');
+    return sendJson(res, 200, { ok: fs.existsSync(lic), path: lic });
   }
 
   if (req.method === 'GET' && p === '/api/config') {
