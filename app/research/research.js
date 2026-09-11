@@ -124,12 +124,10 @@
   function setDepth(d) {
     verifyDepth = d;
     document.querySelectorAll('.depth-chip').forEach(function (b) { b.classList.toggle('active', b.dataset.depth === d); });
-    $('verifyTip').textContent = (d === 'quick')
-      ? '单轮检索直接判定，赛场上用；一次一条论据。需要 DeepSeek 官方接口。'
-      : '内核多轮检索 + 交叉验证，更细更慢；多条论据可一次贴。任何服务商都行。';
+    // 说明写在 placeholder 里：右侧单独放一行会因宽度不足看不全（单行省略号也救不了长文案）
     $('verifyInput').placeholder = (d === 'quick')
-      ? '贴一条论据（快速检证一次只查一条）…\n例：据《柳叶刀》2019 年研究，中国有 9500 万抑郁症患者。'
-      : '可一次贴多条论据，逐条核查…\n例：\n据《柳叶刀》2019 年研究，中国有 9500 万抑郁症患者。\n「青岛 2023 年 GDP 1.5 万亿，超过济南」。';
+      ? '贴一条论据，如：据《柳叶刀》2019 年研究，中国有 9500 万抑郁症患者。（快速检证一次只查一条；需 DeepSeek 官方接口）'
+      : '可一次贴多条论据，逐条核查。如：\n据《柳叶刀》2019 年研究，中国有 9500 万抑郁症患者。\n「青岛 2023 年 GDP 1.5 万亿，超过济南」。（任何服务商都行）';
   }
   function runVerify() {
     if (verifying) { toast('检证正在进行中…'); return; }
