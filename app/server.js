@@ -1949,6 +1949,33 @@ async function freeSearchResults(query) {
 }
 
 /* 搜索通道 A：端侧免费（Bing/DuckDuckGo 本地抓取，0 扣费），任何网络可用 */
+/* 快速检证：从一条论据里抽出 2~3 个检索词。
+   论据常是整句（"据《柳叶刀》2019年研究，中国有9500万抑郁症患者"），
+   整句去搜效果差，所以优先抓：书名号/引号里的专名、数字串、以及去掉修饰后的核心词。 */
+function buildVerifySeeds(claim) {
+  const s = String(claim || '').trim();
+  if (!s) return [];
+  const out = [];
+  const push = (q) => {
+    // 去掉首尾标点与不成对的引号（片段截取常会留下半个引号，影响搜索）
+    let t = String(q || '').trim().replace(/^[，。；、,.;\s]+|[，。；、,.;\s]+$/g, '');
+    for (const [l, r2] of [['《', '》'], ['「', '」'], ['"', '"'], ["'", "'"], ['【', '】']]) {
+      const n = t.split(l).length - 1, m = t.split(r2).length - 1;
+      if (n !== m) t = t.split(l).join('').split(r2).join('');
+    }
+    if (t && t.length >= 3 && t.length <= 120 && out.indexOf(t) === -1) out.push(t);
+  };
+  // ① 书名号 / 引号里的专名
+  const quoted = s.match(/[《"「'【]([^》"」'】]{2,40})[》"」'】]/g) || [];
+  for (const q of quoted) push(q.replace(/[《》"「」'【】]/g, ''));
+  // ② 含数字的关键片段（数字最容易核对）
+  const numSeg = s.match(/[^，。；、]{0,18}\d[^，。；、]{0,18}/g) || [];
+  for (const q of numSeg.slice(0, 2)) push(q);
+  // ③ 兜底：整句前 40 字
+  if (!out.length) push(s.slice(0, 40));
+  return out.slice(0, 3);
+}
+
 async function searchResults(query) {
   return { provider: 'free', sources: await freeSearchResults(query), answer: '' };
 }
@@ -2429,9 +2456,16 @@ function handleRequest(req, res) {
   }
 
   // 研究台：快速检证（赛场上用，几十秒出结果）。
-  // 与深度检证的区别：绕过内核 Agent 循环（省掉 DSH 启动 + 多轮工具调用），
-  // 单请求直连模型商的 Anthropic 兼容接口，让模型自带的原生 web_search 一次完成检索与判定。
-  // 代价是只搜一轮、来源交叉验证少于深度模式；换来 15~40 秒出结果。
+  // 与深度检证的区别：绕过内核 Agent 循环（省掉 DSH 启动 + 多轮工具调用）。
+  //
+  // 搜索通道自适应（两条都快，按可用性自动选）：
+  //   ① 模型商原生 web_search（DeepSeek 官方支持）——召回质量高，能挖到论文 DOI/PubMed；
+  //   ② 端侧免费搜索（Bing/DuckDuckGo）——任何服务商通用，但学术原文召回弱
+  //      （实测即使精准查询也拿不到 PubMed，只有官网/百科页）。
+  // 所以策略是「能用原生就用原生，不能用自动降级端侧」，而不是二选一；
+  // 两条通道拿到的来源最后都交给模型做一次判定（标准 OpenAI 兼容 /chat/completions）。
+  // 注意：各家搜索协议互不统一（智谱走 Anthropic 兼容、Kimi 走内置工具、
+  // OpenAI 走 Responses API…），逐个适配不划算，故只接 DeepSeek 原生 + 端侧兜底。
   if (req.method === 'POST' && p === '/api/research/verify-quick') {
     if (currentRun) return sendJson(res, 409, { ok: false, error: 'BUSY', message: '内核任务正在运行（不影响快速检证），但为避免抢资源请稍后再试。' });
     return readBody(req, 128 * 1024).then(async (raw) => {
@@ -2442,64 +2476,126 @@ function handleRequest(req, res) {
       if (claim.length > 4000) return sendJson(res, 400, { ok: false, error: '快速检证单次只处理一条论据（限 4000 字符）。多条请逐条来，或用完整检证。' });
 
       const cfg = loadConfig();
-      const base = searchServerBase(cfg);
-      if (!base) {
-        return sendJson(res, 400, { ok: false, error: 'QUICK_NEEDS_SERVER', message: '快速检证需要 DeepSeek 官方接口（用其原生联网搜索）。当前服务商不支持，请：\n① 到 ⚙ 设置 切换 DeepSeek 官方配置；\n② 或用完整检证（走端侧搜索，更慢但任何服务商都行）。' });
-      }
       const key = String(cfg.apiKey || '').trim();
-      if (!key) return sendJson(res, 400, { ok: false, error: '未配置 API Key' });
-
-      const prompt = [
-        '你是辩论赛场边的证据核查员。核查下面这条论据，只输出报告：',
-        '',
-        '【论据】' + claim,
-        '',
-        '必须先用 web_search 检索原始出处（官方/一手研究/权威媒体），再输出：',
-        '',
-        '**判定**：真实可用 / 部分属实（有偏差）/ 查无实据或错误 / 无法核实（选一个）',
-        '**出处**：<最权威来源+链接；查不到写「未检索到原始出处」>',
-        '**关键差异**：<数字/年份/口径与原始出处的差异；没有则写「与出处一致」>',
-        '**一句话结论**：<能不能用，怎么用才严谨，30 字内>',
-        '',
-        '铁律：查不到就明说，绝不编造出处；数字冲突以原始出处为准；结论宁可保守。',
-      ].join('\n');
+      if (!key) return sendJson(res, 400, { ok: false, error: '未配置 API Key，无法调用模型做判定。' });
 
       const t0 = Date.now();
       try {
-        const result = await postJsonTimeout(base + '/messages', {
-          'x-api-key': key,
+        const seeds = buildVerifySeeds(claim);
+        const seenUrl = new Set();
+        const sources = [];
+        let via = 'free';
+
+        // ① 优先：模型商原生 web_search（DeepSeek 官方，质量高）
+        const nativeBase = searchServerBase(cfg);
+        if (nativeBase) {
+          try {
+            const r2 = await postJsonTimeout(nativeBase + '/messages', {
+              'x-api-key': key,
+              'authorization': 'Bearer ' + key,
+              'anthropic-version': '2023-06-01',
+              'accept': 'application/json',
+            }, {
+              model: cfg.model || DEFAULT_MODEL,
+              max_tokens: 4096,
+              messages: [{ role: 'user', content: [{ type: 'text', text: 'Perform a web search for the query: ' + String(claim).slice(0, 200) }] }],
+              tools: [{ type: 'web_search_20250305', name: 'web_search', max_uses: 5 }],
+            }, 60000);
+            const blocks = (r2 && Array.isArray(r2.content)) ? r2.content : [];
+            for (const b of blocks) {
+              if (!b || b.type !== 'web_search_tool_result') continue;
+              for (const item of (b.content || [])) {
+                if (!item || item.type !== 'web_search_result' || !item.url || seenUrl.has(item.url)) continue;
+                seenUrl.add(item.url);
+                sources.push({ url: item.url, title: String(item.title || '').slice(0, 120), snippet: '' });
+                if (sources.length >= 12) break;
+              }
+              if (sources.length >= 12) break;
+            }
+            if (sources.length) via = 'native';
+          } catch (_) { /* 原生搜索不可用 → 静默走端侧 */ }
+        }
+
+        // ② 回退/补充：端侧免费搜索（任何服务商通用）
+        if (sources.length < 5) {
+          const before = sources.length;
+          for (const q of seeds) {
+            try {
+              const r3 = await searchResults(q);
+              const list = (r3 && r3.sources) || [];
+              for (const s of list) {
+                if (!s || !s.url || seenUrl.has(s.url)) continue;
+                seenUrl.add(s.url);
+                sources.push({ url: s.url, title: String(s.title || '').slice(0, 120), snippet: String(s.snippet || '').slice(0, 300) });
+                if (sources.length >= 12) break;
+              }
+            } catch (_) {}
+            if (sources.length >= 12) break;
+          }
+          if (sources.length > before && via === 'native') via = 'native+free';
+          else if (sources.length > before) via = 'free';
+        }
+
+        // ② 把来源交给模型做单次判定（标准 OpenAI 兼容接口，任何服务商都能用）
+        const srcText = sources.length
+          ? sources.map((s, i) => '[' + (i + 1) + '] ' + (s.title || s.url) + '\n    ' + s.url + (s.snippet ? '\n    摘要：' + s.snippet : '')).join('\n')
+          : '（本次没有检索到任何来源，请据此判定为「无法核实」，不要臆造出处）';
+
+        const prompt = [
+          '你是辩论赛场边的证据核查员。下面是待核查的论据，以及系统检索到的来源材料。',
+          '请只依据这些材料（以及可靠的常识）判断，并输出报告。',
+          '',
+          '【待核查论据】',
+          claim,
+          '',
+          '【检索到的来源】',
+          srcText,
+          '',
+          '【输出格式】',
+          '**判定**：真实可用 / 部分属实（有偏差）/ 查无实据或错误 / 无法核实（选一个）',
+          '**出处**：<最权威来源+链接；材料不足就写「未检索到原始出处」>',
+          '**关键差异**：<数字/年份/口径与来源材料的差异；没有则写「与来源一致」>',
+          '**一句话结论**：<能不能用，怎么用才严谨，30 字内>',
+          '',
+          '【铁律】',
+          '- 来源材料不足以确认时，判定为「无法核实」，绝不编造出处或数据；',
+          '- 数字冲突以更权威/更一手来源为准，并指出差异；',
+          '- 结论宁可保守。',
+        ].join('\n');
+
+        const target = chatCompletionsUrl(cfg.baseUrl);
+        const result = await postJsonTimeout(target, {
           'authorization': 'Bearer ' + key,
-          'anthropic-version': '2023-06-01',
           'accept': 'application/json',
         }, {
           model: cfg.model || DEFAULT_MODEL,
-          max_tokens: 3000,
-          messages: [{ role: 'user', content: [{ type: 'text', text: prompt }] }],
-          tools: [{ type: 'web_search_20250305', name: 'web_search', max_uses: 5 }],
+          max_tokens: 6000,   // 推理型模型的思考过程也计入，给足预算避免正文被截断
+          temperature: 0.2,
+          messages: [
+            { role: 'system', content: '你是严谨的辩论证据核查员，只依据给定材料判断，绝不编造。直接输出报告，不要复述思考过程。' },
+            { role: 'user', content: prompt },
+          ],
         }, 90000);
 
-        const blocks = (result && Array.isArray(result.content)) ? result.content : [];
-        let report = '';
-        for (const b of blocks) {
-          if (b && b.type === 'text' && b.text) report += (report ? '\n\n' : '') + b.text;
+        const msg0 = (((result || {}).choices || [])[0] || {}).message || {};
+        // 推理型模型（如 deepseek-flash 默认推理模式）常把正文写进 reasoning_content，
+        // content 为空——token 预算被思考过程吃掉。故 content 为空时回退取 reasoning_content。
+        let report = String(msg0.content || '').trim();
+        if (!report) report = String(msg0.reasoning_content || '').trim();
+        if (!report) {
+          console.log('[research] 快速检证: 模型响应为空 raw=' + JSON.stringify(result).slice(0, 300));
+          return sendJson(res, 500, { ok: false, error: '模型没有返回检证报告（响应为空），请重试。' });
         }
-        const sources = [];
-        const seen = new Set();
-        for (const b of blocks) {
-          if (!b || b.type !== 'web_search_tool_result') continue;
-          for (const item of (b.content || [])) {
-            if (!item || item.type !== 'web_search_result' || !item.url || seen.has(item.url)) continue;
-            seen.add(item.url);
-            sources.push({ url: item.url, title: String(item.title || '').slice(0, 120) });
-          }
-        }
-        if (!report.trim()) return sendJson(res, 500, { ok: false, error: '模型没有返回检证报告，请重试。' });
-        console.log('[research] 快速检证完成: ' + claim.slice(0, 40) + ' 用时 ' + Math.round((Date.now() - t0) / 1000) + 's');
+        console.log('[research] 快速检证完成: ' + claim.slice(0, 40) + ' 用时 ' + Math.round((Date.now() - t0) / 1000) + 's, 来源 ' + sources.length + ' 条, 通道 ' + via);
         return sendJson(res, 200, {
-          ok: true, claim, report: report.trim(), sources,
+          ok: true, claim, report,
+          sources: sources.map((s) => ({ url: s.url, title: s.title })),
           elapsedMs: Date.now() - t0,
           quick: true,
-          disclaimer: '快速检证只做一轮检索，结论供赛场快速参考；重要论据建议赛后用「完整检证」复核。',
+          via,
+          disclaimer: via === 'free'
+            ? '快速检证只做一轮端侧检索（当前服务商无原生搜索，已自动降级为免费端侧搜索，学术原文召回较弱），结论供赛场快速参考；重要论据建议赛后用「完整检证」复核。'
+            : '快速检证只做一轮检索，结论供赛场快速参考；重要论据建议赛后用「完整检证」复核。',
         });
       } catch (e) {
         return sendJson(res, 502, { ok: false, error: '快速检证失败：' + e.message });
