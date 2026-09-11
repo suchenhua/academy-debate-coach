@@ -2140,7 +2140,6 @@ const TOOL_INFO = [
   ['__mdReader__', '📖 MD 阅读器', '打开本地 Markdown / 文本文件阅读'],
   ['辩案工作台-Case-Workbench.html', '辩案工作台', '九步法构建完整辩案'],
   ['简易流水单-Flowing-Tool.html', '简易流水单', '比赛攻防流水记录'],
-  ['语音与口条练习-Voice-Practice.html', '语音与口条练习', '口条 / 表达练习'],
 ];
 
 function renderTools() {
@@ -2577,15 +2576,122 @@ async function openMemory() {
   }
 }
 
-function memEntryCard(e) {
+function memPanelBar(scope, label) {
+  const bar = el('div', 'mem-panel-bar');
+  const b = el('button', 'btn ghost small', label);
+  b.type = 'button';
+  b.onclick = () => openMemoryNew(scope);
+  bar.appendChild(b);
+  bar.appendChild(el('span', 'mem-panel-tip', '每条记忆都可以编辑或删除'));
+  return bar;
+}
+
+function memEntryCard(e, scope, date) {
   const d = el('div', 'mem-entry');
+  const head = el('div', 'mem-entry-head');
   const t = el('div', 'mem-entry-title', '');
   t.appendChild(document.createTextNode(e.title || '（未命名）'));
   if (e.time) t.appendChild(el('span', 'mem-entry-time', e.time));
-  d.appendChild(t);
+  head.appendChild(t);
+
+  // 编辑工具条（平时不占位，hover 显示）
+  const acts = el('div', 'mem-entry-acts');
+  const bEdit = el('button', 'mem-act-btn', '✏️ 编辑'); bEdit.type = 'button';
+  const bDel = el('button', 'mem-act-btn danger', '🗑 删除'); bDel.type = 'button';
+  acts.appendChild(bEdit); acts.appendChild(bDel);
+  head.appendChild(acts);
+  d.appendChild(head);
+
   const body = el('div', 'mem-entry-body', e.body || '（无内容）');
   d.appendChild(body);
+
+  // 原地编辑区（默认隐藏）
+  const editor = el('div', 'mem-entry-editor hidden');
+  const inTitle = document.createElement('input');
+  inTitle.type = 'text'; inTitle.className = 'mem-edit-title';
+  inTitle.value = e.title || ''; inTitle.placeholder = '标题（留空则自动用时间戳）';
+  const inBody = document.createElement('textarea');
+  inBody.className = 'mem-edit-body'; inBody.rows = 6;
+  inBody.value = e.body || ''; inBody.placeholder = '内容（支持 Markdown）';
+  const btns = el('div', 'mem-edit-actions');
+  const bSave = el('button', 'btn primary small', '保存'); bSave.type = 'button';
+  const bCancel = el('button', 'btn ghost small', '取消'); bCancel.type = 'button';
+  btns.appendChild(bSave); btns.appendChild(bCancel);
+  editor.appendChild(inTitle); editor.appendChild(inBody); editor.appendChild(btns);
+  d.appendChild(editor);
+
+  bEdit.onclick = () => {
+    editor.classList.remove('hidden');
+    body.classList.add('hidden');
+    try { inTitle.focus(); } catch (_) {}
+  };
+  bCancel.onclick = () => {
+    editor.classList.add('hidden');
+    body.classList.remove('hidden');
+    inTitle.value = e.title || '';
+    inBody.value = e.body || '';
+  };
+  bSave.onclick = () => saveMemoryEntry({ scope, date, idx: e.idx, title: inTitle.value, body: inBody.value }, bSave);
+  bDel.onclick = () => deleteMemoryEntry({ scope, date, idx: e.idx, title: e.title });
   return d;
+}
+
+/* 保存单条记忆（idx 为数字 = 改；新增时不传 idx） */
+async function saveMemoryEntry(payload, btn) {
+  if (btn) { btn.disabled = true; btn.textContent = '保存中…'; }
+  try {
+    const r = await fetchJSON('/api/memory/save', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(payload),
+    });
+    if (!r.ok) throw new Error(r.error || '保存失败');
+    toast(r.mode === 'create' ? '已新增记忆' : '已保存修改');
+    await openMemory();
+  } catch (e) {
+    toast('保存失败：' + e.message);
+    if (btn) { btn.disabled = false; btn.textContent = '保存'; }
+  }
+}
+
+async function deleteMemoryEntry({ scope, date, idx, title }) {
+  const label = String(title || '').slice(0, 24) || '这条记忆';
+  if (!confirm('确定删除「' + label + '」？此操作不可恢复。')) return;
+  try {
+    const r = await fetchJSON('/api/memory/delete', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ scope, date, idx }),
+    });
+    if (!r.ok) throw new Error(r.error || '删除失败');
+    toast('已删除');
+    await openMemory();
+  } catch (e) { toast('删除失败：' + e.message); }
+}
+
+/* 新增记忆（长期 / 当天流水） */
+function openMemoryNew(scope) {
+  const host = scope === 'daily' ? $('#memoryDailyPanel') : $('#memoryLongPanel');
+  if (!host) return;
+  if ($('#memNewBox')) { $('#memNewBox').remove(); return; }
+  const box = el('div', 'mem-new-box');
+  box.id = 'memNewBox';
+  const inTitle = document.createElement('input');
+  inTitle.type = 'text'; inTitle.className = 'mem-edit-title';
+  inTitle.placeholder = '标题（留空则自动用时间戳）';
+  const inBody = document.createElement('textarea');
+  inBody.className = 'mem-edit-body'; inBody.rows = 5;
+  inBody.placeholder = scope === 'daily' ? '今天想记点什么？（支持 Markdown）' : '要长期记住的内容，如判准、偏好、基准…';
+  const btns = el('div', 'mem-edit-actions');
+  const bSave = el('button', 'btn primary small', '添加'); bSave.type = 'button';
+  const bCancel = el('button', 'btn ghost small', '取消'); bCancel.type = 'button';
+  btns.appendChild(bSave); btns.appendChild(bCancel);
+  box.appendChild(inTitle); box.appendChild(inBody); box.appendChild(btns);
+  host.insertBefore(box, host.firstChild);
+  try { inTitle.focus(); } catch (_) {}
+  bCancel.onclick = () => box.remove();
+  bSave.onclick = () => {
+    if (!inTitle.value.trim() && !inBody.value.trim()) { toast('标题和内容不能都为空'); return; }
+    saveMemoryEntry({ scope, title: inTitle.value, body: inBody.value }, bSave);
+  };
 }
 
 function renderMemoryViews(j) {
@@ -2599,19 +2705,21 @@ function renderMemoryViews(j) {
   // 长期面板
   const longPanel = $('#memoryLongPanel');
   longPanel.innerHTML = '';
+  longPanel.appendChild(memPanelBar('long', '＋ 新增长期记忆'));
   const longEntries = (j.long && j.long.entries) || [];
   if (!longEntries.length) {
-    longPanel.appendChild(el('div', 'mem-empty', '暂无长期记忆。Agent 在对话中发现值得长期记住的内容（判准、偏好、基准等）时，会自动以「长期记忆」归档到这里。也可以直接告诉它「记住…」。'));
+    longPanel.appendChild(el('div', 'mem-empty', '暂无长期记忆。Agent 在对话中发现值得长期记住的内容（判准、偏好、基准等）时，会自动以「长期记忆」归档到这里。也可以直接告诉它「记住…」，或点上方「＋ 新增长期记忆」手动添加。'));
   } else {
-    for (const e of longEntries.slice().reverse()) longPanel.appendChild(memEntryCard(e));
+    for (const e of longEntries.slice().reverse()) longPanel.appendChild(memEntryCard(e, 'long', ''));
   }
 
   // 流水面板
   const dailyPanel = $('#memoryDailyPanel');
   dailyPanel.innerHTML = '';
+  dailyPanel.appendChild(memPanelBar('daily', '＋ 新增今日流水'));
   const daily = j.daily || [];
   if (!daily.length) {
-    dailyPanel.appendChild(el('div', 'mem-empty', '暂无每日流水。Agent 的短期观察会归档到「当日流水」，几天后其中值得保留的会自动晋升为长期记忆。'));
+    dailyPanel.appendChild(el('div', 'mem-empty', '暂无每日流水。Agent 的短期观察会归档到「当日流水」，几天后其中值得保留的会自动晋升为长期记忆；也可以点上方「＋ 新增今日流水」手动记一笔。'));
   } else {
     for (const d of daily) {
       const grp = el('div', 'mem-day-group');
@@ -2619,7 +2727,7 @@ function renderMemoryViews(j) {
       head.appendChild(el('span', null, '📅 ' + d.date));
       head.appendChild(el('span', 'count', (d.entries || []).length + ' 条'));
       grp.appendChild(head);
-      for (const e of (d.entries || []).slice().reverse()) grp.appendChild(memEntryCard(e));
+      for (const e of (d.entries || []).slice().reverse()) grp.appendChild(memEntryCard(e, 'daily', d.date));
       dailyPanel.appendChild(grp);
     }
   }

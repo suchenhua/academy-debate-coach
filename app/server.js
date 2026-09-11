@@ -509,6 +509,7 @@ function parseMemoryEntries(md) {
   const out = [];
   if (!md || !md.trim()) return out;
   const segs = String(md).split(/\n?---\n?/);
+  let i = 0;
   for (const seg of segs) {
     const t = seg.trim();
     if (!t) continue;
@@ -516,9 +517,45 @@ function parseMemoryEntries(md) {
     const title = titleM ? titleM[1].trim() : '（未命名条目）';
     const body = t.replace(/##+\s*.+/, '').trim();
     const tsM = t.match(/(\d{4}-\d{2}-\d{2}[ T]\d{2}:\d{2}:\d{2})/);
-    out.push({ title, body, time: tsM ? tsM[1] : '' });
+    // idx = 该条目在其所属文件里的原始下标，编辑/删除时靠它定位
+    out.push({ idx: i, title, body, time: tsM ? tsM[1] : '' });
+    i++;
   }
   return out;
+}
+
+/* ---- 记忆编辑：定位文件 + 分段序列化回写 ---- */
+function memoryDailyPath(date) {
+  const d = String(date || '').trim();
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(d)) return '';
+  return path.join(MEMORY_DIR, d + '.md');
+}
+/* scope: long -> memory.md ; daily -> memory/<YYYY-MM-DD>.md（未指定日期则用今天） */
+function memoryTargetPath(scope, date) {
+  if (scope === 'long') return MEMORY_FILE;
+  if (scope !== 'daily') return '';
+  return memoryDailyPath(date) || dailyFileFor();
+}
+function memorySegments(md) {
+  return String(md || '').split(/\n?---\n?/).map((s) => s.trim()).filter(Boolean);
+}
+function memoryWriteSegments(fp, segs) {
+  ensureDir(path.dirname(fp));
+  let next = segs.join('\n\n---\n\n');
+  if (next) next += '\n';
+  if (next.length > MEMORY_FILE_MAX) next = next.slice(-MEMORY_FILE_MAX);
+  fs.writeFileSync(fp, next, 'utf8');
+  return next.length;
+}
+/* 标题留空时自动生成带时间戳的标题（与 Agent 自动归档的格式一致） */
+function memoryMakeSegment(title, body, opts) {
+  const t = String(title || '').trim();
+  const b = String(body || '').trim();
+  const long = !(opts && opts.daily);
+  const head = t
+    ? (/^#/.test(t) ? t : '## ' + t)
+    : ('## ' + new Date().toISOString().replace('T', ' ').slice(0, 19) + (long ? ' · 长期记忆' : ' · 备忘'));
+  return b ? head + '\n\n' + b : head;
 }
 
 /* ---- 归档：<!-- MEMORY: x --> 走长期；<!-- NOTE: x --> 走当日流水 ---- */
@@ -2457,6 +2494,62 @@ function handleRequest(req, res) {
         totalBytes: longSize + dailyEntries.reduce((t, d) => t + d.size, 0),
       },
     });
+  }
+
+  /* —— 记忆编辑（用户手动增 / 改 / 删单条记忆） —— */
+  if (req.method === 'POST' && p === '/api/memory/save') {
+    return readBody(req, 256 * 1024).then((raw) => {
+      let body;
+      try { body = JSON.parse(raw || '{}'); } catch (_) { return sendJson(res, 400, { ok: false, error: 'JSON 解析失败' }); }
+      const scope = body.scope === 'daily' ? 'daily' : 'long';
+      const fp = memoryTargetPath(scope, body.date);
+      if (!fp) return sendJson(res, 400, { ok: false, error: '无法定位记忆文件' });
+      const title = String(body.title || '').trim();
+      const text = String(body.body || '').trim();
+      if (!title && !text) return sendJson(res, 400, { ok: false, error: '标题和内容不能都为空' });
+
+      let segs;
+      try { segs = memorySegments(fs.existsSync(fp) ? fs.readFileSync(fp, 'utf8') : ''); } catch (_) { segs = []; }
+
+      const seg = memoryMakeSegment(title, text, { daily: scope === 'daily' });
+      // 区分「新增」和「改」：body.idx 没传 = 新增；传了但越界 = 条目已被别处改动，
+      // 必须报错而不是静默当新增，否则用户会莫名其妙多出一条。
+      const wantsUpdate = body.idx !== undefined && body.idx !== null && body.idx !== '';
+      if (wantsUpdate) {
+        const idx = Number(body.idx);
+        if (!Number.isInteger(idx) || idx < 0 || idx >= segs.length) {
+          return sendJson(res, 409, { ok: false, error: '这条记忆已发生变化（可能被 Agent 或别处修改过），请关闭重开后重试。' });
+        }
+        segs[idx] = seg;                        // 改
+      } else {
+        segs.push(seg);                         // 增（追加到末尾）
+      }
+      try {
+        const size = memoryWriteSegments(fp, segs);
+        return sendJson(res, 200, { ok: true, scope, file: path.basename(fp), size, mode: wantsUpdate ? 'update' : 'create' });
+      } catch (e) { return sendJson(res, 500, { ok: false, error: '写入失败：' + e.message }); }
+    }).catch((e) => sendJson(res, 500, { ok: false, error: e.message }));
+  }
+
+  if (req.method === 'POST' && p === '/api/memory/delete') {
+    return readBody(req, 64 * 1024).then((raw) => {
+      let body;
+      try { body = JSON.parse(raw || '{}'); } catch (_) { return sendJson(res, 400, { ok: false, error: 'JSON 解析失败' }); }
+      const scope = body.scope === 'daily' ? 'daily' : 'long';
+      const fp = memoryTargetPath(scope, body.date);
+      if (!fp || !fs.existsSync(fp)) return sendJson(res, 404, { ok: false, error: '记忆文件不存在' });
+      let segs;
+      try { segs = memorySegments(fs.readFileSync(fp, 'utf8')); } catch (_) { return sendJson(res, 500, { ok: false, error: '读取失败' }); }
+      const idx = Number(body.idx);
+      if (!Number.isInteger(idx) || idx < 0 || idx >= segs.length) {
+        return sendJson(res, 404, { ok: false, error: '该条目不存在（可能已被修改，请刷新）' });
+      }
+      segs.splice(idx, 1);
+      try {
+        memoryWriteSegments(fp, segs);
+        return sendJson(res, 200, { ok: true, removed: idx, left: segs.length });
+      } catch (e) { return sendJson(res, 500, { ok: false, error: '写入失败：' + e.message }); }
+    }).catch((e) => sendJson(res, 500, { ok: false, error: e.message }));
   }
 
   if (req.method === 'POST' && p === '/api/memory/clear') {
