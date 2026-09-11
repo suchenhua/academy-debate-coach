@@ -41,6 +41,11 @@ main{ flex:1; display:flex; flex-direction:column; min-height:0; }
   background:var(--bg); color:var(--text); outline:none;
 }
 .verify textarea:focus{ border-color:var(--primary); box-shadow:0 0 0 3px var(--primary-soft); }
+.verify-depth{ display:flex; gap:6px; margin-bottom:6px; }
+.depth-chip{ font-family:inherit; cursor:pointer; font-size:12px; padding:4px 12px; border-radius:999px; border:1px solid var(--border); background:var(--bg); color:var(--muted); }
+.depth-chip.active{ background:var(--primary); color:#fff; border-color:var(--primary); font-weight:600; }
+.depth-chip:hover{ border-color:var(--primary); }
+.verify-depth-note{ font-size:11px; color:var(--muted); margin:0 0 8px; line-height:1.6; }
 .verify-actions{ display:flex; align-items:center; gap:10px; margin-top:8px; }
 .btn.verify{ border-color:var(--primary); color:var(--primary); font-weight:600; }
 .btn.verify:hover{ background:var(--primary-soft); }

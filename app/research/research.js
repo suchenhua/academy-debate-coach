@@ -120,26 +120,59 @@
 
   /* ---- 证据检证：论据是否被编造 / 曲解（真联网核查） ---- */
   var verifying = false;
+  var verifyDepth = 'quick';   // quick=赛场几十秒 | deep=赛后1~5分钟
+  function setDepth(d) {
+    verifyDepth = d;
+    document.querySelectorAll('.depth-chip').forEach(function (b) { b.classList.toggle('active', b.dataset.depth === d); });
+    $('verifyTip').textContent = (d === 'quick')
+      ? '单轮检索直接判定，赛场上用；一次一条论据。需要 DeepSeek 官方接口。'
+      : '内核多轮检索 + 交叉验证，更细更慢；多条论据可一次贴。任何服务商都行。';
+    $('verifyInput').placeholder = (d === 'quick')
+      ? '贴一条论据（快速检证一次只查一条）…\n例：据《柳叶刀》2019 年研究，中国有 9500 万抑郁症患者。'
+      : '可一次贴多条论据，逐条核查…\n例：\n据《柳叶刀》2019 年研究，中国有 9500 万抑郁症患者。\n「青岛 2023 年 GDP 1.5 万亿，超过济南」。';
+  }
   function runVerify() {
     if (verifying) { toast('检证正在进行中…'); return; }
     var claim = ($('verifyInput').value || '').trim();
     if (!claim) { toast('先把要核查的论据贴进来'); return; }
+    var quick = verifyDepth === 'quick';
+    if (quick && claim.split('\n').filter(function(x){return x.trim()}).length > 1) {
+      // 快速模式多条：自动拆成单条只查第一条？不——提示用户
+      var lines = claim.split('\n').map(function(x){return x.trim();}).filter(function(x){return x;});
+      if (lines.length > 1) { toast('快速检证一次只查一条（' + lines.length + ' 条待检）。请删到只剩一条，或切「完整检证」。'); return; }
+    }
     verifying = true;
     $('btnVerifyRun').disabled = true;
-    $('btnVerifyRun').textContent = '🛡 检证中…';
+    $('btnVerifyRun').textContent = quick ? '⚡ 快速检证中…' : '🛡 完整检证中…';
     var box = $('verifyResult');
     box.classList.remove('hidden');
-    box.innerHTML = '<div class="loading-bar"></div><p class="hint">研究助手正在联网检索原始出处、核对数字与结论…（约 1~5 分钟，取决于论据数量）</p>';
-    api('/api/research/verify', 'POST', { claim: claim, context: ($('topic').value || '').trim() }).then(function (r) {
+    box.innerHTML = quick
+      ? '<div class="loading-bar"></div><p class="hint">⚡ 快速检证中：联网检索原始出处并核对…（约 20~40 秒）</p>'
+      : '<div class="loading-bar"></div><p class="hint">🛡 完整检证中：多轮检索 + 交叉验证…（约 1~5 分钟，取决于论据数量）</p>';
+    var req = quick
+      ? api('/api/research/verify-quick', 'POST', { claim: claim })
+      : api('/api/research/verify', 'POST', { claim: claim, context: ($('topic').value || '').trim() });
+    req.then(function (r) {
       var j = r.json || {};
-      if (r.status !== 200 || !j.ok) throw new Error(j.error || ('HTTP ' + r.status));
-      box.innerHTML = '<div class="verify-title">🛡 检证报告<button type="button" class="tbtn" id="verifyCopy" title="复制报告">📋</button><button type="button" class="tbtn" id="verifyToChat" title="发给研究助手讨论">💬</button></div><div class="md" id="verifyMd"></div>';
-      renderMd(document.getElementById('verifyMd'), j.report || '（空报告）');
+      if (r.status !== 200 || !j.ok) {
+        if (j && j.error === 'QUICK_NEEDS_SERVER') {
+          box.innerHTML = '<p class="hint">⚡ 快速检证需要 DeepSeek 官方接口（用其原生联网搜索）。<br>当前服务商不支持——两个选择：<br>① 到主 App ⚙ 设置 切到 DeepSeek 官方配置后重试；<br>② 改用「🛡 完整检证」（走端侧免费搜索，任何服务商都行，慢一些）。</p>';
+          return;
+        }
+        throw new Error(j.error || ('HTTP ' + r.status));
+      }
+      var report = j.report || '（空报告）';
+      if (quick && j.disclaimer) report += '\n\n> ' + j.disclaimer;
+      if (quick && (j.sources || []).length) {
+        report += '\n\n**本轮检索到的来源：**\n' + j.sources.map(function (s) { return '- [' + (s.title || s.url) + '](' + s.url + ')'; }).join('\n');
+      }
+      box.innerHTML = '<div class="verify-title">🛡 检证报告' + (quick ? '（快速）' : '') + '<button type="button" class="tbtn" id="verifyCopy" title="复制报告">📋</button><button type="button" class="tbtn" id="verifyToChat" title="发给研究助手讨论">💬</button></div><div class="md" id="verifyMd"></div>';
+      renderMd(document.getElementById('verifyMd'), report);
       document.getElementById('verifyCopy').onclick = function () {
-        A.copyText(j.report || '').then(function () { toast('报告已复制'); });
+        A.copyText(report).then(function () { toast('报告已复制'); });
       };
       document.getElementById('verifyToChat').onclick = function () {
-        sendChat('关于我刚做的证据检证报告，有几个点想再讨论：\n\n' + (j.report || '').slice(0, 1200));
+        sendChat((quick ? '关于快速检证报告' : '关于证据检证报告') + '，有几个点想再讨论：\n\n' + report.slice(0, 1200));
       };
     }).catch(function (e) {
       box.innerHTML = '<p class="hint">检证失败：' + esc(e.message) + '</p>';
@@ -159,6 +192,10 @@
   };
   $('verifyClose').onclick = function () { $('verifyBox').classList.add('hidden'); };
   $('btnVerifyRun').onclick = runVerify;
+  document.querySelectorAll('.depth-chip').forEach(function (b) {
+    b.onclick = function () { setDepth(b.dataset.depth); };
+  });
+  setDepth('quick');   // 默认快速检证（赛场场景优先）
   $('topic').addEventListener('keydown', function (e) { if (e.key === 'Enter') doSearch(); });
 
   /* ---- 独立对话（research 模式，走主 App /api/chat/stream）---- */
