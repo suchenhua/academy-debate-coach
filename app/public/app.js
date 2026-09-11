@@ -1507,6 +1507,16 @@ function copyAboutQQ() {
     fallbackCopyQQ(qq, done);
   }
 }
+function copyAboutWeChat() {
+  const wx = ($('#aboutWeChat') && $('#aboutWeChat').textContent || '').trim();
+  if (!wx) return;
+  const done = () => toast('微信公众号已复制：' + wx);
+  if (navigator.clipboard && navigator.clipboard.writeText) {
+    navigator.clipboard.writeText(wx).then(done).catch(() => fallbackCopyQQ(wx, done));
+  } else {
+    fallbackCopyQQ(wx, done);
+  }
+}
 function fallbackCopyQQ(text, done) {
   try {
     const ta = document.createElement('textarea');
@@ -1518,11 +1528,13 @@ function fallbackCopyQQ(text, done) {
     document.execCommand('copy');
     document.body.removeChild(ta);
     done();
-  } catch (_) { toast('复制失败，请手动记录群号：' + text); }
+  } catch (_) { toast('复制失败，请手动记录：' + text); }
 }
 function bindAboutPane() {
   const btnQQ = $('#aboutCopyQQ');
   if (btnQQ) btnQQ.onclick = copyAboutQQ;
+  const btnWx = $('#aboutCopyWeChat');
+  if (btnWx) btnWx.onclick = copyAboutWeChat;
   const openCC = $('#aboutOpenCC');
   if (openCC) openCC.onclick = () => { try { window.open(ABOUT_LICENSE_URL, '_blank'); } catch (_) {} };
   // 本机 LICENSE.md：优先让 Electron 用系统默认程序打开，浏览器模式则退回提示
