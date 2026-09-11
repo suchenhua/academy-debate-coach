@@ -143,7 +143,8 @@
     }
     verifying = true;
     $('btnVerifyRun').disabled = true;
-    $('btnVerifyRun').textContent = quick ? '⚡ 快速检证中…' : '🛡 完整检证中…';
+    // 文案统一 5 个汉字 + 「中…」，宽度一致避免按钮伸缩；emoji 显示宽不稳定不用在按钮里
+    $('btnVerifyRun').textContent = quick ? '快速检证中…' : '完整检证中…';
     var box = $('verifyResult');
     box.classList.remove('hidden');
     box.innerHTML = quick
@@ -180,7 +181,7 @@
       // 收尾（无论成败）：恢复按钮状态
       verifying = false;
       $('btnVerifyRun').disabled = false;
-      $('btnVerifyRun').textContent = '🛡 开始检证';
+      $('btnVerifyRun').textContent = '开始检证';
     });
   }
   $('btnVerify').onclick = function () {

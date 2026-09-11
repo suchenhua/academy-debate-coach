@@ -42,6 +42,17 @@ main{ flex:1; display:flex; flex-direction:column; min-height:0; }
 }
 .verify textarea:focus{ border-color:var(--primary); box-shadow:0 0 0 3px var(--primary-soft); }
 .verify-depth{ display:flex; gap:6px; margin-bottom:6px; }
+/* 开始检证按钮：固定宽度并居中——三种文案（开始/快速中/完整中）长度不同，
+   若随内容伸缩，切换模式或点检证时按钮和右侧提示会跳位。 */
+#btnVerifyRun {
+  min-width: 128px; text-align: center; white-space: nowrap;
+  font-variant-numeric: tabular-nums;
+}
+.verify-tip {
+  flex: 1; min-width: 0;
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+  /* 单行省略：两档提示文字长短不同，若折行会让面板高度跳变 */
+}
 .depth-chip{ font-family:inherit; cursor:pointer; font-size:12px; padding:4px 12px; border-radius:999px; border:1px solid var(--border); background:var(--bg); color:var(--muted); }
 .depth-chip.active{ background:var(--primary); color:#fff; border-color:var(--primary); font-weight:600; }
 .depth-chip:hover{ border-color:var(--primary); }
