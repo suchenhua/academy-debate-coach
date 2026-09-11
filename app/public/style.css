@@ -224,9 +224,25 @@ button { font-family: inherit; cursor: pointer; }
 .msg.assistant .bubble { background: var(--panel); border: 1px solid var(--border); border-top-left-radius: 4px; flex: 1; box-shadow: 0 1px 3px rgba(30,50,100,.06); }
 .msg.assistant .bubble.error { border-color: #f2c5c5; background: var(--red-soft); }
 .msg-meta { display: flex; justify-content: space-between; font-size: 11px; color: var(--muted); margin-bottom: 6px; gap: 8px; }
-.msg-actions { display: flex; gap: 6px; }
-.msg-actions button { font-size: 11px; border: none; background: none; color: var(--muted); }
-.msg-actions button:hover { color: var(--primary); }
+.msg-actions { display: flex; gap: 6px; flex-wrap: wrap; }
+.msg-actions button { font-size: 11px; border: none; background: none; color: var(--muted); cursor: pointer; padding: 2px 4px; border-radius: 5px; }
+.msg-actions button:hover { color: var(--primary); background: var(--primary-soft); }
+.msg-actions button.starred { color: #d97706; }
+.msg-star-badge { color: #d97706; margin-left: 4px; }
+
+/* 产物空间：文件/收藏 双 tab + 类型筛选片 */
+.deliver-tabs { display: flex; gap: 6px; margin-bottom: 10px; }
+.deliver-tab { font-family: inherit; cursor: pointer; font-size: 13px; padding: 6px 14px; border-radius: 8px; border: 1px solid var(--border); background: var(--bg); color: var(--muted); }
+.deliver-tab.active { background: var(--primary); color: #fff; border-color: var(--primary); font-weight: 600; }
+.deliver-tab:hover { border-color: var(--primary); }
+.deliver-chips { display: flex; gap: 6px; flex-wrap: wrap; margin-bottom: 8px; }
+.deliver-chips .chip { font-family: inherit; cursor: pointer; font-size: 12px; padding: 3px 12px; border-radius: 999px; border: 1px solid var(--border); background: var(--bg); color: var(--muted); }
+.deliver-chips .chip.active { background: var(--primary); color: #fff; border-color: var(--primary); font-weight: 600; }
+.deliver-chips .chip:hover { border-color: var(--primary); }
+.star-item { border: 1px solid var(--border); border-radius: 9px; padding: 10px 12px; }
+.star-item-head { display: flex; justify-content: space-between; gap: 8px; font-size: 12px; color: var(--muted); margin-bottom: 4px; }
+.star-item-text { font-size: 12.5px; line-height: 1.6; color: var(--text); max-height: 88px; overflow: hidden; word-break: break-word; }
+.star-item-actions { display: flex; gap: 6px; flex-wrap: wrap; margin-top: 6px; }
 
 /* Markdown 内容 */
 .md { word-break: break-word; }

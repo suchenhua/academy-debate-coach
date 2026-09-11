@@ -550,6 +550,32 @@ function renderMessage(idx, m) {
     const actions = el('div', 'msg-actions');
     const copy = el('button', null, '复制');
     copy.onclick = () => copyText(m.text || m.error || '');
+    // 一键存产物：不用再让 Agent「写一份存到产物空间」，点一下就行
+    const toDeliver = el('button', null, '💾 存产物');
+    toDeliver.title = '把这条回复存为产物空间的 Markdown 文件';
+    toDeliver.onclick = () => saveMsgToDeliver(m);
+    const star = el('button', m.starred ? 'starred' : null, m.starred ? '⭐ 已收藏' : '⭐ 收藏');
+    star.title = '收藏后可在「📦 产物 → ⭐ 收藏」跨对话查看';
+    star.onclick = () => {
+      m.starred = !m.starred;
+      persistChat();
+      renderMessages();
+    };
+    // 重答：只给最后一条回复且不在生成中时出现
+    const isLastAssistant = (() => {
+      const ms = state.messages || [];
+      for (let i = ms.length - 1; i >= 0; i--) {
+        if (ms[i].role === 'assistant') return ms[i] === m;
+        if (ms[i] === m) return false;
+      }
+      return false;
+    })();
+    let reroll = null;
+    if (isLastAssistant && !m.running && !m.error) {
+      reroll = el('button', null, '🔄 重答');
+      reroll.title = '按同一句提问重新生成这条回复';
+      reroll.onclick = () => regenerateLast();
+    }
     const exportOne = el('button', null, 'Word');
     exportOne.onclick = () => exportWord(m);
     const exportPdfBtn = el('button', null, 'PDF');
@@ -558,10 +584,14 @@ function renderMessage(idx, m) {
     const exportMd = el('button', null, '导出');
     exportMd.onclick = () => exportMarkdown(m);
     actions.appendChild(copy);
+    actions.appendChild(toDeliver);
+    actions.appendChild(star);
+    if (reroll) actions.appendChild(reroll);
     actions.appendChild(exportOne);
     actions.appendChild(exportPdfBtn);
     actions.appendChild(exportMd);
     meta.appendChild(actions);
+    if (m.starred) who.appendChild(el('span', 'msg-star-badge', '⭐'));
   }
   bubble.appendChild(meta);
 
@@ -1887,10 +1917,16 @@ function sendMessage() {
   // 清空附件
   state.attachments = [];
   renderAttachments();
-  state.messages.push({ role: 'assistant', text: '', running: true, time: Date.now(), streamText: '', reasoning: '', tools: [] });
   input.value = '';
   updateCharCount();
   input.style.height = 'auto';
+  startTurn(text);
+}
+
+/* startTurn：推入 assistant 占位并跑一轮流式生成。
+   调用约定：state.messages 的最后一条是本轮的 user 消息（sendMessage 与重答共用）。 */
+function startTurn(text) {
+  state.messages.push({ role: 'assistant', text: '', running: true, time: Date.now(), streamText: '', reasoning: '', tools: [] });
   persistChat();
   renderMessages();
   renderHistory();
@@ -1997,10 +2033,92 @@ function sendMessage() {
   }).catch((err) => {
     const m = state.messages.find((x) => x.running);
     if (m) { m.error = err.message || '请求失败'; m.running = false; }
-    persistChat();
-    finishRun();
-    renderMessages();
+      persistChat();
+      finishRun();
+      renderMessages();
   });
+}
+
+/* 重答：移除最后一条回复，按前一条提问重新生成（只允许对末条回复操作） */
+function regenerateLast() {
+  if (state.running) { toast('当前有任务在跑，等它结束再重答'); return; }
+  const ms = state.messages;
+  if (!ms.length || ms[ms.length - 1].role !== 'assistant') return;
+  if (ms.length < 2 || ms[ms.length - 2].role !== 'user') return;
+  if (!state.status || !state.status.hasKey) { openSettings(); return; }
+  const prev = ms[ms.length - 2];
+  ms.splice(ms.length - 1);
+  if (Array.isArray(prev.attachments) && prev.attachments.length) toast('原提问带附件，重答只基于文字部分');
+  renderMessages();
+  startTurn(prev.text === '（见附件）' ? '' : prev.text);
+}
+
+/* 一键存产物：把这条回复存成产物空间的 Markdown 文件 */
+async function saveMsgToDeliver(m, titleOverride) {
+  try {
+    const text = (m.text || '').trim();
+    if (!text) { toast('这条回复没有内容可存'); return; }
+    const chat = currentChat();
+    const rawTitle = titleOverride || (chat && chat.title) || '对话';
+    const safe = rawTitle.replace(/[\\/:*?"<>|\s]+/g, '_').slice(0, 30);
+    const name = new Date().toISOString().slice(0, 10) + '_' + safe + '_回复.md';
+    const r = await fetchJSON('/api/deliverables/save', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ name, content: text }),
+    });
+    toast('已存为产物：' + r.name + '（📦 产物里可转 Word/PDF）');
+    try { loadDeliverables(); } catch (_) {} // 产物面板开着时立即看到新文件
+  } catch (e) { toast('存产物失败：' + e.message); }
+}
+
+/* ===== 产物面板 · 收藏 tab（跨对话汇总 ⭐ 的回复） ===== */
+function renderDeliverStars() {
+  const box = $('#deliverStarsList'); if (!box) return;
+  box.innerHTML = '';
+  const stars = [];
+  for (const c of (state.chats || [])) {
+    for (const m of (c.messages || [])) {
+      if (m.role === 'assistant' && m.starred && (m.text || '').trim()) stars.push({ chat: c, msg: m });
+    }
+  }
+  stars.sort((a, b) => (b.msg.time || 0) - (a.msg.time || 0));
+  if (!stars.length) {
+    box.appendChild(el('div', 'skill-empty', '还没有收藏。对话里点回复下方的「⭐ 收藏」，它们会跨对话汇总到这里。'));
+    return;
+  }
+  for (const s of stars) {
+    const card = el('div', 'star-item');
+    const head = el('div', 'star-item-head');
+    head.appendChild(el('span', null, '💬 ' + (s.chat.title || '未命名对话')));
+    head.appendChild(el('span', null, '🕘 ' + fmtTime(s.msg.time || s.chat.updated)));
+    card.appendChild(head);
+    const tx = el('div', 'star-item-text', (s.msg.text || '').replace(/[#*`>|]/g, ' ').replace(/\s+/g, ' ').trim().slice(0, 160) + '…');
+    tx.title = (s.msg.text || '').slice(0, 300);
+    card.appendChild(tx);
+    const acts = el('div', 'star-item-actions');
+    const bGo = el('button', 'btn ghost small', '查看原文'); bGo.type = 'button'; bGo.onclick = () => jumpToStarred(s.chat.id);
+    const bCopy = el('button', 'btn ghost small', '复制'); bCopy.type = 'button'; bCopy.onclick = () => copyText(s.msg.text || '');
+    const bSave = el('button', 'btn ghost small', '💾 存产物'); bSave.type = 'button'; bSave.onclick = () => saveMsgToDeliver(s.msg, s.chat.title);
+    const bDel = el('button', 'btn ghost small danger', '取消收藏'); bDel.type = 'button';
+    bDel.onclick = () => {
+      s.msg.starred = false;
+      saveChats();
+      if (s.chat.id === state.chatId) renderMessages();
+      renderDeliverStars();
+    };
+    acts.appendChild(bGo); acts.appendChild(bCopy); acts.appendChild(bSave); acts.appendChild(bDel);
+    card.appendChild(acts);
+    box.appendChild(card);
+  }
+}
+
+function jumpToStarred(chatId) {
+  const c = state.chats.find((x) => x.id === chatId);
+  if (!c) return;
+  if (c.mode !== state.mode) { state.mode = c.mode; updateModeUI(); }
+  switchChat(chatId);
+  $('#deliverModal').classList.add('hidden');
 }
 
 function finishRun() {
@@ -2303,7 +2421,7 @@ function renderTools() {
 }
 
 /* ================= 产物空间 ================= */
-const deliverState = { items: [], search: '' };
+const deliverState = { items: [], search: '', filter: 'all', tab: 'files' };
 function deliverFileIcon(name) {
   const e = String(name||'').split('.').pop().toLowerCase();
   if (e==='md'||e==='markdown') return '📝';
@@ -2322,12 +2440,22 @@ async function loadDeliverables() {
     renderDeliverList();
   } catch (e) { $('#deliverMeta').textContent = '读取失败：' + e.message; }
 }
+function deliverFileCategory(name) {
+  const e = String(name || '').split('.').pop().toLowerCase();
+  if (['md', 'markdown', 'txt', 'json', 'html', 'srt', 'log'].includes(e)) return 'doc';
+  if (e === 'pdf') return 'pdf';
+  if (e === 'docx') return 'word';
+  if (e === 'csv' || e === 'xlsx') return 'table';
+  return 'other';
+}
 function renderDeliverList() {
   const box = $('#deliverList'); if (!box) return;
   box.innerHTML = '';
   const q = deliverState.search.toLowerCase().trim();
-  const items = deliverState.items.filter((i) => !q || i.name.toLowerCase().includes(q));
-  if (!items.length) { box.appendChild(el('div','skill-empty', q ? '没有匹配的文件。' : '产物空间还空着——让教练写一份备赛包/复盘报告，它就会存到这里。')); return; }
+  const items = deliverState.items.filter((i) =>
+    (deliverState.filter === 'all' || deliverFileCategory(i.name) === deliverState.filter) &&
+    (!q || i.name.toLowerCase().includes(q)));
+  if (!items.length) { box.appendChild(el('div','skill-empty', (q || deliverState.filter !== 'all') ? '这个分类下没有匹配的文件。' : '产物空间还空着——让教练写一份备赛包/复盘报告，或点回复下方的「💾 存产物」。')); return; }
   for (const it of items) {
     const card = el('div','deliver-item');
     const head = el('div','deliver-item-head');
@@ -2361,7 +2489,7 @@ async function deliverPreview(it) {
     const r = await fetchJSON('/api/deliverables/read?name=' + encodeURIComponent(it.name));
     if (!r.file) throw new Error('读取失败');
     if (it.ext==='csv') box.innerHTML = '<pre style=\'white-space:pre;overflow:auto\'>' + esc(r.file.text.slice(0,12000)) + '</pre>';
-    else box.innerHTML = (window.MDView ? MDView.mdToHtml(r.file.text.slice(0,60000)) : '<pre>'+esc(r.file.text.slice(0,60000))+'</pre>');
+    else box.innerHTML = mdToHtml(r.file.text.slice(0,60000)); // window.MDView 在主窗口不存在，旧写法一直掉 <pre> 纯文本兜底
   } catch (e) { box.innerHTML = '<p class=\'hint\'>' + esc(e.message || '读取失败') + '</p>'; }
 }
 async function deliverConvert(it, target) {
@@ -2433,10 +2561,28 @@ async function deliverDelete(name) {
   if (r && r.ok) { toast('已删除'); loadDeliverables(); } else toast('删除失败：' + ((r&&r.error)||''));
 }
 function bindDeliverables() {
-  const btn = $('#btnDeliver'); if (btn) btn.onclick = () => { $('#deliverModal').classList.remove('hidden'); loadDeliverables(); };
+  const btn = $('#btnDeliver'); if (btn) btn.onclick = () => { $('#deliverModal').classList.remove('hidden'); loadDeliverables(); renderDeliverStars(); };
   const rf = $('#btnDeliverRefresh'); if (rf) rf.onclick = loadDeliverables;
   const srch = $('#deliverSearch');
   if (srch) srch.oninput = () => { deliverState.search = srch.value; renderDeliverList(); };
+  // 文件类型分类片
+  document.querySelectorAll('#deliverChips .chip').forEach((c) => {
+    c.onclick = () => {
+      deliverState.filter = c.dataset.dfilter || 'all';
+      document.querySelectorAll('#deliverChips .chip').forEach((x) => x.classList.toggle('active', x === c));
+      renderDeliverList();
+    };
+  });
+  // 文件 / 收藏 双 tab
+  document.querySelectorAll('.deliver-tab').forEach((t) => {
+    t.onclick = () => {
+      deliverState.tab = t.dataset.dtab || 'files';
+      document.querySelectorAll('.deliver-tab').forEach((x) => x.classList.toggle('active', x === t));
+      $('#deliverFilesPane').classList.toggle('hidden', deliverState.tab !== 'files');
+      $('#deliverStarsPane').classList.toggle('hidden', deliverState.tab !== 'stars');
+      if (deliverState.tab === 'stars') renderDeliverStars();
+    };
+  });
   const folder = $('#btnDeliverFolder');
   if (folder) folder.onclick = () => { const ae=window.academyElectron; if (ae && ae.showDeliverFolder) ae.showDeliverFolder(); else toast('浏览器模式不可用'); };
   const close = $('#btnDeliverPreviewClose'); if (close) close.onclick = () => $('#deliverPreview').classList.add('hidden');

@@ -462,13 +462,31 @@ whenToUse: 可选：触发条件描述。
       </div>
       <div class="modal-body">
         <p class="memory-hint">Agent 的长篇交付会写成文件保存在 <code>data/deliverables/</code>。在这里<b>预览 / 转 Word / 转 Excel / 存 PDF / 导出到任意文件夹</b>。</p>
-        <div class="lib-search">
-          <input type="text" id="deliverSearch" placeholder="筛选文件名…" autocomplete="off" />
-          <button type="button" class="btn ghost small" id="btnDeliverFolder" title="打开产物目录文件夹">📂 打开目录</button>
-          <button type="button" class="btn ghost small" id="btnDeliverRefresh">↻ 刷新</button>
+        <div class="deliver-tabs">
+          <button type="button" class="deliver-tab active" data-dtab="files">📁 文件</button>
+          <button type="button" class="deliver-tab" data-dtab="stars">⭐ 收藏</button>
         </div>
-        <div id="deliverMeta" class="lib-meta" style="margin:6px 0"></div>
-        <div id="deliverList" class="deliver-list"></div>
+        <div id="deliverFilesPane">
+          <div class="deliver-chips" id="deliverChips">
+            <button type="button" class="chip active" data-dfilter="all">全部</button>
+            <button type="button" class="chip" data-dfilter="doc">📝 文档</button>
+            <button type="button" class="chip" data-dfilter="pdf">📕 PDF</button>
+            <button type="button" class="chip" data-dfilter="word">📘 Word</button>
+            <button type="button" class="chip" data-dfilter="table">📊 表格</button>
+            <button type="button" class="chip" data-dfilter="other">📦 其他</button>
+          </div>
+          <div class="lib-search">
+            <input type="text" id="deliverSearch" placeholder="筛选文件名…" autocomplete="off" />
+            <button type="button" class="btn ghost small" id="btnDeliverFolder" title="打开产物目录文件夹">📂 打开目录</button>
+            <button type="button" class="btn ghost small" id="btnDeliverRefresh">↻ 刷新</button>
+          </div>
+          <div id="deliverMeta" class="lib-meta" style="margin:6px 0"></div>
+          <div id="deliverList" class="deliver-list"></div>
+        </div>
+        <div id="deliverStarsPane" class="hidden">
+          <p class="memory-hint" style="margin-top:0">对话里点回复下方的「⭐ 收藏」就会出现在这里，跨对话汇总；可一键存成产物或跳回原文。</p>
+          <div id="deliverStarsList" class="deliver-list"></div>
+        </div>
         <div id="deliverPreview" class="deliver-preview hidden">
           <div class="deliver-preview-head"><b id="deliverPreviewTitle">预览</b><button type="button" class="btn ghost small" id="btnDeliverPreviewClose">×</button></div>
           <div id="deliverPreviewBody" class="deliver-preview-body md"></div>
