@@ -330,6 +330,9 @@ function normalizeOpenPath(raw) {
 /* 从 argv 里找要打开的文件：优先 --open 后一个参数；
    没有 --open 时（注册表命令异常 / 其它调用方式）退化为「第一个像本地文件路径的参数」 */
 const MD_EXT = ['.md', '.markdown', '.txt', '.srt'];
+/* 内置阅读器：打开时的内容指纹（小写路径 -> sha1），用于保存前检测外部修改 */
+const mdOpenHashes = new Map();
+function mdHash(s) { return require('crypto').createHash('sha1').update(String(s == null ? '' : s), 'utf8').digest('hex'); }
 function pickOpenFile(argv) {
   if (!Array.isArray(argv)) return '';
   const oi = argv.indexOf('--open');
@@ -374,7 +377,8 @@ ipcMain.handle('md:open', async () => {
     if (!chk.ok) return { canceled: false, error: chk.error };
     const fp = chk.path;
     const text = fs.readFileSync(fp, 'utf8');
-    return { canceled: false, path: fp, name: path.basename(fp), text };
+    mdOpenHashes.set(fp.toLowerCase(), mdHash(text));
+    return { canceled: false, path: fp, name: path.basename(fp), text, crlf: /\r\n/.test(text) };
   } catch (e) {
     return { canceled: false, error: e.message };
   }
@@ -455,8 +459,34 @@ ipcMain.handle('md:read', async (_evt, filePath) => {
   const fp = chk.path;
   try {
     const text = fs.readFileSync(fp, 'utf8');
+    // 记下内容指纹：保存时用它判断文件是否被外部改过（mtime 分辨率不够，见 md-reader-window.js 注释）
+    mdOpenHashes.set(fp.toLowerCase(), mdHash(text));
     log('MD 阅读器读取: ' + fp + ' (' + text.length + ' 字符)');
-    return { ok: true, path: fp, name: path.basename(fp), text };
+    return { ok: true, path: fp, name: path.basename(fp), text, crlf: /\r\n/.test(text) };
+  } catch (e) { return { ok: false, error: e.message }; }
+});
+
+/* 内置阅读器保存：写回原文件。force=true 忽略外部修改冲突 */
+ipcMain.handle('md:save', async (_evt, { path: filePath, text, crlf, force } = {}) => {
+  const chk = sanitizeMdPath(filePath);
+  if (!chk.ok) return { ok: false, error: chk.error };
+  const fp = chk.path;
+  try {
+    if (!force) {
+      const opened = mdOpenHashes.get(fp.toLowerCase());
+      if (opened) {
+        const now = mdHash(fs.readFileSync(fp, 'utf8'));
+        if (now !== opened) {
+          return { ok: false, conflict: true, error: '这个文件在你编辑期间被其他程序修改过。' };
+        }
+      }
+    }
+    let out = String(text == null ? '' : text).replace(/\r\n/g, '\n');
+    if (crlf) out = out.replace(/\n/g, '\r\n');
+    fs.writeFileSync(fp, out, 'utf8');
+    mdOpenHashes.set(fp.toLowerCase(), mdHash(out));
+    log('MD 阅读器保存: ' + fp + ' (' + out.length + ' 字符)');
+    return { ok: true, path: fp, size: out.length };
   } catch (e) { return { ok: false, error: e.message }; }
 });
 

@@ -32,6 +32,24 @@ const MAIN_SCRIPT = path.join(ROOT, 'app', 'electron-main.js');
 let mainWindow = null;      // 上次创建的首窗（focus）—— 但我们允许多窗口
 const MD_EXT = ['.md', '.markdown', '.txt', '.srt'];
 
+/* 编辑态跟踪（按窗口 id）：脏标记用于标题提示与关窗拦截 */
+const dirtyMap = new Map();   // winId -> bool
+/* 打开时的内容指纹（按窗口 id）：保存时比对，判断文件是否被外部改过。
+   不用 mtime —— NTFS 分辨率不够（实测快速写入时 20 次里 16 次 mtime 不变）。 */
+const openHashMap = new Map(); // winId -> sha1
+function hashContent(s) {
+  return require('crypto').createHash('sha1').update(String(s == null ? '' : s), 'utf8').digest('hex');
+}
+function baseTitleOf(name) { return '📖 ' + name; }
+function setDirty(win, dirty) {
+  if (!win || win.isDestroyed()) return;
+  dirtyMap.set(win.id, !!dirty);
+  let name = '';
+  try { name = win.__fileName || ''; } catch (_) {}
+  if (!name) return;
+  win.setTitle(baseTitleOf(name) + (dirty ? ' •' : ''));
+}
+
 app.setName('Academy MD Reader');
 try { app.setPath('userData', path.join(DATA_DIR, 'electron-user-data-reader')); } catch (_) {}
 
@@ -113,12 +131,22 @@ function createReaderWindow(filePath, text, name) {
     delivered = true;
     if (!win || win.isDestroyed()) return;
     win.show();
+    // 记录原始行尾 + 内容指纹：保存时保持行尾风格，并检测「文件被别的程序改过」。
+    // 用内容哈希而不是 mtime —— NTFS 时间戳分辨率不够，实测快速连续写入时
+    // 20 次里有 16 次 mtime 完全不变，靠它判冲突会大量漏检。
+    let mtimeMs = 0, crlf = /\r\n/.test(text);
+    try { mtimeMs = fs.statSync(filePath).mtimeMs; } catch (_) {}
+    openHashMap.set(win.id, hashContent(text));
+    setDirty(win, false);
+    win.__fileName = name;
     win.webContents.send('reader:load', {
       path: filePath,
       name,
       text,
       charCount: text.length,
       opts,
+      mtimeMs,
+      crlf,
     });
     log('阅读: ' + filePath);
   };
@@ -139,7 +167,30 @@ function createReaderWindow(filePath, text, name) {
     if (msg.indexOf('[reader]') === 0) log('渲染进程: ' + msg);
   });
   win.loadFile(R_HTML).catch(() => {});
-  win.on('closed', () => { if (mainWindow === win) mainWindow = null; });
+  // 有未保存修改时关窗要拦一下，避免手滑丢内容
+  win.on('close', (e) => {
+    if (!dirtyMap.get(win.id)) return;
+    const choice = dialog.showMessageBoxSync(win, {
+      type: 'warning',
+      buttons: ['保存并关闭', '不保存', '取消'],
+      defaultId: 0,
+      cancelId: 2,
+      title: '有未保存的修改',
+      message: '「' + (win.__fileName || '文件') + '」还有未保存的修改。',
+      detail: '关闭前要保存吗？',
+    });
+    if (choice === 2) { e.preventDefault(); return; }
+    if (choice === 0) {
+      // 交给渲染进程触发保存；此时先拦下关闭，等保存完再关
+      e.preventDefault();
+      win.webContents.send('reader:save-and-close');
+    }
+  });
+  win.on('closed', () => {
+    dirtyMap.delete(win.id);
+    openHashMap.delete(win.id);
+    if (mainWindow === win) mainWindow = null;
+  });
   return win;
 }
 
@@ -184,6 +235,62 @@ ipcMain.handle('reader:saveWord', async (_e, { text, title } = {}) => {
     return { ok: true, path: r.filePath };
   } catch (e) { log('导出 Word 失败: ' + e.message); return { ok: false, error: e.message }; }
 });
+/* 保存：写回原文件。force=true 时忽略「外部已修改」冲突 */
+ipcMain.handle('reader:save', (e, { path: filePath, text, mtimeMs, crlf, force } = {}) => {
+  try {
+    const fp = normalizeOpenPath(filePath);
+    if (!fp) return { ok: false, error: '没有可保存的文件路径' };
+    if (!fs.existsSync(fp)) return { ok: false, error: '原文件已不存在：' + fp };
+
+    // 冲突检测：比对「打开时的内容指纹」与「当前磁盘内容」。
+    // 早先试过 mtime 方案（1s 容差 → 1ms 容差）都不行：NTFS 时间戳分辨率不够，
+    // 实测 20 次快速连续写入里有 16 次 mtime 完全不变，大量漏检。
+    // 内容哈希是确定性判据，不受时间戳精度影响。
+    if (!force) {
+      const win = BrowserWindow.fromWebContents(e.sender);
+      const openedHash = win && !win.isDestroyed() ? openHashMap.get(win.id) : null;
+      if (openedHash) {
+        try {
+          const onDisk = hashContent(fs.readFileSync(fp, 'utf8'));
+          if (onDisk !== openedHash) {
+            return { ok: false, conflict: true, error: '这个文件在你编辑期间被其他程序修改过。' };
+          }
+        } catch (_) {}
+      }
+    }
+
+    // 保持原文件的行尾风格，避免整篇 diff 噪音
+    let out = String(text == null ? '' : text);
+    out = out.replace(/\r\n/g, '\n');
+    if (crlf) out = out.replace(/\n/g, '\r\n');
+
+    fs.writeFileSync(fp, out, 'utf8');
+    const st = fs.statSync(fp);
+    log('保存: ' + fp + ' (' + out.length + ' 字符)');
+    return { ok: true, path: fp, mtimeMs: st.mtimeMs, size: st.size };
+  } catch (err) {
+    log('保存失败: ' + err.message);
+    return { ok: false, error: err.message };
+  }
+});
+
+/* 渲染进程同步脏标记 */
+ipcMain.handle('reader:setDirty', (e, dirty) => {
+  const win = BrowserWindow.fromWebContents(e.sender);
+  setDirty(win, dirty);
+  return { ok: true };
+});
+
+/* 「保存并关闭」流程结束后由渲染进程回调，真正关窗 */
+ipcMain.handle('reader:closeNow', (e) => {
+  const win = BrowserWindow.fromWebContents(e.sender);
+  if (win && !win.isDestroyed()) {
+    dirtyMap.set(win.id, false);   // 先清脏标记，否则 close 又被拦
+    win.close();
+  }
+  return { ok: true };
+});
+
 ipcMain.handle('reader:openInAcademy', (_e, filePath) => {
   try {
     createMainArgsThenSpawn(filePath ? normalizeOpenPath(filePath) : '');

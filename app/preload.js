@@ -12,6 +12,8 @@ contextBridge.exposeInMainWorld('academyElectron', {
   openMarkdownFile: () => ipcRenderer.invoke('md:open'),
   /* 直接读取给定文件路径（已由主进程校验扩展名/大小） */
   readMarkdownFile: (filePath) => ipcRenderer.invoke('md:read', filePath),
+  /* 内置阅读器：把编辑内容写回原文件（force=true 忽略外部修改冲突） */
+  saveMarkdownFile: (payload) => ipcRenderer.invoke('md:save', payload),
   /* 保存备份文件（弹保存对话框） */
   saveBackupFile: (jsonText, defaultName) => ipcRenderer.invoke('backup:save', { jsonText, defaultName }),
   /* 产物空间：把文件另存到用户选择的任意路径（文本或二进制） */

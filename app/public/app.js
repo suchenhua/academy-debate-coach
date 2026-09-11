@@ -849,7 +849,7 @@ function legacyCopy(text, done) {
 }
 
 /* ================= Markdown 阅读器 ================= */
-let mdReaderState = { path: '', name: '', text: '' };
+let mdReaderState = { path: '', name: '', text: '', crlf: false, dirty: false, editing: false };
 
 /* 从拖入的 File 对象直接读取（Electron 32 已移除 File.path，不依赖本地路径） */
 async function openMdReaderFromFile(file) {
@@ -859,7 +859,8 @@ async function openMdReaderFromFile(file) {
   $('#mdReaderContent').innerHTML = '<p class="md-reader-empty">正在读取文件…</p>';
   try {
     const text = await file.text();
-    mdReaderState = { path: file.name || '', name: file.name || '', text: text || '' };
+    // 拖入的文件拿不到真实路径，只能看不能存；编辑按钮会被禁用
+    mdReaderState = { path: '', name: file.name || '', text: text || '', crlf: /\r\n/.test(text || ''), dirty: false, editing: false };
     $('#mdReaderTitle').textContent = '📖 ' + (file.name || 'Markdown');
     $('#mdReaderPath').textContent = (file.name || '') + '（拖入）';
     renderMdReader();
@@ -884,7 +885,7 @@ async function openMdReader(filePathHint) {
       if (result && result.error) throw new Error(result.error);
     }
     if (!result || result.text === undefined) { closeMdReader(); return; }
-    mdReaderState = { path: result.path || '', name: result.name || '', text: result.text || '' };
+    mdReaderState = { path: result.path || '', name: result.name || '', text: result.text || '', crlf: !!result.crlf, dirty: false, editing: false };
     $('#mdReaderTitle').textContent = '📖 ' + (mdReaderState.name || 'Markdown');
     $('#mdReaderPath').textContent = mdReaderState.path || '';
     renderMdReader();
@@ -895,20 +896,134 @@ async function openMdReader(filePathHint) {
 
 function renderMdReader() {
   const box = $('#mdReaderContent');
+  const editable = !!mdReaderState.path;   // 拖入的文件没有路径，存不了
+  // 编辑按钮可用性 + 保存按钮显隐
+  const bEdit = $('#btnMdEdit');
+  if (bEdit) {
+    bEdit.disabled = !editable;
+    bEdit.title = editable ? '编辑这个文件（Ctrl+E）' : '拖入的文件没有真实路径，无法保存；请用「打开文件」打开后再编辑';
+    bEdit.textContent = mdReaderState.editing ? '👁 预览' : '✏️ 编辑';
+  }
+  const bSave = $('#btnMdSave');
+  if (bSave) {
+    bSave.classList.toggle('hidden', !mdReaderState.editing);
+    bSave.classList.toggle('dirty', !!mdReaderState.dirty);
+    bSave.textContent = mdReaderState.dirty ? '💾 保存 •' : '💾 保存';
+  }
+  const wrap = $('#mdReaderEditorWrap');
+  if (wrap) wrap.classList.toggle('hidden', !mdReaderState.editing);
+  box.classList.toggle('hidden', !!mdReaderState.editing);
+
+  if (mdReaderState.editing) {
+    const ta = $('#mdReaderEditor');
+    if (ta && ta.value !== mdReaderState.text) ta.value = mdReaderState.text;
+    if (ta) setTimeout(() => { try { ta.focus(); } catch (_) {} }, 0);
+    return;
+  }
   if (!mdReaderState.text) { box.innerHTML = '<p class="md-reader-empty">（空文件）</p>'; return; }
   box.innerHTML = mdToHtml(mdReaderState.text);
 }
-function closeMdReader() { $('#mdModal').classList.add('hidden'); }
+function mdReaderEnterEdit() {
+  if (!mdReaderState.path) { toast('拖入的文件没有真实路径，无法保存；请用「打开文件」打开'); return; }
+  mdReaderState.editing = true;
+  renderMdReader();
+}
+function mdReaderExitEdit() {
+  // 退出编辑不丢内容：把编辑框内容同步回内存（仍算未保存）
+  const ta = $('#mdReaderEditor');
+  if (ta) mdReaderState.text = ta.value;
+  mdReaderState.editing = false;
+  renderMdReader();
+}
+function mdReaderSetDirty(v) {
+  if (mdReaderState.dirty === v) return;
+  mdReaderState.dirty = v;
+  const bSave = $('#btnMdSave');
+  if (bSave) {
+    bSave.classList.toggle('dirty', v);
+    bSave.textContent = v ? '💾 保存 •' : '💾 保存';
+  }
+}
+async function mdReaderSave(opts) {
+  opts = opts || {};
+  if (!mdReaderState.path) { toast('没有可保存的文件'); return false; }
+  const ta = $('#mdReaderEditor');
+  const text = mdReaderState.editing && ta ? ta.value : mdReaderState.text;
+  const ae = window.academyElectron;
+  if (!ae || !ae.saveMarkdownFile) { toast('当前环境不支持保存'); return false; }
+  try {
+    const r = await ae.saveMarkdownFile({ path: mdReaderState.path, text, crlf: mdReaderState.crlf, force: !!opts.force });
+    if (r && r.ok) {
+      mdReaderState.text = text;
+      mdReaderSetDirty(false);
+      renderMdReader();
+      toast('已保存到 ' + (mdReaderState.name || '文件'));
+      return true;
+    }
+    if (r && r.conflict) {
+      const ok = confirm('这个文件在你编辑期间被其他程序修改过。\n\n覆盖它的修改（保留你现在的版本）？\n\n选「取消」则放弃这次保存，你的编辑仍留在窗口里。');
+      if (ok) return mdReaderSave({ force: true });
+      toast('已取消保存（外部修改未被覆盖）');
+      return false;
+    }
+    toast('保存失败：' + ((r && r.error) || '未知错误'));
+    return false;
+  } catch (e) { toast('保存失败：' + (e.message || e)); return false; }
+}
+function closeMdReader() {
+  if (mdReaderState.dirty) {
+    if (!confirm('「' + (mdReaderState.name || '这个文件') + '」还有未保存的修改，确定关闭吗？')) return;
+  }
+  $('#mdModal').classList.add('hidden');
+  mdReaderState = { path: '', name: '', text: '', crlf: false, dirty: false, editing: false };
+}
 
 function bindMdReader() {
   const ae = window.academyElectron;
   $('#btnMdOpen').onclick = () => openMdReader();
-  $('#btnMdCopy').onclick = () => { if (mdReaderState.text) copyText(mdReaderState.text); else toast('还没有内容'); };
+  $('#btnMdEdit').onclick = () => { mdReaderState.editing ? mdReaderExitEdit() : mdReaderEnterEdit(); };
+  $('#btnMdSave').onclick = () => { mdReaderSave(); };
+  // 编辑器输入 → 脏标记
+  const ta = $('#mdReaderEditor');
+  if (ta) {
+    ta.addEventListener('input', () => { mdReaderSetDirty(ta.value !== mdReaderState.text); });
+    // Tab 插入两个空格而不是跳出焦点
+    ta.addEventListener('keydown', (e) => {
+      if (e.key !== 'Tab') return;
+      e.preventDefault();
+      const s = ta.selectionStart, en = ta.selectionEnd;
+      ta.value = ta.value.slice(0, s) + '  ' + ta.value.slice(en);
+      ta.selectionStart = ta.selectionEnd = s + 2;
+      mdReaderSetDirty(ta.value !== mdReaderState.text);
+    });
+  }
+  // 预览区双击进入编辑
+  const content = $('#mdReaderContent');
+  if (content) content.addEventListener('dblclick', () => { if (mdReaderState.path && !mdReaderState.editing) mdReaderEnterEdit(); });
+  $('#btnMdCopy').onclick = () => {
+    const t = mdReaderState.editing && ta ? ta.value : mdReaderState.text;
+    if (t) copyText(t); else toast('还没有内容');
+  };
   $('#btnMdExport').onclick = async () => {
-    if (!mdReaderState.text) { toast('还没有内容'); return; }
-    try { await exportWord({ text: mdReaderState.text, title: mdReaderState.name || 'Markdown' }); }
+    const t = mdReaderState.editing && ta ? ta.value : mdReaderState.text;
+    if (!t) { toast('还没有内容'); return; }
+    try { await exportWord({ text: t, title: mdReaderState.name || 'Markdown' }); }
     catch (_) { toast('导出失败'); }
   };
+  // 快捷键：仅在阅读器弹窗打开时生效
+  document.addEventListener('keydown', (e) => {
+    const modal = $('#mdModal');
+    if (!modal || modal.classList.contains('hidden')) return;
+    const meta = e.ctrlKey || e.metaKey;
+    if (meta && (e.key === 's' || e.key === 'S')) { e.preventDefault(); if (mdReaderState.path && mdReaderState.editing) mdReaderSave(); return; }
+    if (meta && (e.key === 'e' || e.key === 'E')) {
+      e.preventDefault();
+      if (!mdReaderState.path) return;
+      mdReaderState.editing ? mdReaderExitEdit() : mdReaderEnterEdit();
+      return;
+    }
+    if (e.key === 'Escape' && mdReaderState.editing) { e.preventDefault(); mdReaderExitEdit(); }
+  });
   // 文件关联双击 / second-instance 转发
   if (ae && ae.onOpenFileRequest) {
     ae.onOpenFileRequest(async (filePath) => {

@@ -22,7 +22,7 @@
 | `app/server.js` | 本地 HTTP 服务 + Agent 封装层 |
 | `app/docx.js` | 零依赖 Markdown → Word 生成器 |
 | `app/ocr-win.js` | 本地 OCR（调用 Windows 自带识别引擎，图片入库时转文字，不出本机） |
-| `app/md-reader-window.js` + `app/md-reader/` | 独立轻量阅读窗：双击 .md/.txt/.srt 直开小窗，不启动整套 App；一键跳完整版 |
+| `app/md-reader-window.js` + `app/md-reader/` | 独立轻量阅读窗：双击 .md/.txt/.srt 直开小窗，不启动整套 App；支持直接编辑并保存回原文件（Ctrl+S、外部修改冲突检测）；一键跳完整版 |
 | `app/electron-main.js` | 主窗口（完整版）；与轻量阅读窗彼此独立、可同时运行 |
 | `app/public/` | HTML 前端（聊天界面、API Key 设置、工具箱页） |
 | `knowledge/` `protocols/` `prep-coach/` 等 | 逻敏方法论知识库（17 篇方法论 + 模板 + 24 位辩手风格卡） |

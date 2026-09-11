@@ -710,11 +710,16 @@ whenToUse: 可选：触发条件描述。
           <span id="mdReaderPath" class="md-reader-path">—</span>
           <span class="md-reader-actions">
             <button id="btnMdOpen" class="btn ghost small">打开文件</button>
+            <button id="btnMdEdit" class="btn ghost small">✏️ 编辑</button>
+            <button id="btnMdSave" class="btn primary small hidden">💾 保存</button>
             <button id="btnMdCopy" class="btn ghost small">复制原文</button>
             <button id="btnMdExport" class="btn ghost small">导出 Word</button>
           </span>
         </div>
         <div id="mdReaderContent" class="md-reader-content"><p class="md-reader-empty">点击「打开文件」选择本地 .md 文档，或直接把文件拖进窗口。</p></div>
+        <div id="mdReaderEditorWrap" class="md-reader-editor hidden">
+          <textarea id="mdReaderEditor" spellcheck="false" placeholder="在这里编辑 Markdown 原文…（Ctrl+S 保存）"></textarea>
+        </div>
       </div>
     </div>
   </div>

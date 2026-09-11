@@ -18,11 +18,17 @@
       <button id="theme" class="tbtn" title="浅色 / 深色 / 跟随系统">🌓</button>
       <button id="copy" class="tbtn" title="复制全文">📋 复制</button>
       <button id="word" class="tbtn" title="导出为 Word 文档">⬇ 存 Word</button>
+      <span class="csep"></span>
+      <button id="edit" class="tbtn" title="编辑这个文件（Ctrl+E）">✏️ 编辑</button>
+      <button id="save" class="tbtn save hidden" title="保存到原文件（Ctrl+S）">💾 保存</button>
     </span>
     <button id="academy" class="academy" title="把这个文件交给 Academy 完整版继续处理">🎓 在 Academy 接着做</button>
   </header>
   <div class="meta" id="meta"></div>
   <article class="md" id="content"><p class="hint">正在打开…</p></article>
+  <div class="editor hidden" id="editorWrap">
+    <textarea id="editor" spellcheck="false" placeholder="在这里编辑 Markdown 原文…"></textarea>
+  </div>
 
   <div id="toast" class="toast">…</div>
   <script src="md-view.js"></script>
