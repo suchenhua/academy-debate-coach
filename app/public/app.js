@@ -2368,6 +2368,25 @@ async function deliverConvert(it, target) {
   const r = await libApi('/api/deliverables/convert', { name: it.name, target });
   if (r && r.ok) { toast('已生成：' + r.item.name); loadDeliverables(); } else toast('转换失败：' + ((r&&r.error)||''));
 }
+/* 产物「存 PDF」的打印样式：与 app/pdf-worker.js 同一套排版规格（页边距由 printToPDF 控制，body 不留边距） */
+const DELIVER_PDF_CSS =
+  'html{color-scheme:light}' +
+  'body{font-family:"Microsoft YaHei","PingFang SC",sans-serif;margin:0;color:#1c2434;line-height:1.6;font-size:14.5px;background:#fff}' +
+  'h1{font-size:1.6em;color:#1F3864}' +
+  'h2{font-size:1.35em;color:#2F5496}' +
+  'h3{font-size:1.15em;color:#333}' +
+  'h1,h2,h3{border-bottom:1px solid #e5e7ee;padding-bottom:.3em;margin-top:1.4em;page-break-after:avoid}' +
+  'p{margin:.6em 0;orphans:2;widows:2}' +
+  'pre{background:#f5f7fb;padding:12px;border-radius:6px;overflow:hidden;font-size:12px;white-space:pre-wrap;word-break:break-all;page-break-inside:avoid}' +
+  'code{background:#f0f2f7;padding:1px 5px;border-radius:4px;font-size:.92em}' +
+  'blockquote{border-left:3px solid #8496B0;margin:8px 0;padding:2px 14px;color:#445066}' +
+  'table{border-collapse:collapse;margin:10px 0;width:100%}' +
+  'tr{page-break-inside:avoid}' +
+  'th,td{border:1px solid #d5dae6;padding:5px 10px}' +
+  'th{background:#eef1f8}' +
+  'ul,ol{margin:.5em 0;padding-left:1.6em}li{margin:.25em 0}' +
+  'a{color:#0563C1}';
+
 async function deliverPdf(it) {
   try {
     const ae = window.academyElectron;
@@ -2375,8 +2394,9 @@ async function deliverPdf(it) {
     const r = await fetchJSON('/api/deliverables/read?name=' + encodeURIComponent(it.name));
     let text = (r.file && r.file.text) || '';
     if (it.ext==='csv') text = text.replace(/\r?\n/g,'\n');
-    const body = window.MDView ? MDView.mdToHtml(text) : '<pre>'+esc(text)+'</pre>';
-    const html = '<!doctype html><html><head><meta charset=\'utf-8\'><title>'+esc(it.name)+'</title></head><body style=\'margin:36px;font-family:SimSun,sans-serif;line-height:1.7\'>'+body+'</body></html>';
+    // 用主窗口自带的 mdToHtml 渲染（window.MDView 在主窗口根本没加载，旧代码一直掉进 <pre> 兜底把原始 Markdown 打进 PDF）
+    const body = mdToHtml(text);
+    const html = '<!doctype html><html><head><meta charset=\'utf-8\'><title>'+esc(it.name)+'</title><style>'+DELIVER_PDF_CSS+'</style></head><body>'+body+'</body></html>';
     if (ae.exportPdfSilent) {
       const sOut = await ae.exportPdfSilent(html, it.name);
       if (sOut && sOut.ok) { toast('PDF 已存到产物空间：' + sOut.name); loadDeliverables(); return; }

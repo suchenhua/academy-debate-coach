@@ -21,6 +21,7 @@ const { spawn, exec } = require('child_process');
 const http = require('http');
 const path = require('path');
 const fs = require('fs');
+const os = require('os');
 
 const ROOT = path.resolve(__dirname, '..');
 const NODE = path.join(ROOT, 'runtime', 'node', 'node.exe');
@@ -282,10 +283,23 @@ async function renderPdfToBuffer(html) {
     show: false,
     webPreferences: { nodeIntegration: false, contextIsolation: true, sandbox: true, preload },
   });
+  // data: URL 有长度上限，超长文档会截断 → 落临时文件用 file:// 装载（与 pdf-worker.js 同款）
+  const tmpHtml = path.join(os.tmpdir(), 'academy-pdf-' + Date.now() + '.html');
   try {
-    await win.loadURL('data:text/html;charset=utf-8,' + encodeURIComponent(String(html || '')));
-    return await win.webContents.printToPDF({ pageSize: 'A4', printBackground: true, margins: { marginType: 'default' } });
+    fs.writeFileSync(tmpHtml, String(html || ''), 'utf8');
+    await win.loadURL('file://' + tmpHtml.replace(/\\/g, '/'));
+    // 页边距（英寸）上下 2cm≈0.79、左右 2.5cm≈0.98；页脚页码，与 pdf-worker.js 同款
+    return await win.webContents.printToPDF({
+      pageSize: 'A4',
+      printBackground: true,
+      displayHeaderFooter: true,
+      headerTemplate: '<span></span>',
+      footerTemplate: '<div style="font-size:8px;width:100%;text-align:center;color:#8A93A6;font-family:\'Microsoft YaHei\',sans-serif">' +
+        '<span class="pageNumber"></span> / <span class="totalPages"></span></div>',
+      margins: { top: 0.79, bottom: 0.79, left: 0.98, right: 0.98 },
+    });
   } finally {
+    try { fs.unlinkSync(tmpHtml); } catch (_) {}
     if (!win.isDestroyed()) win.destroy();
   }
 }
