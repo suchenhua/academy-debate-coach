@@ -2362,6 +2362,72 @@ function handleRequest(req, res) {
     }).catch((e) => sendJson(res, 500, { ok: false, error: e.message }));
   }
 
+  // 研究台：证据检证。把用户给出的论据（数据/案例/研究/引言）逐条核查——
+  // 是否真实存在、是否被曲解/断章取义、口径与时效、以及引用时的注意事项。
+  // 内核自带 web_search 代理（/internal/web-search/*），可边推理边联网检索。
+  if (req.method === 'POST' && p === '/api/research/verify') {
+    if (currentRun) return sendJson(res, 409, { ok: false, error: 'BUSY', message: '有一个任务正在运行，请等待完成后再试。' });
+    return readBody(req, 256 * 1024).then((raw) => {
+      let body;
+      try { body = JSON.parse(raw || '{}'); } catch (_) { return sendJson(res, 400, { ok: false, error: 'JSON 解析失败' }); }
+      const claim = String(body.claim || '').trim();
+      if (!claim) return sendJson(res, 400, { ok: false, error: '缺少要核查的论据' });
+      if (claim.length > 20000) return sendJson(res, 400, { ok: false, error: '论据过长（超过 20000 字符），请拆分后逐条核查。' });
+      const context = String(body.context || '').trim().slice(0, 2000);
+      if (!engineReady()) return sendJson(res, 500, { ok: false, error: 'NO_ENGINE', message: 'Agent 内核缺失，无法进行证据检证。' });
+      const cfg = loadConfig();
+      const runId = 'ver-' + Date.now().toString(36) + '-' + crypto.randomBytes(3).toString('hex');
+      const prompt = [
+        '你是辩论资料研究助手，正在做【证据检证】。用户会给出一条（或一组）准备在赛场上使用的论据，',
+        '你要逐条核查它是否真实存在、有没有被编造、有没有被曲解或断章取义。',
+        '',
+        '## 待核查论据',
+        '',
+        claim,
+        '',
+        context ? ('## 使用语境（供参考，不必核查这部分）\n\n' + context) : '',
+        '',
+        '## 检证流程（逐条执行，必须真联网搜索）',
+        '',
+        '1. **找原始出处**：用 web_search 搜这条论据的原始来源（官方发布/一手研究/权威媒体报道），',
+        '   优先找政府网站、学术期刊、机构报告的原文；只看转述不追原文是不合格。',
+        '2. **核对数字与口径**：把用户给的数字/年份/样本量/比例和原始出处逐一比对，',
+        '   任何不一致都要指出来（谁对、差多少、可能的原因）。',
+        '3. **检查曲解与断章取义**：原始研究/原文的结论是不是用户说的这个意思？',
+        '   特别注意：相关性≠因果性、单次调查≠普遍规律、样本差异、时效过期。',
+        '4. **交叉验证**：至少找两个独立来源相互印证；只有单一来源且查不到原文的，标注为「无法交叉验证」。',
+        '5. **给使用建议**：这条论据能不能用、怎么用才严谨、对方会怎么攻击它。',
+        '',
+        '## 输出格式（严格遵守）',
+        '',
+        '对每一条论据输出：',
+        '',
+        '### 第 N 条：<论据摘要>',
+        '**判定**：✅ 真实可用 / ⚠️ 部分属实（有偏差）/ ❌ 查无实据或明显错误 / 🔍 无法核实',
+        '**原始出处**：<找到的最权威来源，附链接；找不到就写「未检索到原始出处」>',
+        '**比对结果**：<数字/口径/结论与原始出处的差异，逐项列>',
+        '**风险点**：<对方会怎么攻击这条论据，如「样本只覆盖大学生」>',
+        '**使用建议**：<能不能用、严谨的表述应该怎么说（给一句可以直接上场念的话）>',
+        '',
+        '## 铁律',
+        '',
+        '- 必须真联网搜索核实，禁止凭记忆判断「这条我记得是真的」；',
+        '- 查不到就明说「未检索到」，绝对不能为了显得专业而编造出处；',
+        '- 检测到论据数字与原始出处不一致时，以原始出处为准，并明确指出用户原表述错在哪；',
+        '- 结论宁可保守：证据存疑就降级为「无法核实」，不要硬给可用/不可用。',
+      ].filter(Boolean).join('\n');
+      ensureDir(TASK_DIR);
+      const taskFile = path.join(TASK_DIR, runId + '.md');
+      fs.writeFileSync(taskFile, prompt, 'utf8');
+      writeDshSettings(cfg.model, cfg.baseUrl, effectiveSearchKey(cfg), resolveSearchProvider(cfg));
+      return runDsh(runId, prompt, cfg, () => {}).then((info) => {
+        const out = String(info.stdout || '').trim();
+        if (!out) return sendJson(res, 500, { ok: false, error: '内核没有返回内容，请重试。' });
+        return sendJson(res, 200, { ok: true, claim, report: out, elapsedMs: info.timedOut ? -1 : 0 });
+      }).catch((e) => sendJson(res, 500, { ok: false, error: e.message }));
+    }).catch((e) => sendJson(res, 500, { ok: false, error: e.message }));
+  }
+
   // 供 DSH 内置 web_search 调用的本地搜索代理（Anthropic Messages 兼容）
   if (req.method === 'POST' && p === '/internal/web-search/messages') {
     return readBody(req, 256 * 1024).then((raw) => {

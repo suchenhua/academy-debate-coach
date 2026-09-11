@@ -117,6 +117,48 @@
 
   $('btnSearch').onclick = function () { doSearch(); };
   $('btnSuggest').onclick = doSuggest;
+
+  /* ---- 证据检证：论据是否被编造 / 曲解（真联网核查） ---- */
+  var verifying = false;
+  function runVerify() {
+    if (verifying) { toast('检证正在进行中…'); return; }
+    var claim = ($('verifyInput').value || '').trim();
+    if (!claim) { toast('先把要核查的论据贴进来'); return; }
+    verifying = true;
+    $('btnVerifyRun').disabled = true;
+    $('btnVerifyRun').textContent = '🛡 检证中…';
+    var box = $('verifyResult');
+    box.classList.remove('hidden');
+    box.innerHTML = '<div class="loading-bar"></div><p class="hint">研究助手正在联网检索原始出处、核对数字与结论…（约 1~5 分钟，取决于论据数量）</p>';
+    api('/api/research/verify', 'POST', { claim: claim, context: ($('topic').value || '').trim() }).then(function (r) {
+      var j = r.json || {};
+      if (r.status !== 200 || !j.ok) throw new Error(j.error || ('HTTP ' + r.status));
+      box.innerHTML = '<div class="verify-title">🛡 检证报告<button type="button" class="tbtn" id="verifyCopy" title="复制报告">📋</button><button type="button" class="tbtn" id="verifyToChat" title="发给研究助手讨论">💬</button></div><div class="md" id="verifyMd"></div>';
+      renderMd(document.getElementById('verifyMd'), j.report || '（空报告）');
+      document.getElementById('verifyCopy').onclick = function () {
+        A.copyText(j.report || '').then(function () { toast('报告已复制'); });
+      };
+      document.getElementById('verifyToChat').onclick = function () {
+        sendChat('关于我刚做的证据检证报告，有几个点想再讨论：\n\n' + (j.report || '').slice(0, 1200));
+      };
+    }).catch(function (e) {
+      box.innerHTML = '<p class="hint">检证失败：' + esc(e.message) + '</p>';
+    }).then(function () {
+      // 收尾（无论成败）：恢复按钮状态
+      verifying = false;
+      $('btnVerifyRun').disabled = false;
+      $('btnVerifyRun').textContent = '🛡 开始检证';
+    });
+  }
+  $('btnVerify').onclick = function () {
+    var box = $('verifyBox');
+    box.classList.toggle('hidden');
+    if (!box.classList.contains('hidden')) {
+      $('verifyBox').scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+    }
+  };
+  $('verifyClose').onclick = function () { $('verifyBox').classList.add('hidden'); };
+  $('btnVerifyRun').onclick = runVerify;
   $('topic').addEventListener('keydown', function (e) { if (e.key === 'Enter') doSearch(); });
 
   /* ---- 独立对话（research 模式，走主 App /api/chat/stream）---- */

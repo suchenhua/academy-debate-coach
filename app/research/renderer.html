@@ -22,6 +22,7 @@
         <input type="text" id="topic" placeholder="输入辩题或关键词，如：人工智能应该有版权吗…" autocomplete="off" />
         <button id="btnSearch" class="btn primary">🔍 搜索</button>
         <button id="btnSuggest" class="btn ghost" title="按 7 种触发条件分析该搜什么">📋 建议该搜什么</button>
+        <button id="btnVerify" class="btn verify" title="核查论据是否被编造或曲解">🛡 证据检证</button>
       </div>
       <div class="mode-row">
         <span class="lbl">通道：</span>
@@ -35,6 +36,22 @@
       <!-- 左：建议 + 结果 -->
       <section class="left">
         <div id="suggestBox" class="suggest hidden"></div>
+
+        <!-- 证据检证面板 -->
+        <div id="verifyBox" class="verify hidden">
+          <div class="verify-title">
+            🛡 证据检证
+            <button type="button" class="tbtn" id="verifyClose" title="收起">✕</button>
+          </div>
+          <p class="verify-hint">把准备上场的论据贴进来（数据 / 案例 / 研究结论 / 名人引言均可，一次可以贴多条）。研究助手会<b>真联网</b>查原始出处，逐条核对：是否真实存在、数字是否被改过、结论是否被断章取义。跑完约 1~5 分钟。</p>
+          <textarea id="verifyInput" rows="7" placeholder="例：\n据《柳叶刀》2019 年研究，中国有 9500 万抑郁症患者。\n某辩手说「MIT 2018 年研究证明 AI 淘汰了 40% 的岗位」。\n「青岛 2023 年 GDP 1.5 万亿，超过济南」。"></textarea>
+          <div class="verify-actions">
+            <button type="button" class="btn primary" id="btnVerifyRun">🛡 开始检证</button>
+            <span class="verify-tip">检证用真实内核 + 联网搜索，跑的时候别在主窗口发任务。</span>
+          </div>
+          <div id="verifyResult" class="verify-result hidden"></div>
+        </div>
+
         <div id="resultsBox" class="results"><p class="hint">输入关键词后点「搜索」</p></div>
       </section>
 
@@ -54,6 +71,7 @@
   </main>
 
   <div id="toast" class="toast">…</div>
+  <script src="md-view.js"></script>
   <script src="research.js"></script>
 </body>
 </html>
