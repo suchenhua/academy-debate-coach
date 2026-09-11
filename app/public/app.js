@@ -1437,7 +1437,7 @@ function loadProfileIntoEditor(p) {
   $('#profileNameInput').value = p.name || '';
   $('#apiKeyInput').value = '';
   $('#apiKeyInput').placeholder = p.hasKey ? ('当前: ' + (p.keyMasked || '已配置') + '，留空保持不变') : 'sk-...';
-  $('#modelInput').value = p.model || 'deepseek-chat';
+  $('#modelInput').value = p.model || 'deepseek-flash';
   const base = p.baseUrl || 'https://api.deepseek.com';
   $('#baseUrlInput').value = base;
   setActiveProviderCard(base);
@@ -1526,7 +1526,7 @@ async function deleteProfileClient(id) {
 async function saveCurrentProfile() {
   const name = ($('#profileNameInput').value || '').trim();
   const apiKey = ($('#apiKeyInput').value || '').trim();
-  const model = ($('#modelInput').value || '').trim() || 'deepseek-chat';
+  const model = ($('#modelInput').value || '').trim() || 'deepseek-flash';
   const baseUrl = currentProviderBaseUrl();
   const out = $('#settingsResult');
   if (!apiKey && !state.editingProfileId) {
@@ -1646,7 +1646,7 @@ async function loadModels() {
 }
 
 function currentModelValue() {
-  return $('#modelInput').value.trim() || 'deepseek-chat';
+  return $('#modelInput').value.trim() || 'deepseek-flash';
 }
 
 function currentBaseUrlValue() {
@@ -3406,7 +3406,7 @@ function openWelcome(startStep) {
 
 /* 向导高级选项：服务商 → 自动填地址/模型 */
 const WIZARD_PROVIDERS = {
-  deepseek:    { baseUrl: 'https://api.deepseek.com',            models: ['deepseek-v4-flash', 'deepseek-chat', 'deepseek-reasoner', 'deepseek-v4-pro'], name: 'DeepSeek 官方' },
+  deepseek:    { baseUrl: 'https://api.deepseek.com',            models: ['deepseek-flash', 'deepseek-v4-pro', 'deepseek-v4-flash', 'deepseek-chat'], name: 'DeepSeek 官方' },
   siliconflow: { baseUrl: 'https://api.siliconflow.cn/v1',       models: ['deepseek-ai/DeepSeek-V3', 'Qwen/Qwen2.5-72B-Instruct', 'deepseek-ai/DeepSeek-R1'], name: '硅基流动' },
   moonshot:    { baseUrl: 'https://api.moonshot.cn/v1',          models: ['moonshot-v1-8k', 'moonshot-v1-32k', 'moonshot-v1-128k'], name: 'Moonshot Kimi' },
   zhipu:       { baseUrl: 'https://open.bigmodel.cn/api/paas/v4', models: ['glm-4-flash', 'glm-4-plus', 'glm-4-air'], name: '智谱 GLM' },
@@ -3458,10 +3458,10 @@ async function wizardTestAndSave() {
   const providerId = ($('#wizardProvider') && $('#wizardProvider').value) || 'deepseek';
   const providerMeta = WIZARD_PROVIDERS[providerId] || WIZARD_PROVIDERS.deepseek;
   let baseUrl = advOpen ? (($('#wizardBaseUrl') && $('#wizardBaseUrl').value || '').trim()) : 'https://api.deepseek.com';
-  let model = advOpen ? (($('#wizardModel') && $('#wizardModel').value || '').trim()) : 'deepseek-v4-flash';
+  let model = advOpen ? (($('#wizardModel') && $('#wizardModel').value || '').trim()) : 'deepseek-flash';
   const profileName = (advOpen && $('#wizardProfileName') && $('#wizardProfileName').value.trim()) || providerMeta.name || '我的配置';
   if (!baseUrl) baseUrl = 'https://api.deepseek.com';
-  if (!model) model = 'deepseek-chat';
+  if (!model) model = 'deepseek-flash';
   if (advOpen && !/^https?:\/\//i.test(baseUrl)) {
     if (out) { out.textContent = 'API 地址要以 http:// 或 https:// 开头。'; out.className = 'settings-result err'; }
     return;

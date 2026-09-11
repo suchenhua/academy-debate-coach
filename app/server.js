@@ -49,10 +49,11 @@ const DEFAULT_TIMEOUT_MS = 15 * 60 * 1000;
 
 /* 模型上下文窗口表（与 writeDshSettings 的 presetModels 保持一致，供流式 usage 下发用） */
 const MODEL_CTX = {
-  'deepseek-chat': 131072,
-  'deepseek-reasoner': 131072,
+  'deepseek-flash': 1048576,      // DeepSeek-V4.1-Flash（现行主力，1M）
+  'deepseek-v4-pro': 1048576,     // DeepSeek-V4-Pro-0813（1M）
   'deepseek-v4-flash': 1048576,
-  'deepseek-v4-pro': 1048576,
+  'deepseek-chat': 131072,        // 旧版 V3，保留兼容
+  'deepseek-reasoner': 131072,    // 旧版 R1，保留兼容
 };
 function ctxWindowOf(mid) { return MODEL_CTX[String(mid || '')] || 131072; }
 
@@ -198,10 +199,11 @@ function writeDshSettings(model, baseUrl, searchApiKey, searchProvider) {
   const provider = searchProvider || 'free';
   const effectiveSearch = searchApiKey && searchApiKey.trim();
   const presetModels = [
+    { id: 'deepseek-flash', name: 'DeepSeek-V4.1-Flash', ctx: 1048576, max: 393216 },
+    { id: 'deepseek-v4-pro', name: 'DeepSeek-V4-Pro', ctx: 1048576, max: 393216 },
+    { id: 'deepseek-v4-flash', name: 'DeepSeek-V4-Flash', ctx: 1048576, max: 393216 },
     { id: 'deepseek-chat', name: 'DeepSeek-V3 (deepseek-chat)', ctx: 131072, max: 65536 },
     { id: 'deepseek-reasoner', name: 'DeepSeek-R1 (deepseek-reasoner)', ctx: 131072, max: 65536 },
-    { id: 'deepseek-v4-flash', name: 'DeepSeek-V4-Flash', ctx: 1048576, max: 393216 },
-    { id: 'deepseek-v4-pro', name: 'DeepSeek-V4-Pro', ctx: 1048576, max: 393216 },
     { id: modelId, name: modelId, ctx: 131072, max: 393216 },
   ];
   function modelContextWindow(mid) {
@@ -2495,8 +2497,18 @@ function handleRequest(req, res) {
       const pid = decodeURIComponent((p.split('/')[3] || '').replace(/^:/, ''));
       const { activeId, profiles } = loadProfiles();
       const idx = profiles.findIndex((x) => x.id === pid);
+      if (idx < 0) return sendJson(res, 404, { ok: false, error: '配置不存在' });
+      const cur = profiles[idx];
+      // 逐字段更新：只改传了的字段，没传的保持原值（改模型时不该把 Key 清掉）
+      if (body.name !== undefined && String(body.name).trim()) cur.name = String(body.name).trim();
+      if (body.model !== undefined && String(body.model).trim()) cur.model = String(body.model).trim();
+      if (body.baseUrl !== undefined && String(body.baseUrl).trim()) cur.baseUrl = normalizeBaseUrl(String(body.baseUrl).trim());
+      if (body.provider !== undefined) cur.provider = String(body.provider || '');
+      // apiKey === null 表示显式清空；undefined 表示不改；空串按「不改」处理（前端留空=保留旧 Key）
       if (body.apiKey === null) { cur.apiKey = ''; }
       else if (body.apiKey !== undefined && String(body.apiKey).trim()) { cur.apiKey = String(body.apiKey).trim(); }
+      profiles[idx] = cur;
+      saveProfiles({ activeId, profiles });
       // 若更新的是当前生效配置，同步到 config.json
       if (activeId === pid) activateProfile(cur);
       return sendJson(res, 200, { ok: true, profile: profilePublic(cur) });
