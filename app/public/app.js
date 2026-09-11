@@ -3729,6 +3729,22 @@ function init() {
   try { bindDragDrop(); } catch (_) {}
   try { bindMdReader(); } catch (_) {}
   try { bindHistorySearch(); } catch (_) {}
+  // 工具页（辩案工作台/简易流水单）「发到主窗口」：storage 事件只在同源的其他窗口触发，
+  // 主窗口收到后把内容填进输入框，用户选好模式自己发
+  try {
+    window.addEventListener('storage', (e) => {
+      if (e.key !== 'academy.handoff.v1' || !e.newValue) return;
+      try {
+        const d = JSON.parse(e.newValue);
+        if (!d || !d.text) return;
+        const ta = $('#input');
+        ta.value = d.text;
+        try { updateCharCount(); } catch (_) {}
+        ta.focus();
+        toast('收到来自「' + (d.from || '工具页') + '」的内容，已填入输入框，选好模式后发送即可');
+      } catch (_) {}
+    });
+  } catch (_) {}
   // 载入多配置档案（填充对话区模型切换下拉等）
   try { loadProfilesUI(); } catch (_) {}
   refreshStatus().then(() => {

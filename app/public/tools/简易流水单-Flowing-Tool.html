@@ -550,6 +550,12 @@ function renderSummary(m,f){
   h+='<button class="btn-sm" onclick="exportMatch(\'csv\')">导出 CSV</button>';
   h+='<button class="btn-sm" onclick="exportMatch(\'txt\')">导出 TXT</button>';
   h+='<button class="btn-sm" style="color:var(--gold);border-color:var(--gold)" onclick="exportMatch(\'json\')">导出 JSON <span class="text-sm text-gray">（仅有此格式支持导入历史记录）</span></button>';
+  h+='</div>';
+  h+='<div style="margin-top:10px;font-size:12px;color:var(--gray)">送回主 App（从主 App 工具箱打开时可用）：</div>';
+  h+='<div style="display:flex;gap:8px;flex-wrap:wrap;margin-top:6px">';
+  h+='<button class="btn-sm" onclick="sendToApp(\'deliverable\')">📦 存为产物</button>';
+  h+='<button class="btn-sm" onclick="sendToApp(\'library\')">📚 存入资料库</button>';
+  h+='<button class="btn-sm" onclick="sendToApp(\'chat\')">💬 发到主窗口输入框</button>';
   h+='</div></div>';
   m.innerHTML=h;
 
@@ -619,25 +625,31 @@ function assessField(label,key){
 function setAssess(key,val){M.assessment[key]=val;save();}
 
 // ── Export ──
+function buildMDContent(){
+  var title=M.title||'辩论流水记录';
+  var content='# '+title+'\n\n'+new Date().toLocaleString()+'\n\n';
+  M.rounds.forEach(function(r){
+    content+='## '+r.name+'\n\n';
+    if(r.type==='opening'){
+      content+=sideText(r,'pro','正方')+'\n';
+      content+=sideText(r,'con','反方')+'\n';
+    }else{
+      content+='### 正方'+(r.proPlayer?' · '+r.proPlayer:'')+'\n'+(r.proContent||'')+'\n\n';
+      content+='### 反方'+(r.conPlayer?' · '+r.conPlayer:'')+'\n'+(r.conContent||'')+'\n\n';
+      if(r.mergedNote)content+='### 合并记录或备注\n'+r.mergedNote+'\n\n';
+    }
+  });
+  content+='\n\n=== 论证完成度评估 ===\n'+assessSections();
+  return content;
+}
+
 async function exportMatch(fmt){
   if(!M)return;
   var dateStr=new Date().toLocaleString();
   var title=M.title||'辩论流水记录';
   var content='';
   if(fmt==='txt'||fmt==='md'){
-    content+='# '+title+'\n\n'+dateStr+'\n\n';
-    M.rounds.forEach(function(r){
-      content+='## '+r.name+'\n\n';
-      if(r.type==='opening'){
-        content+=sideText(r,'pro','正方')+'\n';
-        content+=sideText(r,'con','反方')+'\n';
-      }else{
-        content+='### 正方'+(r.proPlayer?' · '+r.proPlayer:'')+'\n'+(r.proContent||'')+'\n\n';
-        content+='### 反方'+(r.conPlayer?' · '+r.conPlayer:'')+'\n'+(r.conContent||'')+'\n\n';
-        if(r.mergedNote)content+='### 合并记录或备注\n'+r.mergedNote+'\n\n';
-      }
-    });
-    content+='\n\n=== 论证完成度评估 ===\n'+assessSections();
+    content=buildMDContent();
   }else if(fmt==='html'){
     content='<!DOCTYPE html><html><head><meta charset="UTF-8"><title>'+title+'</title></head><body>';
     content+='<h1>'+title+'</h1><p>'+dateStr+'</p>';
@@ -708,6 +720,36 @@ async function exportTemplate(){
   M.rounds.forEach(function(r){tpl.rounds.push({name:r.name,type:r.type||null});});
   var content=JSON.stringify(tpl,null,2);
   await doExport(content,'application/json',tplName+'.json');
+}
+
+/* 送回主 App：产物/资料库走同源接口；输入框走 localStorage（storage 事件只在其他窗口触发） */
+async function sendToApp(target){
+  if(!M)return;save();
+  var title=M.title||'辩论流水记录';
+  var fname='简易流水单-'+title+'-'+new Date().toISOString().slice(0,10);
+  var md=buildMDContent();
+  if(target==='chat'){
+    try{
+      localStorage.setItem('academy.handoff.v1',JSON.stringify({from:'简易流水单',text:md,ts:Date.now()}));
+      alert('已发到主窗口输入框。到主窗口选「复盘」模式后直接发送即可。');
+    }catch(e){alert('发送失败：'+e.message);}
+    return;
+  }
+  var api=target==='deliverable'?'/api/deliverables/save':'/api/library/upload';
+  var payload=target==='deliverable'?{name:fname+'.md',content:md}:{name:fname+'.md',text:md,tags:['流水单']};
+  try{
+    var r=await fetch(api,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(payload)});
+    var j=await r.json().catch(function(){return{};});
+    if(r.ok&&j.ok){
+      alert(target==='deliverable'
+        ?'已存为产物：'+j.name+'\n回主窗口点「📦 产物」即可查看/转 Word/PDF'
+        :'已存入资料库：'+((j.item&&j.item.name)||fname+'.md')+'\n备赛/复盘时会自动召回');
+    }else{
+      alert('失败：'+(j.error||('HTTP '+r.status)));
+    }
+  }catch(e){
+    alert('连不上主 App 服务（'+e.message+'）。\n工具页需要从主 App 的「🧰 工具箱」打开才能送回。');
+  }
 }
 
 function importTemplate(input){

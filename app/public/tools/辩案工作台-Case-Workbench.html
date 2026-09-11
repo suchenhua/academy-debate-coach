@@ -538,8 +538,43 @@ function rE9() {
   ['md','📄 MD','AI 可读'],
   ['txt','纯文本','通用兼容'],
   ['html','🌐 HTML','浏览器打开']
-].map(([fmt,label,desc])=>'<button class="fmt-btn" onclick="doExport(\''+fmt+'\')"><b>'+label+'</b><span>'+desc+'</span></button>').join('')}</div><div class="output-panel" id="op"></div></div>`;
+].map(([fmt,label,desc])=>'<button class="fmt-btn" onclick="doExport(\''+fmt+'\')"><b>'+label+'</b><span>'+desc+'</span></button>').join('')}</div>`;
+  h+='<div style="margin-top:10px;font-size:12px;color:var(--gray)">送回主 App（从主 App 工具箱打开时可用）：</div>';
+  h+='<div style="display:flex;gap:8px;flex-wrap:wrap;margin-top:6px">';
+  h+='<button class="btn-sm" onclick="sendToApp(\'deliverable\')">📦 存为产物</button>';
+  h+='<button class="btn-sm" onclick="sendToApp(\'library\')">📚 存入资料库</button>';
+  h+='<button class="btn-sm" onclick="sendToApp(\'chat\')">💬 发到主窗口输入框</button>';
+  h+='</div><div class="output-panel" id="op"></div></div>';
   return h;
+}
+
+/* 送回主 App：产物/资料库走同源接口；输入框走 localStorage（storage 事件只在其他窗口触发） */
+async function sendToApp(target) {
+  save();
+  var fname='辩论筑基-标准化辩案-'+new Date().toISOString().slice(0,10);
+  var md=genMD();
+  if (target==='chat') {
+    try{
+      localStorage.setItem('academy.handoff.v1',JSON.stringify({from:'辩案工作台',text:md,ts:Date.now()}));
+      alert('已发到主窗口输入框。到主窗口选「备赛」模式后直接发送即可。');
+    }catch(e){alert('发送失败：'+e.message);}
+    return;
+  }
+  var api=target==='deliverable'?'/api/deliverables/save':'/api/library/upload';
+  var payload=target==='deliverable'?{name:fname+'.md',content:md}:{name:fname+'.md',text:md,tags:['辩案']};
+  try{
+    var r=await fetch(api,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(payload)});
+    var j=await r.json().catch(function(){return{};});
+    if(r.ok&&j.ok){
+      alert(target==='deliverable'
+        ?'已存为产物：'+j.name+'\n回主窗口点「📦 产物」即可查看/转 Word/PDF'
+        :'已存入资料库：'+((j.item&&j.item.name)||fname+'.md')+'\n备赛时会自动召回');
+    }else{
+      alert('失败：'+(j.error||('HTTP '+r.status)));
+    }
+  }catch(e){
+    alert('连不上主 App 服务（'+e.message+'）。\n工具页需要从主 App 的「🧰 工具箱」打开才能送回。');
+  }
 }
 
 var isApp = typeof Capacitor !== 'undefined';

@@ -3366,6 +3366,29 @@ function handleRequest(req, res) {
     }).catch((e) => sendJson(res, 500, { ok: false, error: e.message }));
   }
 
+  /* 工具页（辩案工作台/简易流水单）把内容直接存为产物空间文件 */
+  if (req.method === 'POST' && p === '/api/deliverables/save') {
+    return readBody(req, 16 * 1024 * 1024).then((raw) => {
+      let body;
+      try { body = JSON.parse(raw || '{}'); } catch (_) { return sendJson(res, 400, { ok: false, error: 'JSON 解析失败' }); }
+      const base = path.basename(String(body.name || '').trim());
+      const content = String(body.content ?? '');
+      if (!base) return sendJson(res, 400, { ok: false, error: '缺少文件名' });
+      if (!content.trim()) return sendJson(res, 400, { ok: false, error: '内容为空' });
+      const ext = path.extname(base).toLowerCase();
+      if (!['.md', '.markdown', '.txt', '.csv', '.json', '.html'].includes(ext)) {
+        return sendJson(res, 400, { ok: false, error: '仅支持 md/txt/csv/json/html，收到：' + (ext || '无扩展名') });
+      }
+      ensureDir(DELIVER_DIR);
+      let out = base;
+      let i = 1;
+      while (fs.existsSync(path.join(DELIVER_DIR, out))) out = base.replace(/(\.[^.]+)$/, '_' + (++i) + '$1');
+      // csv 加 BOM 方便 Excel 直接打开；其余格式不加
+      fs.writeFileSync(path.join(DELIVER_DIR, out), ext === '.csv' ? '\ufeff' + content : content, 'utf8');
+      return sendJson(res, 200, { ok: true, name: out });
+    }).catch((e) => sendJson(res, 500, { ok: false, error: '保存失败：' + e.message }));
+  }
+
   if (req.method === 'POST' && p === '/api/cancel') {
     if (currentRun) {
       currentRun.cancelled = true;
