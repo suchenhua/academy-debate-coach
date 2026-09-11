@@ -2251,7 +2251,7 @@ function attachmentsPrefix() {
 
 /* ================= 工具列表 ================= *//* ================= 工具列表 ================= */
 const TOOL_INFO = [
-  ['__search__', '🔍 搜资料', '联网搜资料：学术/政策/新闻/百科，可切换端侧（免费）/ 服务侧'],
+  ['__research__', '🔍 研究台', '边查资料边和教练聊：搜索 + 7 触发条件建议 + 独立研究对话（独立小窗）'],
   ['__mdReader__', '📖 MD 阅读器', '打开本地 Markdown / 文本文件阅读'],
   ['辩案工作台-Case-Workbench.html', '辩案工作台', '九步法构建完整辩案'],
   ['简易流水单-Flowing-Tool.html', '简易流水单', '比赛攻防流水记录'],
@@ -2261,13 +2261,24 @@ function renderTools() {
   const box = $('#toolsList');
   box.innerHTML = '';
   for (const [file, name, desc] of TOOL_INFO) {
-    if (file === '__search__') {
-      // 内置面板：搜资料（弹窗内可切端侧/服务侧）
+    if (file === '__research__') {
+      // 独立轻量窗：研究台（搜索 + 独立研究对话）
       const b = document.createElement('button');
       b.type = 'button';
       b.className = 'tool-link';
       b.innerHTML = '<span><b>' + esc(name) + '</b><br><small>' + esc(desc) + '</small></span><span>🔍</span>';
-      b.onclick = () => { $('#toolsModal').classList.add('hidden'); openSearchModal(); };
+      b.onclick = async () => {
+        try {
+          const ae = window.academyElectron;
+          if (ae && ae.openResearch) {
+            const r = await ae.openResearch();
+            if (r && r.ok) { $('#toolsModal').classList.add('hidden'); return; }
+            toast('打开研究台失败：' + ((r && r.error) || ''));
+          } else {
+            toast('研究台是独立小窗，需要桌面版（Electron）环境；浏览器模式下请用双击文件的方式打开');
+          }
+        } catch (e) { toast('打开失败：' + (e.message || e)); }
+      };
       box.appendChild(b);
       continue;
     }
@@ -2452,100 +2463,8 @@ async function bindExtTools() {
   if (t) t.onchange = saveExtToolsToggle;
 }
 
-/* ================= 搜资料面板（工具箱进入，可切端侧/服务侧） ================= */
-/* 面板记忆的搜索通道：端侧 free（免费 Bing/DDG）｜服务侧 server（模型商原生搜索）。
-   默认跟随 ⚙ 设置里的全局通道（state.status.searchMode），手动切过就记住选择。 */
-let panelSearchMode = '';
-const PANEL_MODE_KEY = 'academy:search:panelMode';
 
-function defaultPanelMode() {
-  const st = state && state.status;
-  return (st && st.searchMode === 'server') ? 'server' : 'free';
-}
-function currentPanelMode() {
-  if (panelSearchMode) return panelSearchMode;
-  const saved = (() => { try { return localStorage.getItem(PANEL_MODE_KEY); } catch (_) { return ''; } })();
-  panelSearchMode = (saved === 'server' || saved === 'free') ? saved : defaultPanelMode();
-  return panelSearchMode;
-}
-function setPanelMode(mode) {
-  if (!['server', 'free'].includes(mode)) return;
-  panelSearchMode = mode;
-  try { localStorage.setItem(PANEL_MODE_KEY, mode); } catch (_) {}
-  document.querySelectorAll('#searchModeSwitch .gen-choice').forEach((b) => {
-    b.classList.toggle('active', b.dataset.panelMode === mode);
-  });
-  const note = $('#searchModeNote');
-  if (note) {
-    note.textContent = (mode === 'server')
-      ? '🛰 服务侧：调用当前模型（' + ((state.status && state.status.model) || '') + '）所在服务商的原生搜索，结果更准，按模型用量扣费（目前仅 DeepSeek 官方支持）。'
-      : '🆓 端侧：本地抓取 Bing / DuckDuckGo，免费、不需要 Key，任何网络都能用。';
-    note.className = 'search-mode-note ' + mode;
-  }
-}
-function openSearchModal() {
-  setPanelMode(currentPanelMode());
-  $('#searchModal').classList.remove('hidden');
-  setTimeout(() => { const i = $('#searchQuery'); if (i) i.focus(); }, 50);
-}
-
-async function doSearch() {
-  const q = $('#searchQuery').value.trim();
-  if (!q) { toast('先输入要搜索的内容'); return; }
-  const mode = currentPanelMode();
-  const box = $('#searchResults');
-  $('#searchMeta').classList.add('hidden');
-  box.innerHTML = '<div class="search-empty">' + (mode === 'server' ? '🛰 服务侧搜索中（模型联网，可能稍慢）…' : '搜索中…') + '</div>';
-  try {
-    const res = await fetch('/api/search?q=' + encodeURIComponent(q) + '&mode=' + mode);
-    const j = await res.json();
-    if (!res.ok || !j.ok) throw new Error(j.error || '搜索失败');
-    const srcs = j.sources || [];
-    if (!srcs.length) { box.innerHTML = '<div class="search-empty">没有结果，试试换个关键词</div>'; return; }
-    const chLabel = (j.provider || mode) === 'server' ? '🛰 服务侧（模型商）' : '🆓 端侧（免费）';
-    $('#searchMeta').textContent = '「' + q + '」 · 通道：' + chLabel + ' · 结果：' + srcs.length + ' 条';
-    $('#searchMeta').classList.remove('hidden');
-    box.innerHTML = '';
-    for (const s of srcs) {
-      const tags = (s.tags || []).map((t) => '<span class="tag">' + esc(t) + '</span>').join('') +
-        '<span class="tag engine">' + esc(s.engine || 'web') + '</span>';
-      const d = el('div', 'search-result');
-      const head = el('div', 'search-result-head');
-      const a = document.createElement('a');
-      a.className = 'search-result-title';
-      a.href = s.url;
-      a.target = '_blank';
-      a.rel = 'noopener';
-      a.textContent = s.title || s.url;
-      const tagsBox = el('div', 'search-result-tags');
-      tagsBox.innerHTML = tags;
-      head.appendChild(a);
-      head.appendChild(tagsBox);
-      d.appendChild(head);
-      const url = el('div', 'search-result-url', s.url);
-      d.appendChild(url);
-      if (s.snippet) d.appendChild(el('div', 'search-result-snippet', s.snippet));
-      const act = el('div', 'search-result-actions');
-      const btn = el('button', 'btn ghost small', '＋ 插入输入框');
-      btn.onclick = () => insertSearchResult(s);
-      act.appendChild(btn);
-      d.appendChild(act);
-      box.appendChild(d);
-    }
-  } catch (e) {
-    box.innerHTML = '<div class="search-empty">搜索失败：' + esc(e.message) + '</div>';
-  }
-}
-
-function insertSearchResult(s) {
-  const line = '- [' + (s.title || s.url) + '](' + s.url + ')' +
-    ((s.tags && s.tags.length) ? '（' + s.tags.join('/') + '）' : '');
-  const input = $('#input');
-  input.value = input.value ? input.value + '\n\n' + line : line;
-  autoGrow();
-  updateCharCount();
-  toast('已把来源插入输入框');
-}
+/* 旧的「搜资料」弹窗已移除：搜索与独立研究对话整合进「研究台」独立轻量窗（app/research-window.js）。 */
 
 /* ———— 记忆中心：多级记忆前端展示（长期 / 流水 / 统计）———— */
 let memoryTab = 'long';
@@ -3438,15 +3357,6 @@ function bindEvents() {
     };
   });
   $('#btnCompact').onclick = compactContext;
-  $('#btnDoSearch').onclick = doSearch;
-  $('#searchQuery').addEventListener('keydown', (e) => { if (e.key === 'Enter') { e.preventDefault(); doSearch(); } });
-  // 搜资料面板：端侧 / 服务侧 切换
-  document.querySelectorAll('#searchModeSwitch .gen-choice').forEach((b) => {
-    b.onclick = () => {
-      setPanelMode(b.dataset.panelMode);
-      if ($('#searchQuery').value.trim()) doSearch(); // 已有搜索词 → 用新通道立即重搜
-    };
-  });
   // Ctrl/Cmd+A：焦点在输入框/设置输入项时交给浏览器默认（只全选该框内容）；
   // 否则把全选收窄到对话内容，避免把整页 UI 的字都框进去。
   document.addEventListener('keydown', (e) => {

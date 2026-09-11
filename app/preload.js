@@ -21,6 +21,8 @@ contextBridge.exposeInMainWorld('academyElectron', {
   showDeliverFolder: (fileName) => ipcRenderer.invoke('deliverable:folder', fileName),
   /* 在文件管理器中显示导出的备份文件 */
   showInFolder: (filePath) => ipcRenderer.invoke('shell:showItem', filePath),
+  /* 打开「研究台」独立轻量窗 */
+  openResearch: () => ipcRenderer.invoke('app:openResearch'),
   /* 选择备份文件并读取内容 */
   openBackupFile: () => ipcRenderer.invoke('backup:open'),
   /* 收到"用此 App 打开某文件"（文件关联双击）时触发 */

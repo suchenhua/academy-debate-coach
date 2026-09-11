@@ -453,29 +453,6 @@ whenToUse: 可选：触发条件描述。
     </div>
   </div>
 
-  <!-- 搜索弹窗 -->
-  <div id="searchModal" class="modal hidden">
-    <div class="modal-box search-box">
-      <div class="modal-head">
-        <h2>🔍 联网搜资料</h2>
-        <div class="search-mode-switch" id="searchModeSwitch" role="group" aria-label="搜索方式">
-          <button type="button" class="gen-choice" data-panel-mode="free" title="本地抓取 Bing/DuckDuckGo，免费不扣费">🆓 端侧</button>
-          <button type="button" class="gen-choice" data-panel-mode="server" title="走当前模型商的原生搜索（扣模型余额，目前仅 DeepSeek 官方支持）">🛰 服务侧</button>
-        </div>
-        <button class="modal-close" data-close="searchModal">×</button>
-      </div>
-      <div class="modal-body">
-        <div class="search-bar">
-          <input type="text" id="searchQuery" placeholder="输入要搜的辩题/概念/政策/事件…（回车搜索）" autocomplete="off" />
-          <button id="btnDoSearch" class="btn primary">搜索</button>
-        </div>
-        <div class="search-mode-note" id="searchModeNote"></div>
-        <div class="search-meta hidden" id="searchMeta"></div>
-        <div id="searchResults" class="search-results"></div>
-      </div>
-    </div>
-  </div>
-
   <!-- 产物空间弹窗 -->
   <div id="deliverModal" class="modal hidden">
     <div class="modal-box deliver-box">

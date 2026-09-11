@@ -128,6 +128,9 @@ function sendJson(res, status, obj) {
   res.writeHead(status, {
     'Content-Type': 'application/json; charset=utf-8',
     'Cache-Control': 'no-store',
+    // 允许本机的独立轻量窗（file:// 协议）调用本服务；服务只监听 127.0.0.1，不暴露到局域网
+    'Access-Control-Allow-Origin': '*',
+    'Access-Control-Allow-Headers': 'Content-Type',
   });
   res.end(body);
 }
@@ -432,6 +435,36 @@ const MODE_META = {
       '',
       '先确认赛制与判准；输出三票制评分明细与九段式述票词；',
       '述票词必须是可以直接照着念的完整文字。',
+    ].join('\n'),
+  },
+  research: {
+    label: '资料研究',
+    extra: [
+      '## 本单任务类型：资料研究（独立研究台的小助手）',
+      '',
+      '你的角色是【研究助手】，不是备赛教练。用户此刻在「研究台」面板里查资料，',
+      '你负责让这一轮检索变得高效、有据、可复用。备赛框架分析请让用户去主窗口的「备赛」模式。',
+      '',
+      '### 你的职责（按优先级）',
+      '',
+      '1. **解读搜索结果**：用户把搜到的来源贴给你时，逐条判断——',
+      '   数据是否可信（官方/一手 > 媒体转述 > 自媒体）、口径是什么、能否直接引用；',
+      '   引用前给一句「可以直接上场念的话」。',
+      '2. **指出下一步该搜什么**：按以下 7 种触发条件对照当前辩题，缺哪个就提示补哪个：',
+      '   ① 专业学术概念（定义/学术争议/经典文献）② 政策法规（现行条文/文件全文）',
+      '   ③ 新闻事件与社会现象（事件原委/统计数据/多方报道）④ 国际比较（制度差异/数据对比）',
+      '   ⑤ 对方论据引用的研究/数据（原始研究方法论/样本量/结论全文）',
+      '   ⑥ 历史背景（事件来龙去脉）⑦ 陌生术语/人名（定义/背景/立场）',
+      '3. **整理弹药**：把确认可用的素材整理成弹药条——每条不超过 40 字、上场直接念、',
+      '   标注数据来源；成链不散装。',
+      '4. **守住原则**：私有资料解决「怎么打」，搜索解决「打什么」，两者互补不互相替代；',
+      '   不编造数据和事实，不确定就明说不确定。',
+      '',
+      '### 输出格式',
+      '',
+      '- 回答保持紧凑（这是边查边聊的伴随面板，不是写文章的地方）；',
+      '- 给结论时附来源链接或「需要进一步核实」标注；',
+      '- 建议下一步搜索时直接给出可复制的搜索词（用反引号包起来）。',
     ].join('\n'),
   },
 };
@@ -2251,6 +2284,17 @@ function handleRequest(req, res) {
   const url = new URL(req.url, 'http://127.0.0.1');
   const p = url.pathname;
 
+  // CORS 预检：本机独立轻量窗（file://）跨源调用需要
+  if (req.method === 'OPTIONS') {
+    res.writeHead(204, {
+      'Access-Control-Allow-Origin': '*',
+      'Access-Control-Allow-Methods': 'GET, POST, PUT, DELETE, OPTIONS',
+      'Access-Control-Allow-Headers': 'Content-Type',
+      'Access-Control-Max-Age': '86400',
+    });
+    return res.end();
+  }
+
   if (req.method === 'GET' && (p === '/api/status' || p === '/api/health')) {
     return sendJson(res, 200, statusPayload());
   }
@@ -2270,6 +2314,51 @@ function handleRequest(req, res) {
     return run.then((r) => {
       if (r.ok === false) return sendJson(res, 400, { ok: false, error: r.error });
       return sendJson(res, 200, { ok: true, query: q, mode, provider: r.provider || mode, sources: r.sources || [], answer: r.answer || '' });
+    }).catch((e) => sendJson(res, 500, { ok: false, error: e.message }));
+  }
+
+  // 研究台：按 7 种主动搜索触发条件，为当前辩题生成建议搜索词。
+  // 用 DSH 内核跑一次极小任务（复用现有 runDsh 管线），返回结构化建议。
+  if (req.method === 'POST' && p === '/api/research/suggest') {
+    if (currentRun) return sendJson(res, 409, { ok: false, error: 'BUSY', message: '有一个任务正在运行，请稍后再试。' });
+    return readBody(req, 64 * 1024).then((raw) => {
+      let body;
+      try { body = JSON.parse(raw || '{}'); } catch (_) { return sendJson(res, 400, { ok: false, error: 'JSON 解析失败' }); }
+      const topic = String(body.topic || '').trim();
+      if (!topic) return sendJson(res, 400, { ok: false, error: '缺少辩题/关键词' });
+      if (!engineReady()) return sendJson(res, 500, { ok: false, error: 'NO_ENGINE', message: 'Agent 内核缺失，无法生成建议。' });
+      const cfg = loadConfig();
+      const runId = 'sug-' + Date.now().toString(36) + '-' + crypto.randomBytes(3).toString('hex');
+      const prompt = [
+        '你是辩论资料研究助手。用户给出的辩题或关键词：',
+        '',
+        '【' + topic + '】',
+        '',
+        '请按以下 7 种触发条件逐一判断：哪些条件命中、该搜什么。',
+        '① 专业学术概念 ② 政策法规 ③ 新闻事件/社会现象 ④ 国际比较',
+        '⑤ 对方论据引用的研究/数据 ⑥ 历史背景 ⑦ 陌生术语/人名',
+        '',
+        '只输出 JSON（不要输出任何其他文字），格式：',
+        '{"hits":[{"trigger":"触发条件名","query":"可直接复制的搜索词","reason":"一句话说明为什么搜这个"}]}',
+        '',
+        '规则：只列命中的条件（通常 2~5 个，不足 2 个时列出最值得查的 2 个）；',
+        'query 必须是可直接粘贴到搜索引擎的具体搜索词（含引号或限定词更好）；不要编造。',
+      ].join('\n');
+      ensureDir(TASK_DIR);
+      const taskFile = path.join(TASK_DIR, runId + '.md');
+      fs.writeFileSync(taskFile, prompt, 'utf8');
+      writeDshSettings(cfg.model, cfg.baseUrl, effectiveSearchKey(cfg), resolveSearchProvider(cfg));
+      return runDsh(runId, prompt, cfg, () => {}).then((info) => {
+        const out = String(info.stdout || '').trim();
+        // 从回复里抠 JSON（模型可能裹在代码块里）
+        const m = out.match(/\{[\s\S]*\}/);
+        if (!m) return sendJson(res, 200, { ok: true, topic, hits: [], raw: out.slice(0, 400) });
+        try {
+          const j = JSON.parse(m[0]);
+          const hits = Array.isArray(j.hits) ? j.hits.filter((h) => h && h.query) : [];
+          return sendJson(res, 200, { ok: true, topic, hits });
+        } catch (_) { return sendJson(res, 200, { ok: true, topic, hits: [], raw: out.slice(0, 400) }); }
+      }).catch((e) => sendJson(res, 500, { ok: false, error: e.message }));
     }).catch((e) => sendJson(res, 500, { ok: false, error: e.message }));
   }
 

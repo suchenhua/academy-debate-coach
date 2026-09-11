@@ -1,0 +1,59 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>🔍 研究台 · Academy 辩论教练</title>
+<link rel="stylesheet" href="research.css" />
+</head>
+<body>
+  <header class="topbar">
+    <span class="logo">🔍 研究台</span>
+    <span class="grow"></span>
+    <span id="connState" class="conn">连接中…</span>
+  </header>
+
+  <div id="boot" class="boot"><p class="hint">正在连接主 App…</p></div>
+
+  <main id="app" class="hidden">
+    <!-- 搜索区 -->
+    <section class="search-area">
+      <div class="search-row">
+        <input type="text" id="topic" placeholder="输入辩题或关键词，如：人工智能应该有版权吗…" autocomplete="off" />
+        <button id="btnSearch" class="btn primary">🔍 搜索</button>
+        <button id="btnSuggest" class="btn ghost" title="按 7 种触发条件分析该搜什么">📋 建议该搜什么</button>
+      </div>
+      <div class="mode-row">
+        <span class="lbl">通道：</span>
+        <button type="button" class="mode-chip active" data-mode="free">🆓 端侧（免费）</button>
+        <button type="button" class="mode-chip" data-mode="server">🛰 服务侧（扣费）</button>
+        <span id="modeNote" class="mode-note"></span>
+      </div>
+    </section>
+
+    <div class="cols">
+      <!-- 左：建议 + 结果 -->
+      <section class="left">
+        <div id="suggestBox" class="suggest hidden"></div>
+        <div id="resultsBox" class="results"><p class="hint">输入关键词后点「搜索」</p></div>
+      </section>
+
+      <!-- 右：与教练的独立对话 -->
+      <section class="right">
+        <div class="chat-head">
+          <span>💬 研究助手</span>
+          <button id="btnChatClear" class="tbtn" title="清空当前对话">🗑</button>
+        </div>
+        <div id="chatLog" class="chat-log"><p class="hint">搜到的结果看不懂？贴给研究助手帮你解读、找下一步该搜什么。</p></div>
+        <div class="chat-input-row">
+          <textarea id="chatInput" rows="2" placeholder="问研究助手：这条数据可信吗 / 下一步搜什么 / 帮我整理成弹药…"></textarea>
+          <button id="btnChatSend" class="btn primary">发送</button>
+        </div>
+      </section>
+    </div>
+  </main>
+
+  <div id="toast" class="toast">…</div>
+  <script src="research.js"></script>
+</body>
+</html>

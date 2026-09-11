@@ -11,7 +11,6 @@
 body { user-select: none; -webkit-user-select: none; }
 .messages, .bubble, .msg, .md, .md *,
 .modal-body, .settings-pane, .usage-summary,
-.search-results, .search-result-snippet,
 .history-list, .skill-list, .deliver-list, .lib-list, .memory-panel,
 .composer textarea, input, select, textarea {
   user-select: text; -webkit-user-select: text;
@@ -371,34 +370,12 @@ button.tool-link:hover { background: var(--primary-soft); }
   .brand-text p { display: none; }
 }
 
-/* ---------- 搜资料面板 ---------- */
-.search-box { max-width: 720px; width: 94%; }
-.search-bar { display: flex; gap: 8px; margin-bottom: 10px; }
-.search-bar input {
-  flex: 1; border: 1px solid var(--border); border-radius: 10px; padding: 9px 12px;
-  font: inherit; font-size: 14px; outline: none; background: #fff;
-}
-.search-bar input:focus { border-color: var(--primary); }
-.search-meta { font-size: 12.5px; color: var(--muted); margin-bottom: 8px; padding: 4px 2px; }
-.search-results { display: flex; flex-direction: column; gap: 8px; max-height: 55vh; overflow: auto; }
-.search-result {
-  border: 1px solid var(--border); border-radius: 10px; padding: 10px 13px;
-}
-.search-result:hover { border-color: var(--primary); }
-.search-result-head { display: flex; justify-content: space-between; align-items: center; gap: 8px; }
-.search-result-title { font-size: 14px; font-weight: 700; color: var(--text); text-decoration: none; }
-.search-result-title:hover { color: var(--primary); }
-.search-result-tags { display: flex; gap: 4px; flex-wrap: wrap; }
+/* ---------- 通用小标签（资料库/搜索结果等共用） ---------- */
 .tag {
   font-size: 11px; padding: 1px 7px; border-radius: 99px; background: var(--primary-soft);
   color: var(--primary); white-space: nowrap;
 }
 .tag.engine { background: #eef1f8; color: var(--muted); }
-.search-result-url { font-size: 12px; color: var(--muted); word-break: break-all; margin-top: 2px; }
-.search-result-snippet { font-size: 13px; color: #555; margin-top: 4px; line-height: 1.55; }
-.search-result-actions { margin-top: 6px; text-align: right; }
-.search-result-actions .btn { font-size: 12px; padding: 4px 10px; }
-.search-empty { color: var(--muted); text-align: center; padding: 26px 0; }
 
 /* ---------- 长程记忆面板 ---------- */
 .memory-box { max-width: 720px; width: 94%; }
@@ -524,18 +501,11 @@ button.tool-link:hover { background: var(--primary-soft); }
 }
 .gen-choice:hover { border-color: var(--primary); color: var(--primary); }
 .gen-choice.active { background: var(--primary); color: #fff; border-color: var(--primary); }
-/* ── 搜资料弹窗：端侧/服务侧切换 ── */
-.search-mode-switch { display: flex; gap: 4px; align-items: center; margin-left: auto; margin-right: 10px; }
-.search-mode-switch .gen-choice { padding: 4px 10px; font-size: 12px; border-radius: 999px; white-space: nowrap; }
-.search-mode-note { display: none; font-size: 12px; color: var(--muted); background: var(--primary-soft); border-radius: 8px; padding: 6px 10px; margin: -2px 0 10px; line-height: 1.5; }
-.search-mode-note.free, .search-mode-note.server { display: block; }
-.search-mode-note.server { background: var(--amber-soft); color: var(--amber); }
 /* ── 深色模式：硬编码浅色的修正 ── */
 :root[data-theme="dark"] .provider-card:hover { background: #1e2637; }
 :root[data-theme="dark"] .field input[type="password"],
 :root[data-theme="dark"] .field input[type="text"],
 :root[data-theme="dark"] .field select,
-:root[data-theme="dark"] .search-bar input,
 :root[data-theme="dark"] .model-select { background: #141b28; color: var(--text); }
 :root[data-theme="dark"] .md code { background: #232c3e; }
 :root[data-theme="dark"] .md table th { background: #1e2637; }

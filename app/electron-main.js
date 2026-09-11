@@ -429,6 +429,18 @@ ipcMain.handle('deliverable:folder', (_evt, fileName) => {
     return { ok: true };
   } catch (e) { return { ok: false, error: e.message }; }
 });
+/* 打开「研究台」独立轻量窗（与主窗口并行；重复调用只新开一个独立进程，窗口内部单实例） */
+ipcMain.handle('app:openResearch', async () => {
+  try {
+    const exePath = process.execPath;
+    const script = path.join(__dirname, 'research-window.js');
+    if (!fs.existsSync(script)) return { ok: false, error: '找不到研究台程序（app/research-window.js）' };
+    const { spawn } = require('child_process');
+    spawn(exePath, [script], { cwd: ROOT, windowsHide: false, stdio: 'ignore', detached: true }).unref();
+    log('打开研究台');
+    return { ok: true };
+  } catch (e) { return { ok: false, error: e.message }; }
+});
 ipcMain.handle('shell:showItem', async (_evt, filePath) => {
   try {
     const { shell } = require('electron');
