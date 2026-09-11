@@ -6,8 +6,9 @@
  *   2. 校验 tools/pack.js 产出的便携版 zip 已包含安装辅助文件
  *   3. 用系统自带 csc.exe 编译一个小型 WinForms 自解压外壳（带应用图标）
  *   4. stub.exe + 32字节分隔标记 + 便携版zip 拼接为最终 setup.exe
- *   双击 setup.exe → 解压到临时目录 → 隐藏运行 setup.bat → 装到
- *   %LOCALAPPDATA%\AcademyDebateCoach → 创建桌面/开始菜单快捷方式 → 打开浏览器
+ *   双击 setup.exe → 向导选安装位置（默认 %LOCALAPPDATA%\AcademyDebateCoach）+ 勾选快捷方式
+ *   → 解压到临时目录 → 运行 setup.bat <目标目录> [desktop|nodesktop] [menu|nomenu]
+ *   → 创建快捷方式 → 启动独立 Electron 窗口
  */
 'use strict';
 const fs = require('fs');
@@ -200,7 +201,7 @@ async function main() {
   log('== 完成，用时 ' + ((Date.now() - t0) / 1000).toFixed(1) + ' 秒 ==');
   log('');
   log('发给小白用户：只需要这一个文件 → ' + (SHARE_DIST ? path.join(SHARE_DIST, EXE_NAME_CN) : EXE));
-  log('双击 → 等待 1~3 分钟 → 浏览器自动打开。');
+  log('双击 → 选安装位置（可改，默认 C 盘用户目录）→ 等 1~3 分钟 → 自动打开独立窗口。');
 }
 
 main().catch((e) => { console.error('✗ ' + (e && e.stack || e)); process.exit(1); });
