@@ -65,9 +65,11 @@ if /I "!SRC!"=="!DEST!" (
 )
 
 echo [3/4] 正在创建快捷方式...
+rem install-shortcuts.ps1 只有「跳过」开关（-NoDesktop/-NoMenu）；
+rem 要建就什么都不传 —— 别传 -Desktop/-Menu，那对参数不存在会报错。
 set "SC_ARGS=-InstallDir ""!DEST!"""
-if "!WANT_DESKTOP!"=="1" (set "SC_ARGS=!SC_ARGS! -Desktop") else (set "SC_ARGS=!SC_ARGS! -NoDesktop")
-if "!WANT_MENU!"=="1" (set "SC_ARGS=!SC_ARGS! -Menu") else (set "SC_ARGS=!SC_ARGS! -NoMenu")
+if not "!WANT_DESKTOP!"=="1" set "SC_ARGS=!SC_ARGS! -NoDesktop"
+if not "!WANT_MENU!"=="1" set "SC_ARGS=!SC_ARGS! -NoMenu"
 powershell -NoProfile -ExecutionPolicy Bypass -File "!DEST!\install-shortcuts.ps1" !SC_ARGS!
 if errorlevel 1 (
   echo 快捷方式创建失败（不影响使用，可稍后手动双击安装目录里的 launch.vbs）

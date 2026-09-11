@@ -3,11 +3,13 @@
 # 开关（都可选，默认都建，保持老调用方兼容）：
 #   -NoDesktop   不在桌面建快捷方式
 #   -NoMenu      不在开始菜单建快捷方式
+#
+# 注意：下面取桌面路径的变量叫 $desktopPath，不能叫 $desktop ——
+# PowerShell 变量名不区分大小写，$desktop 会和 switch 参数 $Desktop 撞名，
+# 赋值字符串给 switch 参数会直接抛 ArgumentTransformationMetadataException。
 param(
     [Parameter(Mandatory = $true)]
     [string]$InstallDir,
-    [switch]$Desktop,
-    [switch]$Menu,
     [switch]$NoDesktop,
     [switch]$NoMenu
 )
@@ -41,8 +43,8 @@ Write-Output "== 创建 Academy 辩论教练快捷方式 =="
 if ($NoDesktop) {
     Write-Output '  skip: 桌面快捷方式（按用户选择跳过）'
 } else {
-    $desktop = [Environment]::GetFolderPath('Desktop')
-    if ($desktop) { New-AcademyLink -LinkPath $desktop -LinkName 'Academy辩论教练' }
+    $desktopPath = [Environment]::GetFolderPath('Desktop')
+    if ($desktopPath) { New-AcademyLink -LinkPath $desktopPath -LinkName 'Academy辩论教练' }
 }
 
 # 开始菜单（除非明确要求跳过）
