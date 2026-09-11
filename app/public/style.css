@@ -1003,8 +1003,10 @@ body.sidebar-collapsed .sidebar-toggle { left: 54px; transform: translate(50%, -
 .lib-syn-actions { display: flex; gap: 8px; justify-content: flex-end; }
 /* ================= 产物空间 ================= */
 .deliver-box { max-width: 860px; width: 94%; }
-.deliver-box .modal-body { display: flex; flex-direction: column; gap: 8px; padding: 14px 20px 18px; }
-.deliver-list { display: flex; flex-direction: column; gap: 8px; max-height: 46vh; overflow: auto; }
+/* 弹窗定高：文件/收藏两个 tab 内容高度不同，不定高则切 tab 整个窗口跳大小 */
+.deliver-box .modal-body { display: flex; flex-direction: column; gap: 8px; padding: 14px 20px 18px; height: min(660px, 78vh); }
+#deliverFilesPane, #deliverStarsPane { display: flex; flex-direction: column; gap: 8px; flex: 1; min-height: 0; }
+.deliver-list { display: flex; flex-direction: column; gap: 8px; flex: 1; min-height: 0; overflow: auto; }
 .deliver-item { border: 1px solid var(--border); border-radius: 10px; padding: 9px 11px; background: var(--bg); }
 .deliver-item-head { display: flex; align-items: center; gap: 8px; }
 .deliver-item-icon { font-size: 15px; flex: 0 0 auto; }
