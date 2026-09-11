@@ -23,7 +23,7 @@
   /* ---- 初始化 ---- */
   A.init().then(function (st) {
     S.port = st.port || 0;
-    S.mode = (st.opts && st.opts.mode) || 'free';
+    S.mode = (st.opts && st.opts.mode) || 'server';   // 默认深度检索：『能用』比『免费』重要
     if (st.ok) {
       $('connState').textContent = '已连接主 App :' + S.port;
       $('connState').className = 'conn ok';
@@ -43,8 +43,8 @@
     S.mode = mode;
     document.querySelectorAll('.mode-chip').forEach(function (b) { b.classList.toggle('active', b.dataset.mode === mode); });
     $('modeNote').textContent = (mode === 'server')
-      ? '服务侧：调当前模型商的原生搜索，更准、扣模型余额（仅 DeepSeek 官方支持）。'
-      : '端侧：本地抓取 Bing / DuckDuckGo，免费、不需要 Key。';
+      ? '结果更准、覆盖更全，用当前模型的额度。'
+      : '不花钱，但覆盖有限：部分网络下免费搜索源会被限制，可能搜不到相关结果。';
     A.saveOpts({ mode: mode });
   }
   document.querySelectorAll('.mode-chip').forEach(function (b) {
@@ -64,6 +64,26 @@
       if (r.status !== 200 || !j.ok) throw new Error(j.error || ('HTTP ' + r.status));
       var srcs = j.sources || [];
       if (!srcs.length) { box.innerHTML = '<p class="hint">没有结果，换个关键词试试</p>'; return; }
+
+      // 基础检索（免费）被反爬/降级页面挡住时，服务端会标记 lowQuality。
+      // 这时必须明确告诉用户「没搜到」并给出下一步，而不是把无关结果当正常结果显示。
+      if (j.lowQuality) {
+        box.innerHTML =
+          '<div class="search-warn">' +
+          '<b>⚠️ 基础检索没找到相关结果</b><br>' +
+          esc(j.notice || '当前网络下免费搜索源被限制。') +
+          '<div class="acts">' +
+          '<button class="btn primary" id="warnSwitch">⭐ 改用深度检索</button>' +
+          '<button class="btn" id="warnCopy">📋 复制关键词去浏览器搜</button>' +
+          '</div>' +
+          '</div>';
+        var sw = document.getElementById('warnSwitch');
+        if (sw) sw.onclick = function () { setMode('server'); doSearch(q); };
+        var cp = document.getElementById('warnCopy');
+        if (cp) cp.onclick = function () { A.copyText(q).then(function () { toast('关键词已复制，可粘贴到浏览器搜索'); }); };
+        return;
+      }
+
       box.innerHTML = '';
       srcs.forEach(function (s) {
         var d = document.createElement('div'); d.className = 'result';

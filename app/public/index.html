@@ -244,15 +244,18 @@
           <!-- 面板：联网搜索 -->
           <div class="settings-pane" data-settings-pane="search">
             <div class="general-section">
-              <div class="set-step-title">搜索方式</div>
+              <div class="set-step-title">联网搜索质量</div>
               <div class="gen-choices" id="searchModeChoices" style="justify-content:flex-start; flex-wrap:wrap; gap:8px;">
-                <button type="button" class="gen-choice" data-search-mode="server">🛰 服务侧搜索（用当前模型 Key，走当前模型商）</button>
-                <button type="button" class="gen-choice" data-search-mode="free">🆓 端侧搜索（免费 Bing/DuckDuckGo，0 扣费）</button>
+                <button type="button" class="gen-choice" data-search-mode="server">⭐ 深度检索（推荐）</button>
+                <button type="button" class="gen-choice" data-search-mode="free">⚡ 基础检索（免费）</button>
               </div>
               <small class="field-hint" style="margin-top:8px; display:block;">
-                <b>服务侧</b>：Agent 联网时调当前模型提供商的搜索 API，结果更准、扣当前模型余额。<br>
-                <b>端侧</b>：无需任何 Key，本地抓取 Bing/DuckDuckGo，不扣费。<br>
-                此设置决定 Agent 任务内联网用的通道；「🔍 搜资料」面板在工具箱里，搜索时可单独切换端侧 / 服务侧。<br>
+                <b>⭐ 深度检索（推荐）</b>：用当前模型提供商的联网搜索，结果更准、覆盖更全，会消耗当前模型的额度。<br>
+                <b>⚡ 基础检索</b>：不花钱，本地抓取 Bing/DuckDuckGo。但覆盖有限，
+                部分网络下免费搜索源会被限制，<b>可能搜不到相关结果</b>（届时会明确提示你切回深度检索）。<br>
+                <b>建议保持「深度检索」</b>——辩论备赛要查的多是学术概念、法条、新闻数据，
+                这些靠免费抓取往往找不到；选便宜的反而容易白忙。<br>
+                此设置决定 Agent 任务内联网用的通道；研究台面板可单独切换。<br>
                 切换后立即生效，无需额外填 Key。
               </small>
               <p id="searchResultMsg" class="settings-result"></p>

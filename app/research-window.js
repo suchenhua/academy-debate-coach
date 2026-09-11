@@ -37,10 +37,16 @@ function log(msg) {
 }
 
 /* 共享设置：窗口尺寸 / 通道记忆 / 最近辩题 */
-function defaultOpts() { return { width: 1080, height: 780, mode: 'free', lastTopic: '' }; }
+function defaultOpts() { return { width: 1080, height: 780, mode: 'server', lastTopic: '' }; }
+/* 老版本默认存的是 free。升级到本版时把未主动选过 server 的一律按新默认 server 处理
+   （free 效果实测很差：常被反爬返回无关结果），可随时手动切回。 */
 function loadOpts() {
-  try { return Object.assign(defaultOpts(), JSON.parse(fs.readFileSync(OPTS_FILE, 'utf8'))); }
-  catch (_) { return defaultOpts(); }
+  try {
+    const raw = JSON.parse(fs.readFileSync(OPTS_FILE, 'utf8'));
+    const opts = Object.assign(defaultOpts(), raw);
+    if (!raw || raw.mode !== 'server') opts.mode = 'server';
+    return opts;
+  } catch (_) { return defaultOpts(); }
 }
 function saveOpts(patch) {
   const next = Object.assign(loadOpts(), patch || {});

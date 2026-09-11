@@ -1881,6 +1881,41 @@ function classifySearchSource(s) {
   return tags.slice(0, 3);
 }
 
+/* 结果质量检测：判断一批来源是否与查询词相关。
+   为什么需要它：端侧免费搜索（Bing/DDG 抓取）在部分网络/IP 下会被返回
+   降级页面或缓存页——实测搜「人工智能 版权 争议」返回的是百度百科「人工」词条、
+   搜「网络暴力 司法解释」返回测速网站。这类结果「看起来正常但完全无关」，
+   比直接报错更危险（用户会误信、模型会误用）。宁可判定失败，也不返回垃圾。 */
+function scoreSourcesRelevance(query, sources) {
+  const q = String(query || '').toLowerCase();
+  const list = Array.isArray(sources) ? sources : [];
+  if (!list.length) return { ok: false, score: 0, reason: '没有任何结果' };
+  // 中文按 2-gram、英文按单词切分查询词
+  const terms = [];
+  const segs = q.split(/[\s,，、；;]+/).filter(Boolean);
+  for (const seg of segs) {
+    if (/^[a-z0-9]{2,}$/i.test(seg)) terms.push(seg);
+    else for (let i = 0; i < seg.length - 1; i++) terms.push(seg.slice(i, i + 2));
+  }
+  if (!terms.length) return { ok: true, score: 1, reason: '' };
+  const uniq = Array.from(new Set(terms));
+  let hitDocs = 0;
+  for (const s of list) {
+    const hay = (String(s.title || '') + ' ' + String(s.snippet || '') + ' ' + String(s.url || '')).toLowerCase();
+    const hit = uniq.filter((t) => hay.indexOf(t) !== -1).length;
+    // 命中超过 1/4 的查询特征词才算相关
+    if (hit >= Math.max(2, Math.ceil(uniq.length / 4))) hitDocs++;
+  }
+  const ratio = hitDocs / list.length;
+  // 相关文档不足三成 → 判定为抓取失败（宁缺勿滥）
+  const ok = ratio >= 0.3;
+  return {
+    ok,
+    score: Number(ratio.toFixed(2)),
+    reason: ok ? '' : ('返回的 ' + list.length + ' 条结果里只有 ' + hitDocs + ' 条与查询相关'),
+  };
+}
+
 function decodeDdgUrl(href) {
   try {
     const u = new URL(href);
@@ -1921,8 +1956,9 @@ function fetchUrlText(url, redirects = 2) {
 async function freeSearchResults(query) {
   const q = encodeURIComponent(String(query || '').slice(0, 200));
   if (!q) return [];
+  // www.bing.com 会 302 到 cn.bing.com；直接请求 cn 少一跳，也更少被挡
   const [bingHtml, ddgHtml] = await Promise.all([
-    fetchUrlText('https://www.bing.com/search?q=' + q + '&setlang=zh-hans&count=10'),
+    fetchUrlText('https://cn.bing.com/search?q=' + q + '&setlang=zh-hans&count=10'),
     fetchUrlText('https://html.duckduckgo.com/html/?q=' + q),
   ]);
   const sources = [];
@@ -1950,13 +1986,16 @@ async function freeSearchResults(query) {
     add(decodeDdgUrl(as[i][1]), as[i][2], ss[i] ? ss[i][1] : '', 'duckduckgo');
   }
 
-  // 兜底：任何引擎都没结果时，不让 Agent 空手
-  if (!sources.length) {
-    sources.push({
-      url: 'https://www.bing.com/search?q=' + q,
-      title: '未抓取到网页结果（搜索源可能被网络限制）',
-      snippet: '请基于本地知识库回答，并提示用户当前网络下网页搜索不可用。',
-    });
+  // 质量检测：抓到的结果可能「看起来正常但完全无关」（被反爬/降级页面）。
+  // 这时宁可判定失败，也不把垃圾喂给模型和用户。
+  const rel = scoreSourcesRelevance(query, sources);
+  if (!sources.length || !rel.ok) {
+    return [{
+      url: 'https://cn.bing.com/search?q=' + q,
+      title: '基础检索未找到相关结果',
+      snippet: (rel.reason ? '(' + rel.reason + ') ' : '') + '当前网络下免费搜索源可能被限制或返回了无关内容。请改用「深度检索」，或基于本地知识库回答，不要据此编造事实。',
+      lowQuality: true,
+    }];
   }
   return sources;
 }
@@ -2353,7 +2392,20 @@ function handleRequest(req, res) {
       : searchResults(q).then((r) => ({ ok: true, provider: 'free', sources: r.sources || [], answer: r.answer || '' }));
     return run.then((r) => {
       if (r.ok === false) return sendJson(res, 400, { ok: false, error: r.error });
-      return sendJson(res, 200, { ok: true, query: q, mode, provider: r.provider || mode, sources: r.sources || [], answer: r.answer || '' });
+      const sources = r.sources || [];
+      // 端侧搜索可能因反爬/降级页面返回无关结果：识别为 lowQuality 并如实上报，
+      // 让前端明确提示用户改用深度检索，而不是把垃圾结果当正常结果显示。
+      const lowQuality = sources.length > 0 && sources.every((s) => s && s.lowQuality);
+      return sendJson(res, 200, {
+        ok: true, query: q, mode,
+        provider: r.provider || mode,
+        sources,
+        answer: r.answer || '',
+        lowQuality,
+        notice: lowQuality
+          ? '基础检索（免费）在当前网络下没有拿到相关结果，通常是搜索源被限制。建议切到「深度检索」，或改用本地知识库。'
+          : '',
+      });
     }).catch((e) => sendJson(res, 500, { ok: false, error: e.message }));
   }
 
