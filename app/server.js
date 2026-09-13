@@ -104,13 +104,12 @@ function materializePatch() {
    统计变成幸存者偏差。账本只增不改，删对话不影响历史消耗。 */
 const USAGE_FILE = path.join(DATA_DIR, 'usage.jsonl');
 
-// 发行版本号（单一来源：/api/status 下发给前端「设置 → 关于应用」）
-// 发版时改这里，并同步 tools/sfx/SfxLauncher.cs 的 AssemblyVersion 与 README（pack.js 会自检这三处）
-const APP_VERSION = '2.1.0';
-// 版本线（Edition）：Flash = 轻量线（本版）；后续 Pro 版只改这一处即可切换，
-// 展示层拼作「v{APP_VERSION} {APP_EDITION}」。APP_VERSION 必须保持 X.Y.Z 三段式，
-// 否则 tools/pack.js 的版本一致性自检与 SfxLauncher 的 AssemblyVersion 对不上。
-const APP_EDITION = 'Flash';
+// 发行版本号与版本线：单一来源是 app/edition.js（按 ACADEMY_EDITION 环境变量 /
+// pack.js --edition 选择版本线；不指定时默认 flash）。改版本号去 app/edition.js，不在这里改。
+// pack.js 会按当前版本线自检 README 与 tools/sfx/SfxLauncher.cs 的一致性。
+const edition = require('./edition');
+const APP_VERSION = edition.version;   // 必须保持 X.Y.Z 三段式
+const APP_EDITION = edition.name;      // 展示用版本线名（Flash / Pro）
 const DEFAULT_MODEL = 'deepseek-chat';
 const DEFAULT_PORT = 8787;
 const MAX_BODY = 6 * 1024 * 1024; // 允许粘贴很长的比赛文字稿

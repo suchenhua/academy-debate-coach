@@ -13,6 +13,22 @@
 
 ---
 
+## 版本线说明
+
+本项目**一条代码库产出两个版本线**，共用同一份知识库、内核与打包流程：
+
+| 版本线 | 定位 | 状态 |
+|--------|------|------|
+| **Flash** | 轻量线：备赛 / 复盘 / 评判完整链路 + 方法论知识库 | 当前发行（v2.1.0 Flash） |
+| **Pro** | 完整线：在 Flash 基础上增加更多前后端功能 | 开发中 |
+
+- **版本号与功能开关的单一来源**：`app/edition.js`
+- **打包时选择版本线**：`node tools/pack.js --edition=flash`（或 `--edition=pro`，不指定默认 flash）
+- **运行期切换**：设置环境变量 `ACADEMY_EDITION=pro`
+- 版本号需保持 `X.Y.Z` 三段式：`tools/pack.js` 的版本自检与 `tools/sfx/SfxLauncher.cs` 的 `AssemblyVersion` 都依赖它
+
+---
+
 ## 一、这是什么
 
 一个本地运行的辩论 AI 教练桌面应用：

@@ -12,8 +12,19 @@ const path = require('path');
 const { spawnSync } = require('child_process');
 
 const ROOT = path.resolve(__dirname, '..');
+
+/* 版本线：--edition=flash|pro（默认 flash）。决定发行版本号、README 校验目标与产物命名。
+   注意：必须在 require app/edition.js 之前写入环境变量——该模块加载时读 ACADEMY_EDITION。 */
+let EDITION_ARG = '';
+for (const a of process.argv.slice(2)) {
+  const m = String(a).match(/^--edition=([A-Za-z0-9_-]+)$/);
+  if (m) EDITION_ARG = m[1];
+}
+process.env.ACADEMY_EDITION = EDITION_ARG || process.env.ACADEMY_EDITION || 'flash';
+const edition = require(path.join(ROOT, 'app', 'edition.js'));
+
 const DIST = path.join(ROOT, 'dist');
-const ZIP = path.join(DIST, 'Academy-Bianlun-Coach-portable.zip');
+const ZIP = path.join(DIST, 'Academy-Bianlun-Coach-' + edition.name + '-portable.zip');
 const NODE = process.env.ACADEMY_NODE || path.join(ROOT, 'runtime', 'node', 'node.exe');
 /* DSH 内核两种布局都要认：新版扁平 runtime/dsh/@deepseek-ai/...，旧版嵌套 runtime/dsh/node_modules/@deepseek-ai/... */
 const DSH_BIN_CANDIDATES = [
@@ -40,29 +51,33 @@ const ITEMS = [
 function log(msg) { console.log(msg); }
 function fail(msg) { console.error('✗ ' + msg); process.exit(1); }
 
-/* 发版前版本一致性自检：APP_VERSION 是单一来源，但 README 标题/正文、安装外壳
-   AssemblyVersion 仍需手工同步。这里只做「提醒 + 可选阻断」，避免发版后
-   安装程序与 App 自称的版本号不一致。
+/* 发版前版本一致性自检：版本号的单一来源是 app/edition.js（按当前版本线取值），
+   但 README 标题/正文、安装外壳 AssemblyVersion 仍需手工同步。这里只做「提醒 + 可选阻断」。
    用 ACADEMY_STRICT_VERSION=1 可把不一致升级为打包失败。 */
 function checkVersionConsistency() {
-  const serverSrc = path.join(ROOT, 'app', 'server.js');
-  const m = fs.readFileSync(serverSrc, 'utf8').match(/const\s+APP_VERSION\s*=\s*['"]([^'"]+)['"]/);
-  if (!m) { log('· 版本自检：未能从 app/server.js 解析 APP_VERSION，跳过'); return; }
-  const ver = m[1];
+  const ver = edition.version;
+  const edName = edition.name;
   const problems = [];
   const readme = path.join(ROOT, 'README.md');
   if (fs.existsSync(readme)) {
     const text = fs.readFileSync(readme, 'utf8');
-    // README 里出现的所有 vX.Y.Z / X.Y.Z 版本号，收集去重后比对
-    const found = Array.from(new Set((text.match(/v?\d+\.\d+\.\d+/g) || []).map((s) => s.replace(/^v/i, ''))));
-    const stale = found.filter((x) => x !== ver);
-    if (stale.length) problems.push('README.md 仍写着 ' + stale.map((x) => 'v' + x).join('、') + '（应为 v' + ver + '）');
+    /* 只校验与「当前版本线」绑定的版本号（形如 "v2.1.0 Flash"）：
+       README 可能同时介绍两条版本线，不能要求所有版本号都等于本线的号。 */
+    const bound = new RegExp('v?(\\d+\\.\\d+\\.\\d+)\\s*' + edName, 'gi');
+    const found = Array.from(new Set((text.match(bound) || [])
+      .map((s) => (s.match(/\d+\.\d+\.\d+/) || [''])[0])));
+    if (!found.length) {
+      problems.push('README.md 未找到「vX.Y.Z ' + edName + '」形式的版本号（应为 v' + ver + ' ' + edName + '）');
+    } else {
+      const stale = found.filter((x) => x !== ver);
+      if (stale.length) problems.push('README.md 写着 ' + stale.map((x) => 'v' + x + ' ' + edName).join('、') + '（应为 v' + ver + ' ' + edName + '）');
+    }
   }
   const cs = path.join(ROOT, 'tools', 'sfx', 'SfxLauncher.cs');
   if (fs.existsSync(cs)) {
     const am = fs.readFileSync(cs, 'utf8').match(/AssemblyVersion\(\s*["'](\d+)\.(\d+)\.(\d+)\.(\d+)["']/);
     // 捕获组是 [1]=major [2]=minor [3]=patch [4]=build，
-    // 要和 APP_VERSION 的 major.minor.patch 逐位对应（早先这里索引整体错开了一位，
+    // 要和当前版本线的 major.minor.patch 逐位对应（早先这里索引整体错开了一位，
     // 结果「一致也报不一致、真不一致反而可能漏报」，等于护栏失效）
     const want = ver.split('.');
     if (am && !(am[1] === want[0] && am[2] === want[1] && am[3] === want[2])) {
@@ -75,7 +90,7 @@ function checkVersionConsistency() {
   log('  （提示：改完再打包，或用 ACADEMY_STRICT_VERSION=0 忽略）');
 }
 
-log('== Academy 辩论教练 · 一键打包 ==');
+log('== Academy 辩论教练 · 一键打包 · ' + edition.name + ' v' + edition.version + ' ==');
 
 // 0) 内核检查（不存在时尝试从源目录复制）
 if (!fs.existsSync(DSH_BIN) || !fs.existsSync(NODE)) {
@@ -95,7 +110,7 @@ try {
   if (fs.existsSync(staleZip)) { fs.rmSync(staleZip, { force: true }); log('✓ 已清理 Electron 中间 zip'); }
 } catch (_) {}
 
-// 0.35) 发版前版本一致性自检（README / 安装外壳 vs APP_VERSION）
+// 0.35) 发版前版本一致性自检（README / 安装外壳 vs app/edition.js 的本线版本号）
 checkVersionConsistency();
 
 // 0.4) 安装脚本行尾/编码归一化（必须在消毒之前，防止 PS1 的 BOM 丢失、bat 行尾异常）
@@ -170,7 +185,7 @@ const shareDir = resolveShareDir();
 if (shareDir) {
   try {
     fs.mkdirSync(shareDir, { recursive: true });
-    for (const name of [path.basename(ZIP), 'Academy辩论教练-便携版.zip']) {
+    for (const name of [path.basename(ZIP), 'Academy辩论教练-' + edition.name + '-便携版.zip']) {
       fs.copyFileSync(ZIP, path.join(shareDir, name));
     }
     log('✓ 已导出到 ' + shareDir);
