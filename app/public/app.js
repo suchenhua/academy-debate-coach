@@ -1728,7 +1728,8 @@ function switchSettingsPane(pane) {
 const ABOUT_LICENSE_URL = 'https://creativecommons.org/licenses/by-nc-sa/4.0/deed.zh';
 function renderAboutPane() {
   const ver = (state.status && state.status.version) || '2.1.0';
-  const v = 'v' + String(ver).replace(/^v/i, '');
+  const edition = String((state.status && state.status.edition) || 'Flash').trim();
+  const v = 'v' + String(ver).replace(/^v/i, '') + (edition ? ' ' + edition : '');
   const elVer = $('#aboutVersion');
   if (elVer) elVer.textContent = v;
   const elFoot = $('#aboutFootVer');
