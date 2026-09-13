@@ -2,7 +2,7 @@
 
 # Academy 辩论教练 · 本地桌面版（逻敏 v2.1.0 Flash）
 
-> 当前发行版本：**v2.1.0 Flash**（Flash 版本线）　|　App 内可在「⚙ 设置 → ℹ️ 关于应用」查看版本、开源许可与联系方式
+> 当前发行版本：**v2.1.0 Flash**（Flash 型号）　|　App 内可在「⚙ 设置 → ℹ️ 关于应用」查看版本、开源许可与联系方式
 
 > 📄 本知识库由 QFUD（驻青四校联合辩论培训计划）整理发布，
 > 采用 知识共享署名-非商业性使用-相同方式共享 4.0 国际 (CC BY-NC-SA 4.0) 许可。
@@ -13,17 +13,17 @@
 
 ---
 
-## 版本线说明
+## 版本型号说明
 
-本项目**一条代码库产出两个版本线**，共用同一份知识库、内核与打包流程：
+**同一版本、两种型号**，共用同一个版本号、同一份知识库、内核与打包流程：
 
-| 版本线 | 定位 | 状态 |
-|--------|------|------|
-| **Flash** | 轻量线：备赛 / 复盘 / 评判完整链路 + 方法论知识库 | 当前发行（v2.1.0 Flash） |
-| **Pro** | 完整线：在 Flash 基础上增加更多前后端功能 | 开发中 |
+| 型号 | 定位 | 版本 |
+|------|------|------|
+| **Flash** | 轻量版：备赛 / 复盘 / 评判完整链路 + 方法论知识库 | v2.1.0 Flash（当前发行） |
+| **Pro** | 完整版：在 Flash 基础上增加更多前后端功能 | v2.1.0 Pro（开发中） |
 
-- **版本号与功能开关的单一来源**：`app/edition.js`
-- **打包时选择版本线**：`node tools/pack.js --edition=flash`（或 `--edition=pro`，不指定默认 flash）
+- **版本号与功能开关的单一来源**：`app/edition.js`（型号只决定功能集，不决定版本号）
+- **打包时选择型号**：`node tools/pack.js --edition=flash`（或 `--edition=pro`，不指定默认 flash）
 - **运行期切换**：设置环境变量 `ACADEMY_EDITION=pro`
 - 版本号需保持 `X.Y.Z` 三段式：`tools/pack.js` 的版本自检与 `tools/sfx/SfxLauncher.cs` 的 `AssemblyVersion` 都依赖它
 
@@ -83,7 +83,7 @@
 
 ## 五、许可与来源
 
-- 当前发行版本：**v2.1.0 Flash**（Flash 版本线）
+- 当前发行版本：**v2.1.0 Flash**（Flash 型号）
 - 本应用知识库采用 **CC BY-NC-SA 4.0** 许可，完整声明见 `LICENSE.md`
 - 方法论体系改编自开源项目 [debate-coach《辩论筑基》](https://github.com/MoonTzai/debate-coach)（精靈Moon著）
 - 教练质询协议改编自 [grill-me](https://github.com/mattpocock/skills/tree/main/skills/productivity/grill-me)（Matt Pocock，MIT License）
