@@ -31,12 +31,45 @@ const ITEMS = [
   // runtime 逐项列出：dsh-old-010 / dsh-new 是历史试验内核，绝不能进分发包
   'runtime/node', 'runtime/electron', 'runtime/dsh',
   'runtime/persona.patch.yml',
+  // 正文流式插件：被 persona.patch.yml 的 insert 引用，漏打包会导致内核整个起不来
+  'runtime/academy-text-stream.mjs',
   'knowledge', 'modules', 'prep-coach', 'review-coach', 'judge-assistant',
   'protocols', 'personas', 'scripts', 'tools',
 ];
 
 function log(msg) { console.log(msg); }
 function fail(msg) { console.error('✗ ' + msg); process.exit(1); }
+
+/* 发版前版本一致性自检：APP_VERSION 是单一来源，但 README 标题/正文、安装外壳
+   AssemblyVersion 仍需手工同步。这里只做「提醒 + 可选阻断」，避免发版后
+   安装程序自称 2.0.0 而 App 里显示 2.1.0 这类不一致。
+   用 ACADEMY_STRICT_VERSION=1 可把不一致升级为打包失败。 */
+function checkVersionConsistency() {
+  const serverSrc = path.join(ROOT, 'app', 'server.js');
+  const m = fs.readFileSync(serverSrc, 'utf8').match(/const\s+APP_VERSION\s*=\s*['"]([^'"]+)['"]/);
+  if (!m) { log('· 版本自检：未能从 app/server.js 解析 APP_VERSION，跳过'); return; }
+  const ver = m[1];
+  const problems = [];
+  const readme = path.join(ROOT, 'README.md');
+  if (fs.existsSync(readme)) {
+    const text = fs.readFileSync(readme, 'utf8');
+    // README 里出现的所有 vX.Y.Z / X.Y.Z 版本号，收集去重后比对
+    const found = Array.from(new Set((text.match(/v?\d+\.\d+\.\d+/g) || []).map((s) => s.replace(/^v/i, ''))));
+    const stale = found.filter((x) => x !== ver);
+    if (stale.length) problems.push('README.md 仍写着 ' + stale.map((x) => 'v' + x).join('、') + '（应为 v' + ver + '）');
+  }
+  const cs = path.join(ROOT, 'tools', 'sfx', 'SfxLauncher.cs');
+  if (fs.existsSync(cs)) {
+    const am = fs.readFileSync(cs, 'utf8').match(/AssemblyVersion\(\s*["'](\d+)\.(\d+)\.(\d+)\.(\d+)["']/);
+    if (am && !(am[2] === ver.split('.')[0] && am[3] === ver.split('.')[1] && am[4] === ver.split('.')[2])) {
+      problems.push('SfxLauncher.cs AssemblyVersion 为 ' + am[1] + '.' + am[2] + '.' + am[3] + '.' + am[4] + '（应为 ' + ver + '.0）');
+    }
+  }
+  if (!problems.length) { log('✓ 版本一致性自检：v' + ver + '（README / 安装外壳已同步）'); return; }
+  for (const p of problems) log('⚠ 版本不一致：' + p);
+  if (process.env.ACADEMY_STRICT_VERSION === '1') fail('版本不一致（ACADEMY_STRICT_VERSION=1，已阻断打包）');
+  log('  （提示：改完再打包，或用 ACADEMY_STRICT_VERSION=0 忽略）');
+}
 
 log('== Academy 辩论教练 · 一键打包 ==');
 
@@ -58,6 +91,9 @@ try {
   if (fs.existsSync(staleZip)) { fs.rmSync(staleZip, { force: true }); log('✓ 已清理 Electron 中间 zip'); }
 } catch (_) {}
 
+// 0.35) 发版前版本一致性自检（README / 安装外壳 vs APP_VERSION）
+checkVersionConsistency();
+
 // 0.4) 安装脚本行尾/编码归一化（必须在消毒之前，防止 PS1 的 BOM 丢失、bat 行尾异常）
 function normalizeCrlf(text) {
   return text.replace(/^\uFEFF/, '').replace(/\r\n/g, '\n').replace(/\r/g, '\n').replace(/\n/g, '\r\n');
@@ -78,6 +114,17 @@ if (fs.existsSync(sanitizeJs)) {
   if (s.status !== 0) fail('开源合规检查失败');
 } else {
   fail('缺少 tools/sanitize-distribution.js，拒绝打包（防止未消毒内容进入发行包）');
+}
+
+// 0.6) 裁剪运行时体积：dsh 里运行时不用的 .map/.ts/.d.ts/.md/.pdb + Electron 未用 locale。
+//      放在打包流程里，升级内核或重下 Electron 之后下次打包会自动重裁，不用手工维护。
+const pruneJs = path.join(ROOT, 'tools', 'prune-runtime.js');
+if (fs.existsSync(pruneJs)) {
+  log('裁剪运行时体积…');
+  const pruned = spawnSync(process.execPath, [pruneJs], { cwd: ROOT, stdio: 'inherit' });
+  if (pruned.status !== 0) fail('运行时裁剪失败');
+} else {
+  fail('缺少 tools/prune-runtime.js');
 }
 
 // 1) 准备输出目录（zip 与被归档内容隔离：dist 不在 ITEMS 里）

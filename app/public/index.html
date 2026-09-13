@@ -68,7 +68,6 @@
             <button id="btnLibrary" class="btn ghost small" title="个人资料库：上传自己的备赛包/文字稿，备赛复盘时自动检索引用">📚 资料库</button>
             <button id="btnDeliver" class="btn ghost small" title="产物空间：Agent 输出的文件（md/csv/…），可转 Word/Excel/PDF 并导出到任意文件夹">📦 产物</button>
             <button id="btnMemory" class="btn ghost small" title="查看/管理长程记忆">🧠 记忆</button>
-            <button id="btnCompact" class="btn ghost small" title="把当前对话压缩成摘要，释放上下文空间">🧹 压缩上下文</button>
             <div class="export-menu" id="exportMenu">
               <button id="btnExportSession" class="btn ghost small" title="导出当前会话，可选 Word / Markdown / PDF 格式">⬇ 导出当前会话 <span class="caret">▾</span></button>
               <div class="export-dropdown hidden" id="exportDropdown" role="menu">
@@ -281,6 +280,83 @@
                   </small>
                 </div>
               </div>
+
+              <div class="general-section" style="margin-top:14px">
+                <div class="gen-row" style="border-top:none">
+                  <span class="gen-label">自定义搜索服务</span>
+                  <div class="gen-choices">
+                    <label class="lib-switch"><input type="checkbox" id="customSearchToggle" /><span id="customSearchLabel">关（默认）</span></label>
+                  </div>
+                </div>
+                <small class="field-hint" style="display:block;margin-bottom:10px">
+                  内置的「基础检索」是免费抓取网页，部分网络下会被限制、搜不到东西。
+                  <b>如果你有可用的搜索服务（Tavily / SearXNG / Brave 等），在这里接上，
+                  「基础检索」就会优先用它，结果会可靠得多。</b>不填也不影响使用——那就继续用深度检索。
+                </small>
+
+                <div id="customSearchForm" class="hidden">
+                  <label class="field">
+                    <span>选择预设（只是帮你填好格式，之后都能改）</span>
+                    <select id="customSearchPreset">
+                      <option value="">— 请选择 —</option>
+                    </select>
+                  </label>
+                  <small class="field-hint" id="customSearchPresetNote" style="display:block;margin:-4px 0 10px"></small>
+
+                  <label class="field">
+                    <span>名称（随便起，只用于显示）</span>
+                    <input type="text" id="csName" placeholder="如：Tavily 主力" autocomplete="off" />
+                  </label>
+
+                  <label class="field">
+                    <span>请求地址模板 <span class="require-dot">*</span></span>
+                    <input type="text" id="csUrl" placeholder="https://api.tavily.com/search" autocomplete="off" />
+                    <small class="field-hint">用 <code>{query}</code> 表示关键词（会自动做 URL 编码）。例：<code>https://your-searxng.com/search?q={query}&format=json</code></small>
+                  </label>
+
+                  <div class="set-step">
+                    <div class="set-step-title">请求方式</div>
+                    <div class="gen-choices" id="csMethodChoices" style="justify-content:flex-start">
+                      <button type="button" class="gen-choice" data-cs-method="GET">GET（关键词放地址里）</button>
+                      <button type="button" class="gen-choice" data-cs-method="POST">POST（关键词放请求体）</button>
+                    </div>
+                  </div>
+
+                  <label class="field">
+                    <span>API Key（没有就留空）</span>
+                    <input type="password" id="csApiKey" placeholder="留空表示不修改已保存的 Key" autocomplete="off" />
+                    <small class="field-hint" id="csKeyHint">保存在本机 <code>data/config.json</code>。请求头里用 <code>{apiKey}</code> 引用，没写的话会自动加 <code>Authorization: Bearer</code>。</small>
+                  </label>
+
+                  <label class="field">
+                    <span>请求头（每行一个，可留空）</span>
+                    <textarea id="csHeaders" rows="2" placeholder="Authorization: Bearer {apiKey}"></textarea>
+                  </label>
+
+                  <label class="field" id="csBodyField">
+                    <span>请求体模板（POST 时用，JSON）</span>
+                    <textarea id="csBody" rows="2" placeholder='{"query":"{queryRaw}","max_results":8}'></textarea>
+                    <small class="field-hint"><code>{queryRaw}</code> 是未编码的原始关键词。</small>
+                  </label>
+
+                  <div class="set-step">
+                    <div class="set-step-title">从返回的 JSON 里取哪些字段 <span class="require-dot">*</span></div>
+                    <div class="cs-paths">
+                      <label class="field"><span>结果数组路径</span><input type="text" id="csResultsPath" placeholder="results" autocomplete="off" /></label>
+                      <label class="field"><span>标题字段</span><input type="text" id="csTitlePath" placeholder="title" autocomplete="off" /></label>
+                      <label class="field"><span>链接字段</span><input type="text" id="csUrlPath" placeholder="url" autocomplete="off" /></label>
+                      <label class="field"><span>摘要字段（可空）</span><input type="text" id="csSnippetPath" placeholder="content" autocomplete="off" /></label>
+                    </div>
+                    <small class="field-hint">用点号表示层级，如 Brave 的结果在 <code>web.results</code> 里就填 <code>web.results</code>。</small>
+                  </div>
+
+                  <div class="backup-actions" style="margin-top:12px">
+                    <button type="button" class="btn" id="btnCustomSearchTest">🔌 测试一下</button>
+                    <button type="button" class="btn primary" id="btnCustomSearchSave">保存</button>
+                  </div>
+                  <p id="customSearchResult" class="settings-result"></p>
+                </div>
+              </div>
             </div>
           </div>
           <!-- 面板：数据备份 -->
@@ -361,6 +437,8 @@ whenToUse: 可选：触发条件描述。
               <div class="stats-legend"><span>少</span><div class="stats-legend-cells"></div><span>多</span></div>
             </div>
             <div class="stats-grid" id="statsGrid"></div>
+            <div id="statsModels" class="stats-models hidden"></div>
+            <p id="statsFoot" class="stats-foot"></p>
           </div>
 
           <!-- 面板：关于应用 -->
@@ -371,7 +449,7 @@ whenToUse: 可选：触发条件描述。
                 <div class="about-name">逻敏 · Academy 辩论教练</div>
                 <div class="about-sub">华语辩论全链路 AI 教练 · 备赛 / 复盘 / 评判</div>
                 <div class="about-verline">
-                  <span class="about-ver" id="aboutVersion">v2.0.0</span>
+                  <span class="about-ver" id="aboutVersion">__APP_VERSION__</span>
                   <span class="about-engine" id="aboutEngine"></span>
                 </div>
               </div>
@@ -442,7 +520,7 @@ whenToUse: 可选：触发条件描述。
             </div>
 
             <div class="about-foot">
-              <span id="aboutFootVer">Academy 辩论教练 v2.0.0</span> ·
+              <span id="aboutFootVer">Academy 辩论教练 __APP_VERSION__</span> ·
               CC BY-NC-SA 4.0 · QFUD
             </div>
           </div>
@@ -475,6 +553,7 @@ whenToUse: 可选：触发条件描述。
         <p class="memory-hint">Agent 的长篇交付会写成文件保存在 <code>data/deliverables/</code>。在这里<b>预览 / 转 Word / 转 Excel / 存 PDF / 导出到任意文件夹</b>。</p>
         <div class="deliver-tabs">
           <button type="button" class="deliver-tab active" data-dtab="files">📁 文件</button>
+          <button type="button" class="deliver-tab" data-dtab="cases">🗂 辩题</button>
           <button type="button" class="deliver-tab" data-dtab="stars">⭐ 收藏</button>
         </div>
         <div id="deliverFilesPane">
@@ -493,6 +572,24 @@ whenToUse: 可选：触发条件描述。
           </div>
           <div id="deliverMeta" class="lib-meta" style="margin:6px 0"></div>
           <div id="deliverList" class="deliver-list"></div>
+        </div>
+        <div id="deliverCasesPane" class="hidden">
+          <p class="memory-hint" style="margin-top:0">按<b>辩题</b>归集：备赛时 Agent 会自动把这场对话挂到对应辩题下；一个辩题的历次对话和备赛包都收在一处。<b>删除辩题只删这条索引，不动你的对话和文件。</b></p>
+          <div class="lib-search">
+            <input type="text" id="caseSearch" placeholder="筛选辩题…" autocomplete="off" />
+            <button type="button" class="btn ghost small" id="btnCaseNew">＋ 新建辩题</button>
+            <button type="button" class="btn ghost small" id="btnCaseRefresh">↻ 刷新</button>
+          </div>
+          <div id="caseNewForm" class="lib-paste-form hidden">
+            <input type="text" id="caseNewMotion" placeholder="辩题，如：大学生应该先就业再择业" autocomplete="off" />
+            <input type="text" id="caseNewSide" placeholder="持方（选填），如：反方" autocomplete="off" />
+            <div class="lib-paste-actions">
+              <button type="button" class="btn primary small" id="btnCaseNewSave">创建</button>
+              <button type="button" class="btn ghost small" id="btnCaseNewCancel">取消</button>
+            </div>
+          </div>
+          <div id="caseMeta" class="lib-meta" style="margin:6px 0"></div>
+          <div id="caseList" class="deliver-list"></div>
         </div>
         <div id="deliverStarsPane" class="hidden">
           <p class="memory-hint" style="margin-top:0">对话里点回复下方的「⭐ 收藏」就会出现在这里，跨对话汇总；可一键存成产物或跳回原文。</p>
@@ -516,6 +613,10 @@ whenToUse: 可选：触发条件描述。
       <div class="modal-body">
         <p class="memory-hint" id="memoryHint">记忆分两层：<b>长期记忆</b>（精炼持久事实）与<b>每日流水</b>（当天观察/备忘）。Agent 会自动读写，你也可以<b>手动新增 / 编辑 / 删除</b>任意一条 —— 鼠标移到条目上就会出现「✏️ 编辑 / 🗑 删除」。</p>
         <div id="memoryMeta" class="memory-meta"></div>
+        <div class="memory-search">
+          <input type="text" id="memorySearchInput" placeholder="🔍 搜索全部记忆（长期 + 流水）" autocomplete="off" />
+          <button type="button" class="btn small" id="btnMemorySearch">搜索</button>
+        </div>
         <div class="memory-tabs">
           <button type="button" class="memory-tab active" data-mtab="long">📚 长期记忆</button>
           <button type="button" class="memory-tab" data-mtab="daily">🗓 每日流水</button>
@@ -524,6 +625,7 @@ whenToUse: 可选：触发条件描述。
         <div id="memoryLongPanel" class="memory-panel active"></div>
         <div id="memoryDailyPanel" class="memory-panel"></div>
         <div id="memoryStatsPanel" class="memory-panel"></div>
+        <div id="memorySearchPanel" class="memory-panel"></div>
         <div class="modal-actions">
           <button id="btnMemoryClear" class="btn ghost">清空全部记忆</button>
         </div>
@@ -553,11 +655,13 @@ whenToUse: 可选：触发条件描述。
             <span class="lib-drop-icon">📥</span>
             <span>把文件拖到这里，或</span>
             <button type="button" class="btn primary small" id="btnLibPick">选择文件</button>
+            <button type="button" class="btn ghost small" id="btnLibPickDir">选择文件夹</button>
             <button type="button" class="btn ghost small" id="btnLibPaste">粘贴文本</button>
           </div>
-          <small class="field-hint">支持 txt / md / srt / pdf / docx / 图片（png、jpg、bmp），单份 ≤ 16MB，可多选；图片会自动做本地 OCR</small>
+          <small class="field-hint">支持 txt / md / srt / pdf / docx / 图片（png、jpg、bmp），单份 ≤ 16MB；可多选、可直接拖入整个文件夹（一次最多 100 份）；图片会自动做本地 OCR</small>
         </div>
         <input type="file" id="libFileInput" accept=".txt,.md,.markdown,.srt,.pdf,.docx,.png,.jpg,.jpeg,.bmp,.tif,.tiff" multiple hidden />
+        <input type="file" id="libDirInput" accept=".txt,.md,.markdown,.srt,.pdf,.docx,.png,.jpg,.jpeg,.bmp,.tif,.tiff" multiple webkitdirectory hidden />
         <div id="libUploadState" class="lib-upload-state hidden"></div>
         <div id="libOcrInfo" class="lib-ocr-info hidden"></div>
         <div id="libPasteForm" class="lib-paste-form hidden">
@@ -584,7 +688,17 @@ whenToUse: 可选：触发条件描述。
             </div>
           </div>
         </details>
-        <div class="lib-list-head"><span id="libCount">共 0 份</span></div>
+        <div class="lib-list-head">
+          <span id="libCount">共 0 份</span>
+          <div class="deliver-chips" id="libChips">
+            <button type="button" class="chip active" data-lfilter="all">全部</button>
+            <button type="button" class="chip" data-lfilter="doc">📝 文档</button>
+            <button type="button" class="chip" data-lfilter="word">📘 Word</button>
+            <button type="button" class="chip" data-lfilter="pdf">📕 PDF</button>
+            <button type="button" class="chip" data-lfilter="img">🖼 图片OCR</button>
+            <button type="button" class="chip" data-lfilter="other">📦 其他</button>
+          </div>
+        </div>
         <div id="libList" class="lib-list"></div>
       </div>
     </div>

@@ -70,9 +70,13 @@ function isServerUp(port, timeoutMs) {
 
 async function waitServerUp(port, timeoutMs) {
   const deadline = Date.now() + timeoutMs;
+  let i = 0;
   while (Date.now() < deadline) {
-    if (await isServerUp(port, 800)) return true;
-    await new Promise((r) => setTimeout(r, 400));
+    // 前 25 次用很短间隔：server 现在「先能响应、再做后台维护」，通常几十毫秒就绪；
+    // 固定的 400ms 轮询会白白多等一拍才开窗。
+    if (await isServerUp(port, i < 25 ? 500 : 800)) return true;
+    await new Promise((r) => setTimeout(r, i < 25 ? 60 : 400));
+    i++;
   }
   return false;
 }

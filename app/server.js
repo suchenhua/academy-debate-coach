@@ -38,6 +38,46 @@ const MEMORY_FILE = path.join(DATA_DIR, 'memory.md');
 const CONFIG_FILE = path.join(DATA_DIR, 'config.json');
 const SETTINGS_FILE = path.join(DSH_HOME, 'settings.yaml');
 const PERSONA_PATCH = path.join(ROOT, 'runtime', 'persona.patch.yml');
+/* 正文流式插件（见 runtime/persona.patch.yml 的 academy-text-stream 行）。
+   它是逐字显示的关键：headless 内核会丢弃 text-delta，正文只在结束时整段输出。
+   文件若缺失（漏打包 / 被杀软误删），内核会整个加载失败、用户只看到「Agent 运行失败」，
+   所以启动时做一次自愈：缺失即从内置副本写回。 */
+const STREAM_PLUGIN = path.join(ROOT, 'runtime', 'academy-text-stream.mjs');
+const STREAM_PLUGIN_SRC = `/**
+ * academy-text-stream — 把 assistant 正文的实时增量写到 stderr，供桌面 App 边生成边显示。
+ *
+ * 背景：dsh-headless 内嵌的 streamReasoning 只把 reasoning-delta 写 stderr，
+ * text-delta 被直接丢弃，正文只在结束时整段写到 stdout —— 表现为「卡很久 + 一段一段蹦」。
+ * 解法：不改内核文件，用 --patch 的 insert 挂上本插件，订阅 agent/assistant-stream，
+ * 把 text-delta 按行推给 App。通道选 stderr（App 已在读它），无需新增端口或协议；
+ * stdout 的最终全文仍是权威结果，二者不冲突。
+ */
+export const name = 'academy-text-stream'
+
+export function apply(ctx) {
+  ctx.on('agent/assistant-stream', (payload) => {
+    const frame = payload && payload.frame
+    if (!frame || frame.type !== 'chunk') return
+    const chunk = frame.chunk
+    if (!chunk || chunk.type !== 'text-delta') return
+    if (!chunk.text) return
+    try { process.stderr.write('ACA-TEXT:' + JSON.stringify(chunk.text) + '\\n') } catch (_) {}
+  })
+}
+`;
+function ensureStreamPlugin() {
+  try {
+    if (fs.existsSync(STREAM_PLUGIN)) return;
+    fs.writeFileSync(STREAM_PLUGIN, STREAM_PLUGIN_SRC, 'utf8');
+    console.log('[stream] 已恢复正文流式插件（原文件缺失）');
+  } catch (e) {
+    console.log('[stream] 插件恢复失败：' + e.message);
+  }
+}
+/* 用量账本（append-only）：每次对话跑完追加一行 jsonl。
+   为什么要独立账本：原先用量挂在「每条消息」上，删掉对话 = 那段消耗凭空消失，
+   统计变成幸存者偏差。账本只增不改，删对话不影响历史消耗。 */
+const USAGE_FILE = path.join(DATA_DIR, 'usage.jsonl');
 
 // 发行版本号（单一来源：/api/status 下发给前端「设置 → 关于应用」）
 // 发版时改这里，并同步 electron-main.js 的 AssemblyVersion、README、打包产物名
@@ -74,6 +114,9 @@ const SKILL_USER_DIR = path.join(DSH_HOME, 'skills');   // 用户技能：内核
 const SKILL_BUNDLED_DIR = path.join(ROOT, '.dsh', 'skills'); // 内置技能（随安装包分发，只读）
 const SKILL_MAX_FILE = 512 * 1024; // 单份技能上限
 const DELIVER_DIR = path.join(DATA_DIR, 'deliverables');   // 产物空间：Agent 输出的文件都在这里
+/* 辩题档案夹：按辩题归集对话与产物（caseIndex 只是一个轻量索引 json，
+   真实文件仍在 chats/ 与 deliverables/ 原处，删索引不会删数据） */
+const CASE_INDEX = path.join(DATA_DIR, 'cases.json');
 const DELIVER_MAX_FILE = 30 * 1024 * 1024;                 // 单份产物读取上限
 
 /* ---------------- 工具函数 ---------------- */
@@ -128,11 +171,28 @@ function sendJson(res, status, obj) {
   res.writeHead(status, {
     'Content-Type': 'application/json; charset=utf-8',
     'Cache-Control': 'no-store',
-    // 允许本机的独立轻量窗（file:// 协议）调用本服务；服务只监听 127.0.0.1，不暴露到局域网
-    'Access-Control-Allow-Origin': '*',
-    'Access-Control-Allow-Headers': 'Content-Type',
+    // 故意不带 Access-Control-Allow-Origin：主窗口与本服务的工具页都是同源 HTTP 加载，
+    // 不需要 CORS；本机 file:// 轻量窗（研究台/阅读窗）走 IPC→主进程 http 转发，也不需要。
+    // 对浏览器放开 * 等于允许任意网页读取本机记忆/对话/配置，属于真实数据泄露面。
   });
   res.end(body);
+}
+
+/* 本机接口来源校验：
+   1) Host 必须是 127.0.0.1 / localhost / [::1]——防 DNS rebinding（恶意域名解析到 127.0.0.1，
+      但浏览器请求头里的 Host 仍是攻击者域名，直接拒绝）。
+   2) 浏览器跨源请求会带 Origin 头：不是本机来源（含 'null'，即 file:// 页面或沙箱 iframe
+      发起的跨源调用）一律拒绝。恶意网页既读不到响应（无 CORS），也打不进写接口（Origin 拒绝）。
+   本机的 file:// 轻量窗都经 IPC → 主进程 http.request 转发，不带 Origin，不受影响。 */
+function localOriginOk(req) {
+  const host = String(req.headers.host || '');
+  if (!/^(127\.0\.0\.1|localhost|\[::1\])(:\d+)?$/.test(host)) return false;
+  const origin = String(req.headers.origin || '');
+  if (!origin) return true;
+  try {
+    const o = new URL(origin);
+    return /^(127\.0\.0\.1|localhost|\[::1\])$/.test(o.hostname);
+  } catch (_) { return false; }
 }
 
 /* ---------------- 配置 ---------------- */
@@ -156,6 +216,31 @@ function defaultConfig() {
     apiKey: '', model: DEFAULT_MODEL, baseUrl: DEFAULT_BASE_URL,
     searchProvider: 'server', searchApiKey: '', timeoutMs: DEFAULT_TIMEOUT_MS,
     libraryEnabled: true, extendedTools: false,
+    // 自定义搜索服务（学习 RikkaHub 的插件式思路）：
+    // 内置的免费抓取（Bing/DDG）在部分网络下会被反爬返回无关结果，
+    // 与其塞一个必然失败的免费通道，不如让用户接入自己可用的搜索服务。
+    customSearch: defaultCustomSearch(),
+  };
+}
+
+/* 自定义搜索服务配置。
+   设计成「开放适配器」而不是硬编码十几家 API：
+   用户填请求地址模板 + 字段路径，任何返回 JSON 的搜索服务都能接。
+   urlTemplate 里的 {query} 会被替换为 URL 编码后的关键词。 */
+function defaultCustomSearch() {
+  return {
+    enabled: false,
+    name: '',
+    urlTemplate: '',        // 例：https://api.tavily.com/search?q={query}
+    method: 'GET',          // GET / POST
+    headers: '',            // 每行一个「名称: 值」，值里可用 {apiKey}
+    bodyTemplate: '',       // POST 时的请求体模板（JSON 字符串），可用 {query} {apiKey}
+    apiKey: '',
+    // 结果字段路径：从响应 JSON 里取数组、数组里取字段
+    resultsPath: 'results', // 结果数组的路径，如 data / results / web.results
+    titlePath: 'title',
+    urlPath: 'url',
+    snippetPath: 'content', // 摘要字段，可为空
   };
 }
 
@@ -474,11 +559,6 @@ const MODE_META = {
 const MEMORY_DIR = path.join(DATA_DIR, 'memory');
 const MEMORY_MAX_CHARS = 14000; // 注入给 Agent 的长期记忆最长字符
 const MEMORY_FILE_MAX = 256 * 1024; // 长期 memory.md 上限
-const DAILY_KEEP_DAYS = 60; // 流水保留天数（蒸馏后仅顶格保留近期）
-
-function ensureDir(dir) {
-  try { if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true }); } catch (_) {}
-}
 
 /* ---- L1：长期记忆（memory.md，精炼持久事实） ---- */
 function readLongMemory() {
@@ -516,25 +596,33 @@ function appendMemory(text, opts) {
   const t = String(text || '').trim();
   if (!t) return 0;
   const toLong = !!(opts && opts.long);
-  const stamp = '## ' + new Date().toISOString().replace('T', ' ').slice(0, 19) + (toLong ? ' · 长期记忆' : ' · 备忘');
+  const iso = new Date().toISOString().replace('T', ' ').slice(0, 19);
+  const title = iso + (toLong ? ' · 长期记忆' : ' · 备忘');
+  const stamp = '## ' + title;
   const block = '\n\n---\n\n' + stamp + '\n\n' + t + '\n';
-  try {
-    if (toLong) {
-      ensureDir(DATA_DIR);
-      const prev = fs.existsSync(MEMORY_FILE) ? fs.readFileSync(MEMORY_FILE, 'utf8') : '';
-      let next = (prev.endsWith('\n') ? prev : prev + '\n') + block;
-      if (next.length > MEMORY_FILE_MAX) next = next.slice(-MEMORY_FILE_MAX);
-      fs.writeFileSync(MEMORY_FILE, next, 'utf8');
-    } else {
-      ensureDir(MEMORY_DIR);
-      const fp = dailyFileFor();
-      const prev = fs.existsSync(fp) ? fs.readFileSync(fp, 'utf8') : '';
-      let next = (prev.endsWith('\n') ? prev : prev + '\n') + block;
-      if (next.length > MEMORY_FILE_MAX) next = next.slice(-MEMORY_FILE_MAX);
-      fs.writeFileSync(fp, next, 'utf8');
-    }
-    return t.length;
-  } catch (_) { return 0; }
+    try {
+      let fileKey = 'memory.md';
+      if (toLong) {
+        ensureDir(DATA_DIR);
+        const prev = fs.existsSync(MEMORY_FILE) ? fs.readFileSync(MEMORY_FILE, 'utf8') : '';
+        let next = (prev.endsWith('\n') ? prev : prev + '\n') + block;
+        if (next.length > MEMORY_FILE_MAX) next = next.slice(-MEMORY_FILE_MAX);
+        fs.writeFileSync(MEMORY_FILE, next, 'utf8');
+      } else {
+        ensureDir(MEMORY_DIR);
+        const fp = dailyFileFor();
+        fileKey = fp.split(/[\\/]/).pop().replace(/\.md$/, '');
+        const prev = fs.existsSync(fp) ? fs.readFileSync(fp, 'utf8') : '';
+        let next = (prev.endsWith('\n') ? prev : prev + '\n') + block;
+        if (next.length > MEMORY_FILE_MAX) next = next.slice(-MEMORY_FILE_MAX);
+        fs.writeFileSync(fp, next, 'utf8');
+      }
+      // 增量写索引：只插这一条，不再全量重建（批量编辑走 memoryWriteSegments 的全量重建）
+      try {
+        memoryIndexAppend({ scope: toLong ? 'long' : 'daily', file: fileKey, time: iso, title, body: t });
+      } catch (_) {}
+      return t.length;
+    } catch (_) { return 0; }
 }
 
 /* ---- 把记忆 markdown 拆成条目数组（每个 ## 标题+内容 一条） ---- */
@@ -578,6 +666,7 @@ function memoryWriteSegments(fp, segs) {
   if (next) next += '\n';
   if (next.length > MEMORY_FILE_MAX) next = next.slice(-MEMORY_FILE_MAX);
   fs.writeFileSync(fp, next, 'utf8');
+  try { rebuildMemoryIndex(); } catch (_) {}
   return next.length;
 }
 /* 标题留空时自动生成带时间戳的标题（与 Agent 自动归档的格式一致） */
@@ -607,69 +696,50 @@ function archiveMemoryFromOutput(stdout) {
   return { archived: total, cleaned };
 }
 
-/* ---- 主动召回：对用户消息做关键词打分，命中则带上相关历史流水片段 ---- */
+/* ---- 关键词提取：CJK 二字滑窗 + 英文 token（召回 / 全文搜索共用） ---- */
+const MEM_STOP_BIGRAMS = /^(我们|你们|他们|这个|那个|什么|怎么|为什么|可以|但是|如果|还是|就是|因为|所以|然后|应该|需要|一个|一种|对于|关于|进行|问题|一下|已经|现在|还有|没有|不是|可能|觉得|知道|自己|这些|那些|每个|所有|之后|之前|时候|这样|那样|今天|明天|昨天|辩题|赛制|您好|你好|谢谢|请问)$/;
+function memoryExtractKeywords(text) {
+  const srcText = String(text || '');
+  const words = new Set();
+  const cjk = srcText.match(/[\u4e00-\u9fa5]{2,}/g) || [];
+  for (const w of cjk) {
+    // 每段最多取 16 字的滑窗，够命中且不拖慢长文本
+    for (let i = 0; i + 2 <= Math.min(w.length, 16); i++) {
+      const seg = w.slice(i, i + 2);
+      if (MEM_STOP_BIGRAMS.test(seg)) continue;
+      words.add(seg);
+    }
+  }
+  const en = srcText.toLowerCase().match(/[a-z][a-z0-9]{3,}/g) || [];
+  for (const w of en) words.add(w.slice(0, 5));
+  return Array.from(words);
+}
+
+/* ---- 主动召回：对用户消息做全文检索，带上相关历史记忆片段。
+   语料 = 长期记忆 + 全部流水（QClaw 启发：混合评分 = FTS 相关度 + 新近度）。
+   最近 2 天流水已在上下文里全量注入，召回时跳过，避免重复占上下文。 ---- */
 function memoryKeywordRecall(text, history) {
   try {
-    // 构建关键词：用户消息 + 历史最近一条 user 消息，取 CJK 词组与显著词
     const srcText = String(text || '') + ' ' + (Array.isArray(history) && history.length ? String(history[history.length - 1].text || '') : '');
     if (!srcText.trim()) return [];
-    ensureDir(MEMORY_DIR);
-    const files = [];
-    try {
-      const ents = fs.readdirSync(MEMORY_DIR, { withFileTypes: true });
-      for (const e of ents) {
-        if (e.isFile() && /^\d{4}-\d{2}-\d{2}\.md$/.test(e.name)) files.push(path.join(MEMORY_DIR, e.name));
-      }
-    } catch (_) {}
-    // 提取关键词：2-4 字中文词 + 英文 token
-    const words = new Set();
-    const cjk = srcText.match(/[\u4e00-\u9fa5]{2,}/g) || [];
-    for (const w of cjk) {
-      // 取整段切成 2-字滑窗，避免太长的叙述性文字
-      const len = w.length;
-      for (let i = 0; i + 2 <= Math.min(len, 8); i++) {
-        const seg = w.slice(i, i + 2);
-        if (!/[\s\S]/.test(seg)) continue;
-        // 跳过常见虚词
-        if (/^(我们|你们|他们|这个|那个|什么|怎么|为什么|可以|但是|如果|还是|就是|因为|所以|然后|应该|需要|一个|一种|对于|关于|进行|问题|一下|已经|现在|还有|没有|不是|可能|觉得|知道|自己|这些|那些|每个|所有|之后|之前|时候|这样|那样|今天|明天|昨天|辩题|赛制|您好|你好|谢谢|请问)$/.test(seg)) continue;
-        words.add(seg);
-      }
-    }
-    const en = srcText.toLowerCase().match(/[a-z][a-z0-9]{3,}/g) || [];
-    for (const w of en) words.add(w.slice(0, 5));
-    if (!words.size) return [];
-    // 遍历流水，命中 ≥1 关键词的分段按命中数排序
-    const scored = [];
-    const kwList = Array.from(words);
-    for (const fp of files) {
-      try {
-        const content = fs.readFileSync(fp, 'utf8');
-        const segs = content.split(/\n\n----?\n\n|\n### /);
-        for (const seg of segs) {
-          if (!seg.trim()) continue;
-          let hits = 0;
-          for (const kw of kwList) {
-            // 统计出现次数
-            const idxs = seg.indexOf(kw);
-            if (idxs >= 0) hits += (seg.split(kw).length - 1);
-          }
-          if (hits > 0) {
-            scored.push({ fp, seg: seg.trim().slice(0, 400), hits });
-          }
-        }
-      } catch (_) {}
-    }
-    scored.sort((a, b) => b.hits - a.hits || a.fp.localeCompare(b.fp));
-    return scored.slice(0, 5).map((x) => '（来自 ' + x.fp.split(/[\\/]/).pop() + '）\n' + x.seg);
+    const hits = memorySearch(srcText, 6, { skipRecentDays: 2 });
+    return hits.map((h) => {
+      const from = h.scope === 'long' ? '长期记忆' : '流水 ' + h.file;
+      const head = '（来自 ' + from + (h.time ? ' · ' + h.time.slice(0, 16) : '') + '）';
+      const title = h.title && !/^##\s*\d{4}/.test(h.title) ? '【' + h.title.replace(/^#+\s*/, '') + '】' : '';
+      return head + (title ? '\n' + title : '') + '\n' + String(h.body || '').slice(0, 400);
+    });
   } catch (_) { return []; }
 }
 
-/* ---- 自动蒸馏：把 3 天前的流水里有价值段落晋升到长期记忆，并清理过期流水 ---- */
+/* ---- 自动蒸馏（QClaw「dreaming」启发）：把 2 天前的流水里有价值段落晋升到长期记忆。
+   流水保留 14 天供主动召回；到期文件先把未晋升的段落整体归档到
+   memory/archive-YYYY-MM.md（月度消化摘要），再删除原文件——不丢任何内容。 ---- */
+const MEM_KEEP_DAYS = 14;      // 流水保留天数（供召回）
+const MEM_PROMOTE_BEFORE = 2;  // 早于 N 天的流水开始尝试蒸馏晋升
 function distillRecentNotes() {
   try {
     ensureDir(MEMORY_DIR);
-    const KEEP_DAYS = 2; // 保留最近 N 天流水供主动召回
-    const PROMOTE_BEFORE = 2; // 更早的流水尝试蒸馏晋升
     const promoteKws = ['判准', '偏好', '基准', '记住', '始终', '下次', '用户', '备赛', '复盘', '质询', '辩题', '结论', '决定', '偏好', '希望', '要求', '风格', '喜欢', '惯例', '要点', '标准', '阈值', '思路', '方法'];
     const now = Date.now();
     const ents = fs.existsSync(MEMORY_DIR) ? fs.readdirSync(MEMORY_DIR, { withFileTypes: true }) : [];
@@ -678,32 +748,254 @@ function distillRecentNotes() {
       const fp = path.join(MEMORY_DIR, e.name);
       try {
         const ageDays = (now - fs.statSync(fp).mtimeMs) / 86400000;
-        if (ageDays <= PROMOTE_BEFORE) continue;
+        if (ageDays <= MEM_PROMOTE_BEFORE) continue;
         const content = fs.readFileSync(fp, 'utf8');
-        // 蒸馏：含晋升关键词的段落 append 到长期
-        const segs = content.split(/\n\n----?\n\n|\n### /);
+        const segs = content.split(/\n\n----?\n\n|\n### /).map((s) => s.trim()).filter(Boolean);
         let promoted = 0;
-        for (const seg of segs) {
-          const s2 = seg.trim();
-          if (!s2 || s2.length < 12) continue;
-          const hit = promoteKws.some((k) => s2.includes(k));
-          if (hit) {
-            // 去重：长期记忆已含相同片段则跳过
-            const longText = fs.existsSync(MEMORY_FILE) ? fs.readFileSync(MEMORY_FILE, 'utf8') : '';
-            const key = s2.slice(0, 40);
-            if (longText.includes(key)) continue;
-            appendMemory(s2, { long: true });
+        const leftovers = [];
+        // 只读一次长期记忆（原先每段读一次，O(段落数 × 文件大小)）
+        let longText = fs.existsSync(MEMORY_FILE) ? fs.readFileSync(MEMORY_FILE, 'utf8') : '';
+        for (const s2 of segs) {
+          if (s2.length < 12) continue;
+          if (promoteKws.some((k) => s2.includes(k)) && !longText.includes(s2.slice(0, 40))) {
+            if (appendMemory(s2, { long: true })) longText += '\n' + s2;
             promoted++;
+          } else if (ageDays > MEM_KEEP_DAYS) {
+            // 到期删除前，没晋升的段落进月度归档，不丢内容
+            leftovers.push(s2);
           }
         }
-        // 清理：超过保留期的流水，蒸馏完成后删除（已晋升内容在长期可查）
-        if (ageDays > KEEP_DAYS) {
+        if (ageDays > MEM_KEEP_DAYS) {
+          if (leftovers.length) {
+            const month = e.name.slice(0, 7); // YYYY-MM
+            const digest = path.join(MEMORY_DIR, 'archive-' + month + '.md');
+            const head = '## 归档自 ' + e.name.replace('.md', '') + '\n\n' + leftovers.join('\n\n');
+            try {
+              const prev = fs.existsSync(digest) ? fs.readFileSync(digest, 'utf8') : '';
+              let next = (prev ? prev.replace(/\s*$/, '') + '\n\n---\n\n' : '') + head + '\n';
+              fs.writeFileSync(digest, next, 'utf8');
+            } catch (_) {}
+          }
           try { fs.unlinkSync(fp); } catch (_) {}
         }
         if (promoted) console.log('[memory] 蒸馏晋升 ' + promoted + ' 段来自 ' + e.name);
       } catch (_) {}
     }
   } catch (_) {}
+}
+
+/* ================= 应用检索索引（node:sqlite + FTS5，QClaw memory-core 启发） =================
+   markdown/JSON 文件仍是唯一事实源（可读、可备份），SQLite 只做检索与列表加速镜像：
+   - entries / entries_fts：长期记忆 + 每日流水（中文「二字滑窗」预分词）
+   - lib_docs / lib_fts  ：资料库全文（libRecall 的候选预筛）
+   - chat_index          ：对话元数据（列表不再解析全部对话 JSON）
+   任何数据变更后按需重建对应分区（条目量级在几百，重建 <10ms）。 */
+const APP_INDEX_FILE = path.join(DATA_DIR, 'app-index.db');
+let memDb = null;
+
+function openMemoryIndex() {
+  if (memDb) return true;
+  try {
+    const { DatabaseSync } = require('node:sqlite');
+    ensureDir(DATA_DIR);
+    // 旧版记忆索引并入统一库（纯镜像，直接删除重建）
+    try { fs.unlinkSync(path.join(DATA_DIR, 'memory-index.db')); } catch (_) {}
+    try { fs.unlinkSync(path.join(DATA_DIR, 'memory-index.db-shm')); } catch (_) {}
+    try { fs.unlinkSync(path.join(DATA_DIR, 'memory-index.db-wal')); } catch (_) {}
+    memDb = new DatabaseSync(APP_INDEX_FILE);
+    memDb.exec(`CREATE TABLE IF NOT EXISTS entries(
+      id INTEGER PRIMARY KEY,
+      scope TEXT, file TEXT, seg_idx INTEGER, time TEXT, title TEXT, body TEXT
+    )`);
+    memDb.exec(`CREATE VIRTUAL TABLE IF NOT EXISTS entries_fts USING fts5(body_bi, title_bi)`);
+    memDb.exec(`CREATE TABLE IF NOT EXISTS lib_docs(
+      rowid INTEGER PRIMARY KEY,
+      doc_id TEXT UNIQUE, name TEXT, tags TEXT, char_count INTEGER, added_at INTEGER, enabled INTEGER
+    )`);
+    memDb.exec(`CREATE VIRTUAL TABLE IF NOT EXISTS lib_fts USING fts5(body_bi, title_bi)`);
+    memDb.exec(`CREATE TABLE IF NOT EXISTS chat_index(
+      chat_id TEXT PRIMARY KEY, mode TEXT, title TEXT,
+      created INTEGER, updated INTEGER, msg_count INTEGER
+    )`);
+    memDb.exec(`CREATE TABLE IF NOT EXISTS meta(key TEXT PRIMARY KEY, value TEXT)`);
+    return true;
+  } catch (_) { memDb = null; return false; }
+}
+
+/* ---- 索引源指纹：源文件没变就跳过全量重建（启动不做无谓工作）。
+   重建函数结束时写入指纹；索引的增量更新（appendMemory / chatIndexUpsert 等）不会更新它，
+   于是「源变过」会自然导致下次启动重建 —— 而重建现在跑在后台，不挡窗口出现。 ---- */
+function idxMetaGet(key) {
+  if (!openMemoryIndex()) return '';
+  try { const r = memDb.prepare('SELECT value FROM meta WHERE key = ?').get(key); return r ? String(r.value || '') : ''; } catch (_) { return ''; }
+}
+function idxMetaSet(key, val) {
+  if (!openMemoryIndex()) return;
+  try { memDb.prepare('INSERT OR REPLACE INTO meta(key, value) VALUES (?,?)').run(key, String(val)); } catch (_) {}
+}
+function fileSig(fp) {
+  try { const s = fs.statSync(fp); return s.size + ':' + Math.round(s.mtimeMs); } catch (_) { return '-'; }
+}
+function dirSig(dir, filter) {
+  try {
+    let n = 0, bytes = 0, maxM = 0;
+    for (const e of fs.readdirSync(dir, { withFileTypes: true })) {
+      if (!e.isFile() || (filter && !filter(e.name))) continue;
+      let s; try { s = fs.statSync(path.join(dir, e.name)); } catch (_) { continue; }
+      n++; bytes += s.size; if (s.mtimeMs > maxM) maxM = s.mtimeMs;
+    }
+    return n + ':' + bytes + ':' + Math.round(maxM);
+  } catch (_) { return '-'; }
+}
+function fpMemory() { return fileSig(MEMORY_FILE) + '|' + dirSig(MEMORY_DIR, (n) => /^\d{4}-\d{2}-\d{2}\.md$/.test(n)); }
+function fpChats() { return dirSig(CHATS_DIR, (n) => n.endsWith('.json') && n[0] !== '_'); }
+/* 指纹要同时覆盖「资料库自己存的文本」和「产物空间」——
+   引用式条目（kind=deliverable）的正文在 data/deliverables/，只监控 LIB_TEXT_DIR 的话，
+   产物改了指纹不变、索引不重建，召回会一直停在入库那一刻的旧内容。 */
+function fpLib() {
+  return fileSig(LIB_INDEX) + '|' + dirSig(LIB_TEXT_DIR) + '|' + dirSig(DELIVER_DIR);
+}
+
+function rebuildMemoryIndexIfStale() {
+  const fp = fpMemory();
+  if (fp !== '-' && fp === idxMetaGet('fp:memory')) return 'skip';
+  rebuildMemoryIndex();
+  return 'rebuild';
+}
+function libIndexRebuildIfStale() {
+  const fp = fpLib();
+  if (fp !== '-' && fp === idxMetaGet('fp:lib')) return 'skip';
+  libIndexRebuild();
+  return 'rebuild';
+}
+function chatIndexRebuildIfStale() {
+  const fp = fpChats();
+  if (fp !== '-' && fp === idxMetaGet('fp:chats')) return 'skip';
+  chatIndexRebuild();
+  return 'rebuild';
+}
+
+/* CJK 二字滑窗分词（供 FTS 索引与查询两侧一致使用），英文按 token 保留 */
+function bigramize(text) {
+  const s = String(text || '');
+  const out = [];
+  const cjk = s.match(/[\u4e00-\u9fa5]+/g) || [];
+  for (const run of cjk) {
+    for (let i = 0; i + 2 <= run.length; i++) out.push(run.slice(i, i + 2));
+    if (run.length === 1) out.push(run);
+  }
+  const lat = s.toLowerCase().match(/[a-z][a-z0-9]+/g) || [];
+  return out.concat(lat).join(' ');
+}
+
+/* 从文件系统收集全部记忆条目（索引与降级扫描共用） */
+function collectMemoryEntries() {
+  const out = [];
+  const longText = (() => { try { return fs.readFileSync(MEMORY_FILE, 'utf8'); } catch (_) { return ''; } })();
+  for (const e of parseMemoryEntries(longText)) {
+    out.push({ scope: 'long', file: 'memory.md', seg_idx: e.idx, time: e.time, title: e.title, body: e.body });
+  }
+  try {
+    ensureDir(MEMORY_DIR);
+    const ents = fs.readdirSync(MEMORY_DIR, { withFileTypes: true });
+    const files = ents.filter((x) => x.isFile() && /^\d{4}-\d{2}-\d{2}\.md$/.test(x.name)).map((x) => x.name).sort();
+    for (const name of files) {
+      let c = '';
+      try { c = fs.readFileSync(path.join(MEMORY_DIR, name), 'utf8'); } catch (_) { continue; }
+      for (const e of parseMemoryEntries(c)) {
+        out.push({ scope: 'daily', file: name.replace('.md', ''), seg_idx: e.idx, time: e.time || name.replace('.md', ''), title: e.title, body: e.body });
+      }
+    }
+  } catch (_) {}
+  return out;
+}
+
+function rebuildMemoryIndex() {
+  if (!openMemoryIndex()) return false;
+  try {
+    const entries = collectMemoryEntries();
+    memDb.exec('BEGIN');
+    try {
+      memDb.exec('DELETE FROM entries');
+      memDb.exec('DELETE FROM entries_fts');
+      const ins = memDb.prepare('INSERT INTO entries(id, scope, file, seg_idx, time, title, body) VALUES (?,?,?,?,?,?,?)');
+      const insFts = memDb.prepare('INSERT INTO entries_fts(rowid, body_bi, title_bi) VALUES (?,?,?)');
+      for (let i = 0; i < entries.length; i++) {
+        const e = entries[i];
+        const id = i + 1;
+        ins.run(id, e.scope, e.file, e.seg_idx, e.time || '', e.title || '', e.body || '');
+        insFts.run(id, bigramize(e.title + '\n' + e.body), bigramize(e.title || ''));
+      }
+      memDb.exec('COMMIT');
+    } catch (err) { try { memDb.exec('ROLLBACK'); } catch (_) {} throw err; }
+    idxMetaSet('fp:memory', fpMemory());
+    return entries.length;
+  } catch (_) { return false; }
+}
+
+/* 增量写一条记忆进索引（appendMemory 专用，避免每追加一条就全量重建） */
+function memoryIndexAppend(entry) {
+  if (!openMemoryIndex()) return false;
+  try {
+    const r = memDb.prepare('SELECT COALESCE(MAX(id), 0) AS m FROM entries').get();
+    const id = Number((r && r.m) || 0) + 1;
+    memDb.exec('BEGIN');
+    try {
+      memDb.prepare('INSERT INTO entries(id, scope, file, seg_idx, time, title, body) VALUES (?,?,?,?,?,?,?)')
+        .run(id, entry.scope || '', entry.file || '', null, entry.time || '', entry.title || '', entry.body || '');
+      memDb.prepare('INSERT INTO entries_fts(rowid, body_bi, title_bi) VALUES (?,?,?)')
+        .run(id, bigramize((entry.title || '') + '\n' + (entry.body || '')), bigramize(entry.title || ''));
+      memDb.exec('COMMIT');
+    } catch (err) { try { memDb.exec('ROLLBACK'); } catch (_) {} throw err; }
+    return true;
+  } catch (_) { return false; }
+}
+
+/* 记忆检索：FTS5 bm25 相关度 + 新近度加成。
+   opts.skipRecentDays：跳过最近 N 天的流水条目（它们已全量注入上下文，召回重复无益）。 */
+function memorySearch(query, limit, opts) {
+  const kws = memoryExtractKeywords(query);
+  const need = Math.max(1, Math.min(Number(limit) || 5, 30));
+  if (!kws.length) return [];
+  const skipRecentDays = (opts && opts.skipRecentDays) || 0;
+  const cutoff = skipRecentDays > 0 ? Date.now() - skipRecentDays * 86400000 : 0;
+
+  const recencyBonus = (timeStr) => {
+    const t = Date.parse(String(timeStr || '').replace(' ', 'T'));
+    if (!isFinite(t)) return 0.2;
+    return 2 / (1 + Math.max(0, (Date.now() - t) / 86400000));
+  };
+
+  let rows = null;
+  if (openMemoryIndex()) {
+    try {
+      const q = kws.map((k) => '"' + k + '"').join(' OR ');
+      rows = memDb.prepare('SELECT e.scope, e.file, e.time, e.title, e.body, bm25(entries_fts) AS rank FROM entries_fts JOIN entries e ON e.id = entries_fts.rowid WHERE entries_fts MATCH ?').all(q);
+    } catch (_) { rows = null; }
+  }
+  if (!rows) {
+    // 降级：无 SQLite 时线性扫描（小数据量足够用）
+    const entries = collectMemoryEntries();
+    rows = [];
+    for (const e of entries) {
+      let rank = 0;
+      for (const k of kws) {
+        const n = (e.title + '\n' + e.body).split(k).length - 1;
+        if (n > 0) rank -= n;
+      }
+      if (rank < 0) rows.push({ scope: e.scope, file: e.file, time: e.time, title: e.title, body: e.body, rank });
+    }
+  }
+  const scored = [];
+  for (const r of rows) {
+    if (cutoff && r.scope === 'daily') {
+      const t = Date.parse(String(r.file || '') + 'T00:00:00');
+      if (isFinite(t) && t >= cutoff) continue;
+    }
+    scored.push({ scope: r.scope, file: r.file, time: r.time || '', title: r.title || '', body: r.body || '', score: -r.rank + recencyBonus(r.time) });
+  }
+  scored.sort((a, b) => b.score - a.score);
+  return scored.slice(0, need);
 }
 
 /* ---------------- 对话历史（文件存储，替代 localStorage） ---------------- */
@@ -751,7 +1043,55 @@ function writeAllChats(chats) {
       if (!keep.has(name)) { try { fs.unlinkSync(path.join(CHATS_DIR, name)); } catch (_) {} }
     }
   } catch (_) {}
+  try { chatIndexRebuild(); } catch (_) {}
   return n;
+}
+
+/* ---- 对话元数据索引：列表不再全量解析对话 JSON（对话文件本身仍是事实源） ---- */
+function chatIndexRebuild() {
+  if (!openMemoryIndex()) return false;
+  try {
+    const rows = [];
+    let ents = [];
+    try { ents = fs.readdirSync(CHATS_DIR, { withFileTypes: true }); } catch (_) {}
+    for (const e of ents) {
+      if (!e.isFile() || !e.name.endsWith('.json') || e.name.startsWith('_')) continue;
+      try {
+        const c = JSON.parse(fs.readFileSync(path.join(CHATS_DIR, e.name), 'utf8'));
+        if (c && typeof c === 'object' && c.id) {
+          rows.push({ id: c.id, mode: c.mode || 'free', title: c.title || '', created: c.created || 0, updated: c.updated || 0, msg: (c.messages || []).length });
+        }
+      } catch (_) {}
+    }
+    memDb.exec('BEGIN');
+    try {
+      memDb.exec('DELETE FROM chat_index');
+      const ins = memDb.prepare('INSERT OR REPLACE INTO chat_index(chat_id, mode, title, created, updated, msg_count) VALUES (?,?,?,?,?,?)');
+      for (const r of rows) ins.run(r.id, r.mode, r.title, r.created, r.updated, r.msg);
+      memDb.exec('COMMIT');
+    } catch (err) { try { memDb.exec('ROLLBACK'); } catch (_) {} throw err; }
+    idxMetaSet('fp:chats', fpChats());
+    return rows.length;
+  } catch (_) { return false; }
+}
+function chatIndexUpsert(c) {
+  try {
+    if (!openMemoryIndex()) return;
+    memDb.prepare('INSERT OR REPLACE INTO chat_index(chat_id, mode, title, created, updated, msg_count) VALUES (?,?,?,?,?,?)')
+      .run(String(c.id), c.mode || 'free', c.title || '', c.created || 0, c.updated || 0, (c.messages || []).length);
+  } catch (_) {}
+}
+function chatIndexDelete(id) {
+  try {
+    if (!openMemoryIndex()) return;
+    memDb.prepare('DELETE FROM chat_index WHERE chat_id = ?').run(String(id));
+  } catch (_) {}
+}
+function chatIndexList() {
+  if (!openMemoryIndex()) return null;
+  try {
+    return memDb.prepare('SELECT chat_id AS id, mode, title, created, updated, msg_count AS msgCount FROM chat_index ORDER BY updated DESC').all();
+  } catch (_) { return null; }
 }
 
 /* 安全递归复制目录（避免 fs.cpSync 在中文路径下的崩溃问题） */
@@ -768,6 +1108,70 @@ function copyDirSafe(src, dst) {
     }
     return n;
   } catch (_) { return 0; }
+}
+
+/* ---------------- 数据自动备份（滚动快照） ----------------
+   教训（2026-09-12 记忆误删事故）：用户数据绝不能只有一份。
+   触发点：每次服务启动（reason=startup）、破坏性操作前（reason=before-clear 等）。
+   备份位置 data/_auto_backup/<时间戳>-<原因>/，恢复 = 把内容拷回 data/ 对应位置。 */
+const AUTO_BACKUP_DIR = path.join(DATA_DIR, '_auto_backup');
+const AUTO_BACKUP_KEEP = 10;                       // 最多保留的快照份数
+const AUTO_BACKUP_LIB_FILES_LIMIT = 256 * 1024 * 1024; // 资料库原始文件超限时跳过（提取文本已备份，价值仍在）
+function dirSizeDeep(p) {
+  let n = 0;
+  try {
+    for (const e of fs.readdirSync(p, { withFileTypes: true })) {
+      const sp = path.join(p, e.name);
+      if (e.isDirectory()) n += dirSizeDeep(sp);
+      else if (e.isFile()) { try { n += fs.statSync(sp).size; } catch (_) {} }
+    }
+  } catch (_) {}
+  return n;
+}
+function autoBackupData(reason, opts) {
+  try {
+    const d = new Date();
+    const pad = (x) => String(x).padStart(2, '0');
+    const stamp = d.getFullYear() + '-' + pad(d.getMonth() + 1) + '-' + pad(d.getDate()) + '_' + pad(d.getHours()) + pad(d.getMinutes()) + pad(d.getSeconds());
+    const safe = String(reason || 'manual').replace(/[^a-zA-Z0-9_-]/g, '') || 'manual';
+    // 同一天的同类快照已存在就跳过（启动快照用；「清空记忆」等仍强制留新份）
+    if (opts && opts.oncePerDay) {
+      const day = stamp.slice(0, 10);
+      let dup = false;
+      try { dup = fs.readdirSync(AUTO_BACKUP_DIR).some((n) => n.startsWith(day + '_') && n.endsWith('-' + safe)); } catch (_) {}
+      if (dup) return '';
+    }
+    const dest = path.join(AUTO_BACKUP_DIR, stamp + '-' + safe);
+    ensureDir(dest);
+    // usage.jsonl 是 append-only 用量账本：不备份的话，误删一次就永久丢了历史消耗
+    for (const f of ['memory.md', 'config.json', 'profiles.json', 'usage.jsonl']) {
+      const src = path.join(DATA_DIR, f);
+      if (fs.existsSync(src)) { try { fs.copyFileSync(src, path.join(dest, f)); } catch (_) {} }
+    }
+    copyDirSafe(MEMORY_DIR, path.join(dest, 'memory'));
+    copyDirSafe(CHATS_DIR, path.join(dest, 'chats'));
+    const libDir = path.join(DATA_DIR, 'library');
+    if (fs.existsSync(libDir)) {
+      for (const f of ['index.json', 'synonyms.json']) {
+        const src = path.join(libDir, f);
+        if (fs.existsSync(src)) { try { fs.copyFileSync(src, path.join(dest, f)); } catch (_) {} }
+      }
+      copyDirSafe(path.join(libDir, 'text'), path.join(dest, 'library-text'));
+      if (dirSizeDeep(path.join(libDir, 'files')) <= AUTO_BACKUP_LIB_FILES_LIMIT) {
+        copyDirSafe(path.join(libDir, 'files'), path.join(dest, 'library-files'));
+      } else {
+        console.log('[backup] 资料库原始文件超过限额，本快照跳过该目录（提取出的全文文本已备份）');
+      }
+    }
+    // 滚动清理：只保留最近 AUTO_BACKUP_KEEP 份
+    let ents = [];
+    try { ents = fs.readdirSync(AUTO_BACKUP_DIR).filter((n) => /^\d{4}-\d{2}-\d{2}/.test(n)).sort(); } catch (_) {}
+    while (ents.length > AUTO_BACKUP_KEEP) {
+      const rm = ents.shift();
+      try { fs.rmSync(path.join(AUTO_BACKUP_DIR, rm), { recursive: true, force: true }); } catch (_) {}
+    }
+    return dest;
+  } catch (_) { return ''; }
 }
 
 /* ---------------- 个人资料库：存储与检索 ----------------
@@ -851,11 +1255,6 @@ function libLoadIndex() {
   const idx = readJson(LIB_INDEX, null);
   const items = idx && Array.isArray(idx.items) ? idx.items : [];
   return { items: items.filter((it) => it && it.id) };
-}
-
-function libSaveIndex(idx) {
-  libEnsure();
-  writeJsonAtomic(LIB_INDEX, { version: 1, updatedAt: now(), items: idx.items });
 }
 
 function libSafeName(name, fallback) {
@@ -945,6 +1344,56 @@ function libAdd(opts = {}) {
   return { item };
 }
 
+/* 产物 → 资料库（引用式，不复制内容）。
+   存的是「指向 data/deliverables/<name> 的指针」，全文仍只有一份：
+   - 产物改了 → 资料库自动读到最新版（复制式会永远停在旧版）
+   - 不占双份空间
+   - 但产物文件被删时这条会读到空 → 下面 libRemove / 索引重建都做了防护 */
+function libAddFromDeliverable(name, opts = {}) {
+  libEnsure();
+  const safe = path.basename(String(name || '').trim());
+  if (!safe) return { error: '缺少产物文件名' };
+  const fp = path.join(DELIVER_DIR, safe);
+  if (!fs.existsSync(fp) || !fs.statSync(fp).isFile()) return { error: '产物不存在：' + safe };
+  const ext = libExtOf(safe);
+  if (!['md', 'markdown', 'txt', 'csv', 'srt', 'log', 'json', 'html'].includes(ext)) {
+    return { error: '只有文本类产物能进资料库（当前是 .' + (ext || '?') + '）' };
+  }
+  let rawText = '';
+  try { rawText = fs.readFileSync(fp, 'utf8'); } catch (e) { return { error: '读取失败：' + e.message }; }
+  rawText = rawText.replace(/^\uFEFF/, '').replace(/\r\n?/g, '\n').trim();
+  if (!rawText) return { error: '这份产物里没有文字内容' };
+  if (rawText.length > LIB_MAX_TEXT) rawText = rawText.slice(0, LIB_MAX_TEXT);
+
+  const idx = libLoadIndex();
+  // 同一产物只入库一次：重名改成「产物名（资料）」而不是堆两条
+  const dup = idx.items.find((x) => x.kind === 'deliverable' && x.ref === safe);
+  if (dup) return { error: '这份产物已经在资料库里了', item: dup };
+
+  const id = libNewId();
+  const item = {
+    id,
+    name: libSafeName(opts.name || safe, safe),
+    ext,
+    kind: 'deliverable',                 // 标记来源，UI 可显示「来自产物」
+    ref: safe,                            // 指向产物空间的文件名
+    note: '来自产物空间（跟随原件更新）',
+    size: Buffer.byteLength(rawText, 'utf8'),
+    charCount: rawText.length,
+    tags: Array.isArray(opts.tags) ? opts.tags.map((t) => String(t).trim()).filter(Boolean).slice(0, 8) : [],
+    addedAt: Date.now(),
+    enabled: true,
+    file: '',                             // 引用式：资料库自己不存原件
+    // 注意：textFile 必须是「相对 ROOT」的路径（与其他条目一致，读取处统一 path.join(ROOT, textFile)）。
+    // 这里若写成绝对路径，会和 ROOT 再拼一次导致读不到 —— 曾因此出现「入库成功但召不回」。
+    textFile: libRel(path.join('data', 'deliverables', safe)),
+    preview: rawText.replace(/\s+/g, ' ').slice(0, 100),
+  };
+  idx.items.push(item);
+  libSaveIndex(idx);
+  return { item };
+}
+
 function libRemove(id) {
   const idx = libLoadIndex();
   const before = idx.items.length;
@@ -955,6 +1404,8 @@ function libRemove(id) {
     if (target) {
       for (const rel of [target.file, target.textFile]) {
         if (!rel) continue;
+        // 引用式条目（kind=deliverable）的 textFile 指向产物原件，删资料绝不能删原件
+        if (target.kind === 'deliverable') continue;
         try { fs.unlinkSync(path.join(ROOT, rel)); } catch (_) {}
       }
     }
@@ -964,11 +1415,19 @@ function libRemove(id) {
 }
 
 function libPublic(it) {
+  // 引用式条目（来自产物空间）：报告原件是否还在，前端据此提示「原件已删除」
+  let missing = false;
+  if (it.kind === 'deliverable') {
+    // textFile 是相对 ROOT 的路径，与读取处保持一致
+    const rel = String(it.textFile || '').split('/').join(path.sep);
+    missing = !!it.missing || !fs.existsSync(path.join(ROOT, rel));
+  }
   return {
     id: it.id, name: it.name, ext: it.ext, kind: it.kind,
     size: it.size, charCount: it.charCount, tags: it.tags || [],
     addedAt: it.addedAt, enabled: it.enabled !== false, preview: it.preview || '',
     hasFile: !!it.file, note: it.note || '',
+    ref: it.ref || '', missing,
   };
 }
 
@@ -1003,13 +1462,18 @@ function libScoreText(text, terms) {
   const scan = text.length > 200000 ? text.slice(0, 200000) : text;
   let score = 0;
   const hits = [];
+  /* 原有写法命中后 i += 1（跳 1 字），会把紧邻的下一个 bigram 一起吃掉：
+     正文「打钉子」命中「打钉」后跳到「子」开头，于是「钉子」再也匹配不上 →
+     查询「打钉子」（切出 打钉/钉子 两个 bigram）在正文里明明完整出现，却只得 1 分。
+     这里改为「仅在两个 bigram 重叠（相邻 1 字）时才跳过」，既不重复计数也不漏计。 */
+  let prevHitEnd = -1;
   for (let i = 0; i + 2 <= scan.length; i++) {
     const w = cjkKeys.get(scan.slice(i, i + 2));
-    if (w) {
-      score += w;
-      if (hits.length < 400) hits.push(i);
-      i += 1; // 命中后跳过 1 字，避免相邻滑窗重复计数
-    }
+    if (!w) continue;
+    if (i === prevHitEnd) { prevHitEnd = i + 2; continue; }  // 与上一命中重叠，跳过
+    score += w;
+    if (hits.length < 400) hits.push(i);
+    prevHitEnd = i + 2;
   }
   for (const [k, w] of enKeys) {
     let from = 0, guard = 0;
@@ -1042,6 +1506,56 @@ function libSnippets(text, hits, maxChars) {
 }
 
 /* 召回：按查询词给每份资料打分，返回 top N 片段 */
+function libSaveIndex(idx) {
+  libEnsure();
+  writeJsonAtomic(LIB_INDEX, { version: 1, updatedAt: now(), items: idx.items });
+  try { libIndexRebuild(); } catch (_) {}
+}
+
+/* 资料库全文进 FTS（libRecall 的候选预筛）；提取文本文件仍为事实源 */
+function libIndexRebuild() {
+  if (!openMemoryIndex()) return false;
+  try {
+    const idx = libLoadIndex();
+    memDb.exec('BEGIN');
+    try {
+      memDb.exec('DELETE FROM lib_docs');
+      memDb.exec('DELETE FROM lib_fts');
+      const ins = memDb.prepare('INSERT INTO lib_docs(rowid, doc_id, name, tags, char_count, added_at, enabled) VALUES (?,?,?,?,?,?,?)');
+      const insFts = memDb.prepare('INSERT INTO lib_fts(rowid, body_bi, title_bi) VALUES (?,?,?)');
+      let rid = 0;
+      for (const it of idx.items) {
+        let text = '';
+        try { text = fs.readFileSync(path.join(ROOT, it.textFile), 'utf8'); } catch (_) {}
+        // 引用式条目指向的产物已被删除 → 跳过索引这次巡检会让检索出现「命中但读不到」，
+        // 所以这里标记缺失，让 UI 能提示用户「原件已不存在」
+        if (!text && it.kind === 'deliverable') { it.missing = true; }
+        else if (it.missing) { delete it.missing; }
+        if (!text) continue;
+        rid++;
+        ins.run(rid, it.id, it.name || '', (it.tags || []).join(' '), it.charCount || 0, it.addedAt || 0, it.enabled !== false ? 1 : 0);
+        insFts.run(rid, bigramize(text), bigramize(it.name || ''));
+      }
+      memDb.exec('COMMIT');
+    } catch (err) { try { memDb.exec('ROLLBACK'); } catch (_) {} throw err; }
+    idxMetaSet('fp:lib', fpLib());
+    return true;
+  } catch (_) { return false; }
+}
+
+/* FTS 预筛：返回与检索词至少命中一词的 doc_id 集合（上限 120 篇）。
+   分词与索引同用 bigramize，是旧全文扫描命中集的超集，保证不漏召回。 */
+function libFtsCandidates(keys) {
+  if (!openMemoryIndex()) return null;
+  try {
+    const q = keys.map(([k]) => '"' + k + '"').join(' OR ');
+    const rows = memDb.prepare(
+      'SELECT d.doc_id FROM lib_fts JOIN lib_docs d ON d.rowid = lib_fts.rowid WHERE lib_fts MATCH ? ORDER BY rank LIMIT 120'
+    ).all(q);
+    return new Set(rows.map((r) => r.doc_id));
+  } catch (_) { return null; }
+}
+
 function libRecall(query, opts = {}) {
   const cfg = loadConfig();
   if (cfg.libraryEnabled === false) return [];
@@ -1058,8 +1572,19 @@ function libRecall(query, opts = {}) {
     .sort((a, b) => b[1] - a[1])
     .slice(0, 80);
   const termsMap = new Map(keys);
+  // 性能：先用 FTS 缩小候选集（不读任何正文），再对候选做精确打分；
+  // 索引不可用或候选全灭时回落全量扫描，保证召回质量不低于旧版。
+  const cand = libFtsCandidates(keys);
+  const pool = (cand && cand.size) ? items.filter((it) => cand.has(it.id)) : items;
+  const out = libScoreAndCollect(pool, keys, termsMap);
+  if (out.length || pool === items) return out;
+  return libScoreAndCollect(items, keys, termsMap);
+}
+
+/* 精确打分 + 摘要组装（旧版 libRecall 的核心逻辑，语义保持不变） */
+function libScoreAndCollect(pool, keys, termsMap) {
   const scored = [];
-  for (const it of items) {
+  for (const it of pool) {
     let text = '';
     try { text = fs.readFileSync(path.join(ROOT, it.textFile), 'utf8'); } catch (_) { continue; }
     if (!text) continue;
@@ -1069,7 +1594,12 @@ function libRecall(query, opts = {}) {
     let bonus = 0;
     for (const [k, w] of keys) if (meta.indexOf(k) >= 0) bonus += w;
     const total = score + bonus * 4;
-    if (total < 2) continue;
+    /* 命中门槛：原来是死值 2，导致「击中」「主线」这类两字词（只产生 1 个 bigram）
+       在正文里明明出现却永远召不回——用户搜「打钉子」搜不到自己的备赛包。
+       改为按「查询词能切出几个 bigram」定下限：命中全部查询片段即可，
+       长查询仍要求多点命中，避免一个常见字就把全库捞出来。 */
+    const minScore = Math.max(1, Math.min(2, termsMap.size));
+    if (total < minScore) continue;
     const norm = total / Math.sqrt(Math.max(1, text.length / 1000));
     scored.push({ item: it, score: norm, raw: total, hits: (hits.length ? hits : [0]), text });
   }
@@ -1213,6 +1743,91 @@ function skillReadUser(skillName) {
 }
 
 /* ---------------- 个人资料库：存储与检索 ----------------
+/* ---------------- 用量账本（append-only，删对话不影响历史） ----------------
+    每行一条：{ ts, date, chatId, mode, model, input, output, cacheRead, cacheWrite, reasoning, elapsedMs }
+    只追加不改写。统计从这里重放得出，而不是从「还活着的对话」里现算。 */
+function usageAppend(rec) {
+  try {
+    ensureDir(DATA_DIR);
+    const line = JSON.stringify(Object.assign({ ts: Date.now() }, rec));
+    fs.appendFileSync(USAGE_FILE, line + '\n', 'utf8');
+    return true;
+  } catch (_) { return false; }
+}
+
+/* 读账本：坏行跳过（文件被手工编辑/半行写入时不炸） */
+function usageReadAll() {
+  let out = [];
+  try {
+    if (!fs.existsSync(USAGE_FILE)) return out;
+    const txt = fs.readFileSync(USAGE_FILE, 'utf8');
+    for (const line of txt.split(/\r?\n/)) {
+      const s = line.trim();
+      if (!s) continue;
+      try {
+        const o = JSON.parse(s);
+        if (o && typeof o === 'object') out.push(o);
+      } catch (_) { /* 坏行跳过 */ }
+    }
+  } catch (_) {}
+  return out;
+}
+
+const USAGE_DAY = (ts) => {
+  const d = new Date(Number(ts) || Date.now());
+  const p = (x) => String(x).padStart(2, '0');
+  return d.getFullYear() + '-' + p(d.getMonth() + 1) + '-' + p(d.getDate());
+};
+
+/* 聚合：总计 / 按天 / 按模型。天数与连续天数基于账本里的日期，
+   不再依赖「消息是否还存在」。 */
+function usageAggregate(rows) {
+  const total = { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, reasoning: 0, turns: 0, elapsedMs: 0 };
+  const byDay = new Map();
+  const byModel = new Map();
+  for (const r of rows) {
+    total.input += Number(r.input) || 0;
+    total.output += Number(r.output) || 0;
+    total.cacheRead += Number(r.cacheRead) || 0;
+    total.cacheWrite += Number(r.cacheWrite) || 0;
+    total.reasoning += Number(r.reasoning) || 0;
+    total.elapsedMs += Number(r.elapsedMs) || 0;
+    total.turns += 1;
+    const day = r.date || USAGE_DAY(r.ts);
+    let d = byDay.get(day);
+    if (!d) { d = { date: day, input: 0, output: 0, cacheRead: 0, cacheWrite: 0, reasoning: 0, turns: 0 }; byDay.set(day, d); }
+    d.input += Number(r.input) || 0;
+    d.output += Number(r.output) || 0;
+    d.cacheRead += Number(r.cacheRead) || 0;
+    d.cacheWrite += Number(r.cacheWrite) || 0;
+    d.reasoning += Number(r.reasoning) || 0;
+    d.turns += 1;
+    const mk = String(r.model || '未知');
+    let m = byModel.get(mk);
+    if (!m) { m = { model: mk, input: 0, output: 0, cacheRead: 0, cacheWrite: 0, reasoning: 0, turns: 0 }; byModel.set(mk, m); }
+    m.input += Number(r.input) || 0;
+    m.output += Number(r.output) || 0;
+    m.cacheRead += Number(r.cacheRead) || 0;
+    m.cacheWrite += Number(r.cacheWrite) || 0;
+    m.reasoning += Number(r.reasoning) || 0;
+    m.turns += 1;
+  }
+  const days = Array.from(byDay.values()).sort((a, b) => (a.date < b.date ? -1 : 1));
+  const models = Array.from(byModel.values()).sort((a, b) => (b.input + b.output) - (a.input + a.output));
+  // 连续天数：从今天（或最后活跃日）往前数
+  let streak = 0;
+  const daySet = new Set(days.map((d) => d.date));
+  const today = USAGE_DAY(Date.now());
+  let cur = new Date();
+  if (!daySet.has(today)) cur = new Date(Date.now() - 86400000); // 今天没用，从昨天开始数
+  for (let i = 0; i < 3650; i++) {
+    const k = USAGE_DAY(cur.getTime());
+    if (daySet.has(k)) { streak++; cur = new Date(cur.getTime() - 86400000); }
+    else break;
+  }
+  return { total, days, models, activeDays: days.length, streak };
+}
+
 /* ---------------- 产物空间（Agent 输出到 data/deliverables/） ----------------
    Agent 长交付可写 .md/.csv/.txt 到此目录（界面会实时列出）。本模块只读/转换该目录，绝对不越界。 */
 function deliverSafeName(raw) {
@@ -1308,6 +1923,102 @@ function deliverDelete(fileName) {
   try { if (!fs.existsSync(fp)) return { error: '文件不存在' }; fs.unlinkSync(fp); return { ok: true }; }
   catch (e) { return { error: '删除失败：' + e.message }; }
 }
+
+/* ---------------- 辩题档案夹（按辩题归集对话与产物） ----------------
+   设计：cases.json 只存「哪个辩题关了哪些对话 / 哪些产物」的轻量索引，
+   真实数据仍在 chats/ 与 deliverables/ 原处。删辩题只删索引，不删用户文件。
+   辩题识别在服务端做（前端只负责选择/新建），这样浏览器与 Electron 行为一致。 */
+
+function caseLoadIndex() {
+  try {
+    const j = JSON.parse(fs.readFileSync(CASE_INDEX, 'utf8'));
+    if (j && Array.isArray(j.cases)) return j;
+  } catch (_) {}
+  return { version: 1, cases: [] };
+}
+function caseSaveIndex(idx) {
+  writeJsonAtomic(CASE_INDEX, idx);
+}
+function caseNewId() {
+  return 'k' + Date.now().toString(36) + Math.random().toString(36).slice(2, 6);
+}
+/* 归一化辩题：去空白/标点差异，用于「同一个辩题别建两份」的匹配 */
+function caseNorm(t) {
+  return String(t || '')
+    .replace(/[「」『』“”"'《》〈〉（）()【】\[\]]/g, '')
+    .replace(/[\s\-—_·、,，.。:：;；!！?？]/g, '')
+    .toLowerCase();
+}
+function caseFindByMotion(motion) {
+  const n = caseNorm(motion);
+  if (!n) return null;
+  return caseLoadIndex().cases.find((c) => caseNorm(c.motion) === n) || null;
+}
+/* 从一段文字里猜辩题：优先书名号/引号包裹的「A应该/不应该B」，
+   其次「辩题是/辩题：」后的整句。猜不到返回 ''（让前端走手动新建）。 */
+/* 剥掉辩题后面黏着的「我持正方 / 持反方 / 我是反方 / 正方」等持方说明 —— 那不是辩题的一部分 */
+function caseStripSideTail(s) {
+  return String(s || '')
+    .replace(/[，,、\s]*(?:我|我们|本方|我方)?\s*(?:持|站|打|是)?\s*(?:正方|反方)\s*(?:立场|方)?\s*[。.！!]?\s*$/g, '')
+    .replace(/[，,、\s]*(?:请|帮我|请帮我|麻烦).*$/g, '')
+    .trim();
+}
+function caseGuessMotion(text) {
+  const s = String(text || '').slice(0, 4000);
+  if (!s) return '';
+  // ① 「…」/ "…" 里带 应该/不应该/应当/不应 / 是不是 的，最像辩题
+  const quoted = s.match(/[「“”"']([^「」“”"']{6,80})[」“”"']/g) || [];
+  for (const q of quoted) {
+    const inner = q.replace(/^[「“”"']|[」“”"']$/g, '').trim();
+    if (/应该|不应该|应当|不应|需不需要|是不是/.test(inner) || inner.includes('/')) return caseStripSideTail(inner);
+  }
+  // ② 「辩题是/辩题：」后面的整句，截到换行或标点（再剥掉尾部持方）
+  const m = s.match(/辩题[是为:]?[:：]?\s*([^\n，。；!？]{6,80})/);
+  if (m) {
+    const v = caseStripSideTail(m[1]);
+    if (v) return v;
+  }
+  // ③ 「A 还是 B」「A vs B」这类对立结构（取最贴近关键词的那一段，去掉「这场比赛讨论」之类前缀）
+  const vs = s.match(/([^\n，。；]{2,40}?)\s*(?:还是|vs|VS|对)\s*([^\n，。；]{2,40})/);
+  if (vs) {
+    const a = caseStripSideTail(vs[1]).replace(/^.*?(?:讨论|辩题是|关于|就|针对)\s*/, '').trim();
+    const b = caseStripSideTail(vs[2]).trim();
+    if (a && b) return a + ' 还是 ' + b;
+  }
+  return '';
+}
+/* 把对话 / 产物挂到辩题上；motion 为空时尝试从 text 猜。
+   attach: { chatId } 或 { deliverable } */
+function caseAttach(motion, attach, opts) {
+  const idx = caseLoadIndex();
+  let name = String(motion || '').trim().slice(0, 60);
+  if (!name && opts && opts.text) name = caseGuessMotion(opts.text).slice(0, 60);
+  if (!name) return { error: '没有辩题' };
+  let c = idx.cases.find((x) => caseNorm(x.motion) === caseNorm(name));
+  if (!c) {
+    c = { id: caseNewId(), motion: name, created: Date.now(), updated: Date.now(), side: '', chatIds: [], deliverables: [] };
+    idx.cases.unshift(c);
+  }
+  if (attach && attach.chatId && !c.chatIds.includes(attach.chatId)) c.chatIds.push(attach.chatId);
+  if (attach && attach.deliverable && !c.deliverables.includes(attach.deliverable)) c.deliverables.push(attach.deliverable);
+  if (opts && typeof opts.side === 'string') c.side = opts.side.slice(0, 20);
+  c.updated = Date.now();
+  idx.cases.sort((a, b) => (b.updated || 0) - (a.updated || 0));
+  caseSaveIndex(idx);
+  return { caseItem: c };
+}
+function casePublic(c, allChats) {
+  const chatTitles = (c.chatIds || []).map((id) => {
+    const ch = allChats.find((x) => x.id === id);
+    return { id, title: ch ? (ch.title || '未命名') : '（对话已删除）', mode: ch ? ch.mode : '' };
+  });
+  return {
+    id: c.id, motion: c.motion, side: c.side || '',
+    created: c.created, updated: c.updated,
+    chats: chatTitles,
+    deliverables: (c.deliverables || []).slice(),
+  };
+}
 /* ---- DELIVER 协议：Agent 在最终回复末尾附指令块自动转档 ----
    格式：<!-- DELIVER: 源文件名.md -> docx [到 子目录] -->   （可叠加多个块）
    只允许源文件在 data/deliverables 下；目标目录也必须在该目录内（防越权写别处）。 */
@@ -1369,10 +2080,19 @@ function buildTaskInBudget(runId, mode, text, history, opts = {}) {
   const attempts = [
     {},
     { historyRounds: 4 },
-    { historyRounds: 3, historyItemLimit: 1200, libraryKeep: 3, snippetChars: 400 },
-    { historyRounds: 2, historyItemLimit: 800, skipDaily: true, libraryKeep: 2, snippetChars: 300 },
-    { historyRounds: 0, historyItemLimit: 0, skipDaily: true, libraryKeep: 2, snippetChars: 200 },
+    { historyRounds: 3, historyItemLimit: 1200, libraryKeep: 3, snippetChars: 400, deliverablesKeep: 8 },
+    { historyRounds: 2, historyItemLimit: 800, skipDaily: true, libraryKeep: 2, snippetChars: 300, deliverablesKeep: 5 },
+    { historyRounds: 0, historyItemLimit: 0, skipDaily: true, libraryKeep: 2, snippetChars: 200, deliverablesKeep: 3 },
   ];
+  // 这些输入与裁剪档位无关，只算一次（原先每档都要重读记忆/流水/召回/技能，最多 5 遍）
+  const pre = {
+    memory: readLongMemory(),
+    recentDaily: readDaily(2),
+    recalled: memoryKeywordRecall(text, history),
+    userSkills: (() => {
+      try { return skillScanUser().filter((s) => s.enabled && s.valid); } catch (_) { return []; }
+    })(),
+  };
   let md = '';
   for (const a of attempts) {
     let lib = opts.library;
@@ -1381,7 +2101,7 @@ function buildTaskInBudget(runId, mode, text, history, opts = {}) {
         ? Object.assign({}, d, { snippet: String(d.snippet || '').slice(0, a.snippetChars) })
         : d));
     }
-    md = buildTaskFile(runId, mode, text, history, Object.assign({}, opts, a, { library: lib }));
+    md = buildTaskFile(runId, mode, text, history, Object.assign({}, opts, a, { library: lib, pre }));
     if (md.length <= INLINE_TASK_LIMIT) return md;
   }
   return md;
@@ -1404,21 +2124,21 @@ function buildTaskFile(runId, mode, text, history, opts = {}) {
   lines.push('');
 
   // 多级记忆：长期记忆全量 + 最近 2 天流水 + 与当前问题相关的主动召回片段
-  const memory = readLongMemory();
+  const memory = opts.pre ? opts.pre.memory : readLongMemory();
   if (memory) {
     lines.push('## 长程记忆（长期归档，重要）');
     lines.push('');
     lines.push(memory);
     lines.push('');
   }
-  const recentDaily = opts.skipDaily ? '' : readDaily(2);
+  const recentDaily = opts.skipDaily ? '' : (opts.pre ? opts.pre.recentDaily : readDaily(2));
   if (recentDaily) {
     lines.push('## 最近流水（memory/ 近期观察，供参考）');
     lines.push('');
     lines.push(recentDaily);
     lines.push('');
   }
-  const recalled = memoryKeywordRecall(text, history);
+  const recalled = opts.pre ? opts.pre.recalled : memoryKeywordRecall(text, history);
   if (recalled.length) {
     lines.push('## 相关记忆召回（与当前问题匹配的历史记录）');
     lines.push('');
@@ -1451,7 +2171,7 @@ function buildTaskFile(runId, mode, text, history, opts = {}) {
 
   // 用户自装技能：让 Agent 知道有哪些可用（可要求按需加载）
   try {
-    const userSkills = skillScanUser().filter((s) => s.enabled && s.valid);
+    const userSkills = opts.pre ? opts.pre.userSkills : skillScanUser().filter((s) => s.enabled && s.valid);
     if (userSkills.length) {
       lines.push('## 用户已安装技能（用户自己加的 skill，可选用）');
       lines.push('');
@@ -1483,6 +2203,32 @@ function buildTaskFile(runId, mode, text, history, opts = {}) {
       lines.push('### ' + role);
       lines.push('');
       lines.push(body);
+      lines.push('');
+    }
+  }
+
+  /* 产物空间清单：告诉 Agent 它自己以前写过什么。
+     没有这一段，"基于上次那版备赛包改"是无从下手的——Agent 看不见产物目录里有什么。
+     只列文本类产物（二进制它读不了），按修改时间倒序取最近 N 份。 */
+  {
+    const dvLimit = opts.deliverablesKeep || 12;
+    let dv = [];
+    try { dv = deliverList().filter((x) => x.textType); } catch (_) { dv = []; }
+    if (dv.length) {
+      const shown = dv.slice(0, dvLimit);
+      lines.push('## 你已经写过的产物（产物空间 data/deliverables/）');
+      lines.push('');
+      lines.push('下面是你（或用户手动保存）此前产出过的文件。用户说「接着上次那版改」「基于之前的备赛包」时，');
+      lines.push('**先用文件工具读取对应文件全文再动笔**，不要凭空重写，也不要说找不到。');
+      lines.push('决定覆盖哪个文件时：优先新建新版本（如加 _v2），确需覆盖先说明理由。');
+      lines.push('');
+      for (const d of shown) {
+        const dt = new Date(d.mtime || Date.now());
+        const p2 = (x) => String(x).padStart(2, '0');
+        const stamp = dt.getFullYear() + '-' + p2(dt.getMonth() + 1) + '-' + p2(dt.getDate()) + ' ' + p2(dt.getHours()) + ':' + p2(dt.getMinutes());
+        lines.push('- `data/deliverables/' + d.name + '`　（' + stamp + '，' + Math.max(1, Math.round(d.size / 1024)) + 'KB）');
+      }
+      if (dv.length > shown.length) lines.push('- …以及更早的 ' + (dv.length - shown.length) + ' 份（用文件工具列目录查看）');
       lines.push('');
     }
   }
@@ -1561,9 +2307,12 @@ function friendlyError(info) {
 /* ---------------- DSH 会话流式增量（tail session.jsonl） ---------------- */
 /* v1.2 起会话日志改为明文 JSONL；旧版 zstd 日志整体迁移到备份目录，内容不丢 */
 function migrateZstdSessions() {
+  // 一次性迁移：做完就落标记，之后不再遍历整棵 sessions 树
+  const marker = path.join(DSH_HOME, '.zstd-migrated');
+  try { if (fs.existsSync(marker)) return; } catch (_) {}
   const root = path.join(DSH_HOME, 'sessions');
   const backup = path.join(DSH_HOME, 'sessions-zstd-backup');
-  if (!fs.existsSync(root)) return;
+  if (!fs.existsSync(root)) { try { fs.writeFileSync(marker, new Date().toISOString(), 'utf8'); } catch (_) {} return; }
   const walk = (dir, rel) => {
     let ents;
     try { ents = fs.readdirSync(dir, { withFileTypes: true }); } catch (_) { return; }
@@ -1581,6 +2330,7 @@ function migrateZstdSessions() {
     }
   };
   walk(root, '');
+  try { fs.writeFileSync(marker, new Date().toISOString(), 'utf8'); } catch (_) {}
 }
 
 function listSessionLogs() {
@@ -1716,7 +2466,35 @@ function drainSessionWatcher(w) {
         try { rec = JSON.parse(line); } catch (_) { continue; }
         if (!rec || typeof rec.type !== 'string') continue;
         const chunk = rec.data?.chunk;
-        if (rec.type === 'text-chunks' && Array.isArray(rec.data?.texts)) {
+        /* 内核 0.1.5 起，原本作为「顶层记录」的 text-chunks / reasoning-chunks
+           被挪进了 assistant/message 的 data.stream[] 里（与 usage 同一批改动）。
+           只认顶层记录会导致一个 delta 都取不到 → 表现为「不流式、卡很久后整段蹦出」。
+           下面先从 stream[] 里把这两类块抽出来，再走原有的顶层分支（向后兼容旧格式）。 */
+        let handledInline = false;
+        if (rec.type === 'assistant/message' && Array.isArray(rec.data?.stream)) {
+          for (const item of rec.data.stream) {
+            if (!item) continue;
+            const itype = item.type || (item.chunk && item.chunk.type);
+            if (itype === 'text-chunks' && Array.isArray(item.texts)) {
+              const text = item.texts.join('');
+              // texts + dt 一起带到前端：按字块的真实间隔回放，观感等同真流式
+              if (text) events.push({ type: 'delta', text, dt: Array.isArray(item.dt) ? item.dt : null, texts: item.texts, time0: item.time0 || 0 });
+            } else if (itype === 'reasoning-chunks' && Array.isArray(item.texts)) {
+              const text = item.texts.join('');
+              if (text) events.push({ type: 'reasoning', text, dt: Array.isArray(item.dt) ? item.dt : null, texts: item.texts, time0: item.time0 || 0 });
+            } else if (item.chunk && item.chunk.type === 'text-delta' && typeof item.chunk.text === 'string') {
+              events.push({ type: 'delta', text: item.chunk.text });
+            } else if (item.chunk && item.chunk.type === 'reasoning-delta' && typeof item.chunk.text === 'string') {
+              events.push({ type: 'reasoning', text: item.chunk.text });
+            }
+          }
+          handledInline = true;
+        }
+        if (handledInline) {
+          // 该记录的文本/推理已从 stream[] 抽取完；usage 仍由下面的 else 分支统一处理
+          const us2 = usageChunksFromRecord(rec);
+          if (us2.length) events.push({ type: 'usage', usage: normalizeUsage(us2[us2.length - 1]) });
+        } else if (rec.type === 'text-chunks' && Array.isArray(rec.data?.texts)) {
           const text = rec.data.texts.join('');
           if (text) events.push({ type: 'delta', text });
         } else if (rec.type === 'reasoning-chunks' && Array.isArray(rec.data?.texts)) {
@@ -1758,6 +2536,7 @@ function runDsh(runId, taskText, cfg, stream) {
     const bin = dshBin();
     const node = bundledNode();
     migrateZstdSessions();
+    ensureStreamPlugin();
     const extended = cfg.extendedTools === true;
     const env = Object.assign({}, process.env, {
       DSH_HOME: DSH_HOME,
@@ -1788,8 +2567,9 @@ function runDsh(runId, taskText, cfg, stream) {
     const emitSessionEvents = () => {
       const evs = drainSessionWatcher(watcher);
       for (const ev of evs) {
-        if (ev.type === 'delta') stream('delta', { text: ev.text });
-        else if (ev.type === 'reasoning') stream('reasoning', { text: ev.text });
+        // dt：该段每个字块的真实生成间隔，前端据此按原速回放（内核只在 step 结束时整段落盘）
+        if (ev.type === 'delta') stream('delta', { text: ev.text, dt: ev.dt || null, texts: ev.texts || null, time0: ev.time0 || 0 });
+        else if (ev.type === 'reasoning') stream('reasoning', { text: ev.text, dt: ev.dt || null, texts: ev.texts || null, time0: ev.time0 || 0 });
         else if (ev.type === 'tool') stream('tool', { state: ev.state, callId: ev.callId, name: ev.name, detail: ev.detail || '' });
         else if (ev.type === 'usage') stream('usage', { usage: ev.usage, contextWindow: ctxWindowOf(cfg.model) });
       }
@@ -1828,7 +2608,28 @@ function runDsh(runId, taskText, cfg, stream) {
     };
 
     child.stdout.on('data', (d) => { info.stdout += d.toString('utf8'); });
-    child.stderr.on('data', (d) => { info.stderr += d.toString('utf8'); });
+    /* stderr 有两条用途：
+       ① 内核的 reasoning 流（原样留在 info.stderr 里，供排错与思考过程展示）；
+       ② 我们自建插件 academy-text-stream 推的正文增量行（前缀 ACA-TEXT:）。
+       正文增量要当场转成 delta 事件推给前端，才能实现逐字显示。
+       跨 chunk 的半行用 _textBuf 缓存，避免把一行切成两半解析失败。 */
+    let _textBuf = '';
+    child.stderr.on('data', (d) => {
+      const s = d.toString('utf8');
+      info.stderr += s;
+      _textBuf += s;
+      const lines = _textBuf.split('\n');
+      _textBuf = lines.pop() || '';   // 末段可能不完整，留到下次
+      for (const line of lines) {
+        const i = line.indexOf('ACA-TEXT:');
+        if (i < 0) continue;
+        const raw = line.slice(i + 9).trim();
+        if (!raw) continue;
+        let text = '';
+        try { text = JSON.parse(raw); } catch (_) { continue; }
+        if (typeof text === 'string' && text) stream('delta', { text });
+      }
+    });
 
     // 流式推送：120ms 轮询（原 800ms 延迟过高，导致输出一顿一顿）
     const deltaTimer = setInterval(() => {
@@ -1953,6 +2754,190 @@ function fetchUrlText(url, redirects = 2) {
   });
 }
 
+/* ---------------- 自定义搜索服务（通用适配器） ----------------
+   为什么做这个：内置的免费抓取（Bing/DDG）在部分网络下会被反爬返回
+   「看起来正常但完全无关」的结果，无法通过调参修好。与其给一个必然失败的
+   免费通道，不如让用户接入自己可用的搜索服务（Tavily / SearXNG / Brave / 自建等）。
+   做成开放适配器而非硬编码各家的 API：用户填地址模板 + 字段路径，
+   任何返回 JSON 的搜索服务都能接上，也不存在我猜错某家 API 格式的风险。 */
+
+/* 按 "a.b.c" 或 "a.0.b" 路径从对象里取值 */
+function pickByPath(obj, pathStr) {
+  if (!pathStr) return undefined;
+  const segs = String(pathStr).split('.').filter((s) => s !== '');
+  let cur = obj;
+  for (const seg of segs) {
+    if (cur === null || cur === undefined) return undefined;
+    if (Array.isArray(cur)) cur = cur[Number(seg)];
+    else cur = cur[seg];
+  }
+  return cur;
+}
+
+/* 模板替换：{query} 用 URL 编码后的关键词，{apiKey} 用 Key，{queryRaw} 用原文 */
+function fillTemplate(tpl, query, apiKey) {
+  return String(tpl || '')
+    .replace(/\{query\}/g, encodeURIComponent(query))
+    .replace(/\{queryRaw\}/g, query)
+    .replace(/\{apiKey\}/g, apiKey || '');
+}
+
+/* 解析「名称: 值」多行文本为 headers 对象（跳过空行与注释） */
+function parseHeaderLines(text, query, apiKey) {
+  const out = {};
+  const lines = String(text || '').split(/\r?\n/);
+  for (const line of lines) {
+    const s = line.trim();
+    if (!s || s.startsWith('#')) continue;
+    const i = s.indexOf(':');
+    if (i <= 0) continue;
+    const k = s.slice(0, i).trim();
+    const v = fillTemplate(s.slice(i + 1).trim(), query, apiKey);
+    if (k) out[k] = v;
+  }
+  return out;
+}
+
+/* 用自定义搜索服务检索。返回 { ok, sources, error } */
+function customSearchResults(query, cs) {
+  return new Promise((resolve) => {
+    const c = cs || {};
+    if (!c.enabled) return resolve({ ok: false, error: '自定义搜索未启用' });
+    const tpl = String(c.urlTemplate || '').trim();
+    if (!tpl) return resolve({ ok: false, error: '没有填写搜索地址模板' });
+    const q = String(query || '').trim();
+    if (!q) return resolve({ ok: false, error: '搜索词为空' });
+
+    const apiKey = String(c.apiKey || '').trim();
+    const method = String(c.method || 'GET').toUpperCase() === 'POST' ? 'POST' : 'GET';
+    const target = fillTemplate(tpl, q, apiKey);
+    let u;
+    try { u = new URL(target); } catch (_) { return resolve({ ok: false, error: '搜索地址无效：' + target.slice(0, 80) }); }
+    const mod = u.protocol === 'https:' ? https : http;
+
+    const headers = Object.assign({
+      'Accept': 'application/json',
+      'User-Agent': 'AcademyDebateCoach/2.0',
+    }, parseHeaderLines(c.headers, q, apiKey));
+    // Key 允许只填在 headers 里（如 Brave 用 X-Subscription-Token），
+    // 若没写进 headers，则默认补一个 Authorization: Bearer（Tavily 等常用）
+    if (apiKey && !Object.keys(headers).some((k) => /authorization|api[-_]?key|token/i.test(k))) {
+      headers['Authorization'] = 'Bearer ' + apiKey;
+    }
+
+    let payload = null;
+    if (method === 'POST') {
+      const raw = String(c.bodyTemplate || '').trim();
+      payload = raw ? fillTemplate(raw, q, apiKey) : JSON.stringify({ query: q });
+      headers['Content-Type'] = headers['Content-Type'] || 'application/json';
+      headers['Content-Length'] = Buffer.byteLength(payload);
+    }
+
+    const req = mod.request(u, { method, headers, timeout: 20000 }, (res) => {
+      let data = '';
+      res.setEncoding('utf8');
+      res.on('data', (d) => { if (data.length < 800000) data += d; });
+      res.on('end', () => {
+        if (res.statusCode < 200 || res.statusCode >= 300) {
+          let detail = '';
+          try { const j = JSON.parse(data); detail = (j.error && (j.error.message || j.error)) || j.message || ''; } catch (_) {}
+          return resolve({ ok: false, error: 'HTTP ' + res.statusCode + (detail ? '：' + String(detail).slice(0, 120) : '') });
+        }
+        let j;
+        try { j = JSON.parse(data); } catch (_) {
+          return resolve({ ok: false, error: '返回的不是 JSON（请检查地址模板是否正确）' });
+        }
+        const arr = pickByPath(j, c.resultsPath || '');
+        if (!Array.isArray(arr)) {
+          return resolve({ ok: false, error: '没在响应里找到结果数组，请检查「结果字段路径」（当前填的是 ' + (c.resultsPath || '（空）') + '）' });
+        }
+        const sources = [];
+        const seen = new Set();
+        for (const item of arr) {
+          if (!item || typeof item !== 'object') continue;
+          const url = String(pickByPath(item, c.urlPath || 'url') || '').trim();
+          const title = String(pickByPath(item, c.titlePath || 'title') || '').trim();
+          if (!url || !/^https?:\/\//i.test(url) || seen.has(url)) continue;
+          seen.add(url);
+          const snippet = c.snippetPath ? String(pickByPath(item, c.snippetPath) || '').trim() : '';
+          const s = { url, title: title.slice(0, 120), snippet: snippet.slice(0, 300), engine: 'custom' };
+          s.tags = classifySearchSource(s);
+          sources.push(s);
+          if (sources.length >= 12) break;
+        }
+        if (!sources.length) return resolve({ ok: false, error: '搜索服务没有返回可用结果（结果数组是空的）' });
+        resolve({ ok: true, sources });
+      });
+    });
+    req.on('timeout', () => { try { req.destroy(); } catch (_) {} resolve({ ok: false, error: '自定义搜索超时（20 秒）' }); });
+    req.on('error', (e) => resolve({ ok: false, error: '请求失败：' + e.message }));
+    if (payload) req.write(payload);
+    req.end();
+  });
+}
+
+/* 预设搜索服务。每个预设只预填「格式」，Key/地址由用户自己补。
+   说明：这些服务的 API 格式可能随版本变化，所以预设只是起点，
+   用户可以改任意字段；跑不通就点「测试」看具体报错。 */
+const SEARCH_PRESETS = [
+  {
+    id: 'tavily',
+    name: 'Tavily（AI 搜索，有免费额度）',
+    urlTemplate: 'https://api.tavily.com/search',
+    method: 'POST',
+    headers: 'Authorization: Bearer {apiKey}\nContent-Type: application/json',
+    bodyTemplate: '{"query":"{queryRaw}","max_results":8}',
+    resultsPath: 'results',
+    titlePath: 'title',
+    urlPath: 'url',
+    snippetPath: 'content',
+    signup: 'https://tavily.com',
+    note: '注册后在控制台拿 API Key（tvly- 开头），每月有免费额度。',
+  },
+  {
+    id: 'searxng',
+    name: 'SearXNG（自建/公共实例，完全免费）',
+    urlTemplate: 'https://your-searxng.example.com/search?q={query}&format=json',
+    method: 'GET',
+    headers: '',
+    bodyTemplate: '',
+    resultsPath: 'results',
+    titlePath: 'title',
+    urlPath: 'url',
+    snippetPath: 'content',
+    signup: 'https://docs.searxng.org',
+    note: '需要自己部署或找公共实例；把上面地址换成你的实例地址。部分实例未开 JSON 输出，需在 settings.yml 里开启 format: json。',
+  },
+  {
+    id: 'brave',
+    name: 'Brave Search API（有免费额度）',
+    urlTemplate: 'https://api.search.brave.com/res/v1/web/search?q={query}&count=10',
+    method: 'GET',
+    headers: 'X-Subscription-Token: {apiKey}\nAccept: application/json',
+    bodyTemplate: '',
+    resultsPath: 'web.results',
+    titlePath: 'title',
+    urlPath: 'url',
+    snippetPath: 'description',
+    signup: 'https://brave.com/search/api/',
+    note: '注册后在控制台拿订阅令牌，免费档每月有查询额度。',
+  },
+  {
+    id: 'generic',
+    name: '自定义（任何返回 JSON 的搜索服务）',
+    urlTemplate: '',
+    method: 'GET',
+    headers: '',
+    bodyTemplate: '',
+    resultsPath: 'results',
+    titlePath: 'title',
+    urlPath: 'url',
+    snippetPath: '',
+    signup: '',
+    note: '自己填地址模板和字段路径。地址里用 {query} 表示关键词，请求头里用 {apiKey} 表示密钥。',
+  },
+];
+
 async function freeSearchResults(query) {
   const q = encodeURIComponent(String(query || '').slice(0, 200));
   if (!q) return [];
@@ -2028,7 +3013,26 @@ function buildVerifySeeds(claim) {
   return out.slice(0, 3);
 }
 
+/* 端侧检索统一入口：优先用用户配置的自定义搜索服务（可靠），
+   没有配置才退回内置免费抓取（可能被反爬挡住，返回结果会带 lowQuality 标记）。 */
 async function searchResults(query) {
+  const cfg = loadConfig();
+  const cs = cfg.customSearch || {};
+  if (cs.enabled && String(cs.urlTemplate || '').trim()) {
+    const r = await customSearchResults(query, cs);
+    if (r.ok) return { provider: 'custom', sources: r.sources, answer: '' };
+    // 自定义服务失败：如实上报，不退化成免费抓取的垃圾结果
+    return {
+      provider: 'custom',
+      sources: [{
+        url: 'https://www.bing.com/search?q=' + encodeURIComponent(query),
+        title: '自定义搜索服务调用失败',
+        snippet: (r.error || '未知错误') + '　请到「设置 → 高级 → 自定义搜索服务」检查配置，或点「测试」验证。',
+        lowQuality: true,
+      }],
+      answer: '',
+    };
+  }
   return { provider: 'free', sources: await freeSearchResults(query), answer: '' };
 }
 
@@ -2338,6 +3342,18 @@ const MIME = {
   '.md': 'text/markdown; charset=utf-8',
 };
 
+/* index.html 里的版本号占位符（__APP_VERSION__）在发送前替换成 APP_VERSION。
+   这样「关于应用」页的硬编码版本号只存在于模板里，发版时改 server.js 一处即可，
+   不会再出现改了 APP_VERSION 但页面上还写着旧号的情况。 */
+function injectVersion(buf, filePath) {
+  if (path.basename(filePath).toLowerCase() !== 'index.html') return buf;
+  if (buf.indexOf('__APP_VERSION__') === -1) return buf;
+  return Buffer.from(
+    buf.toString('utf8').replace(/__APP_VERSION__/g, 'v' + APP_VERSION),
+    'utf8'
+  );
+}
+
 function serveStatic(req, res, urlPath) {
   let rel = decodeURIComponent(urlPath.split('?')[0]);
   if (rel === '/' || rel === '') rel = '/index.html';
@@ -2348,11 +3364,13 @@ function serveStatic(req, res, urlPath) {
   fs.readFile(filePath, (err, data) => {
     if (err) return sendJson(res, 404, { ok: false, error: 'not found' });
     const ext = path.extname(filePath).toLowerCase();
+    const body = injectVersion(data, filePath);
     res.writeHead(200, {
       'Content-Type': MIME[ext] || 'application/octet-stream',
       'Cache-Control': 'no-store',
+      'Content-Length': body.length,
     });
-    res.end(data);
+    res.end(body);
   });
 }
 
@@ -2363,10 +3381,14 @@ function handleRequest(req, res) {
   const url = new URL(req.url, 'http://127.0.0.1');
   const p = url.pathname;
 
-  // CORS 预检：本机独立轻量窗（file://）跨源调用需要
+  // 本机来源校验（见 localOriginOk）：所有请求先过这道门
+  if (!localOriginOk(req)) {
+    return sendJson(res, 403, { ok: false, error: '已拒绝非本机来源的请求' });
+  }
+
+  // 预检：正常流程不会走到（同源请求无预检）；保留 204 但不放行跨源读取
   if (req.method === 'OPTIONS') {
     res.writeHead(204, {
-      'Access-Control-Allow-Origin': '*',
       'Access-Control-Allow-Methods': 'GET, POST, PUT, DELETE, OPTIONS',
       'Access-Control-Allow-Headers': 'Content-Type',
       'Access-Control-Max-Age': '86400',
@@ -2389,7 +3411,7 @@ function handleRequest(req, res) {
     const mode = String(url.searchParams.get('mode') || '').toLowerCase() === 'server' ? 'server' : 'free';
     const run = (mode === 'server')
       ? serverSearchResults(q)
-      : searchResults(q).then((r) => ({ ok: true, provider: 'free', sources: r.sources || [], answer: r.answer || '' }));
+      : searchResults(q).then((r) => ({ ok: true, provider: r.provider, sources: r.sources || [], answer: r.answer || '' }));
     return run.then((r) => {
       if (r.ok === false) return sendJson(res, 400, { ok: false, error: r.error });
       const sources = r.sources || [];
@@ -2405,6 +3427,60 @@ function handleRequest(req, res) {
         notice: lowQuality
           ? '基础检索（免费）在当前网络下没有拿到相关结果，通常是搜索源被限制。建议切到「深度检索」，或改用本地知识库。'
           : '',
+      });
+    }).catch((e) => sendJson(res, 500, { ok: false, error: e.message }));
+  }
+
+  /* —— 自定义搜索服务：预设 / 读取 / 保存 / 测试 —— */
+  if (req.method === 'GET' && p === '/api/search/custom') {
+    const cfg = loadConfig();
+    const cs = cfg.customSearch || defaultCustomSearch();
+    // Key 不回传明文，只回传是否已设置
+    return sendJson(res, 200, {
+      ok: true,
+      presets: SEARCH_PRESETS,
+      config: Object.assign({}, cs, { apiKey: '', hasKey: !!String(cs.apiKey || '').trim() }),
+    });
+  }
+
+  if (req.method === 'POST' && p === '/api/search/custom') {
+    return readBody(req, 128 * 1024).then((raw) => {
+      let body;
+      try { body = JSON.parse(raw || '{}'); } catch (_) { return sendJson(res, 400, { ok: false, error: 'JSON 解析失败' }); }
+      const cur = loadConfig().customSearch || defaultCustomSearch();
+      const next = Object.assign({}, cur);
+      const strFields = ['name', 'urlTemplate', 'method', 'headers', 'bodyTemplate', 'resultsPath', 'titlePath', 'urlPath', 'snippetPath'];
+      for (const f of strFields) {
+        if (body[f] !== undefined) next[f] = String(body[f] || '').slice(0, 4000);
+      }
+      if (body.enabled !== undefined) next.enabled = body.enabled === true;
+      // Key：留空表示保持原值（与 API Key 的处理一致），传 null 表示清空
+      if (body.apiKey === null) next.apiKey = '';
+      else if (typeof body.apiKey === 'string' && body.apiKey.trim()) next.apiKey = body.apiKey.trim();
+      saveConfig({ customSearch: next });
+      return sendJson(res, 200, { ok: true, config: Object.assign({}, next, { apiKey: '', hasKey: !!next.apiKey }) });
+    }).catch((e) => sendJson(res, 500, { ok: false, error: e.message }));
+  }
+
+  /* 测试自定义搜索：用固定测试词跑一次，返回样例结果或具体报错 */
+  if (req.method === 'POST' && p === '/api/search/custom/test') {
+    return readBody(req, 128 * 1024).then(async (raw) => {
+      let body;
+      try { body = JSON.parse(raw || '{}'); } catch (_) { return sendJson(res, 400, { ok: false, error: 'JSON 解析失败' }); }
+      const saved = loadConfig().customSearch || defaultCustomSearch();
+      // 允许用界面上未保存的内容测试
+      const cs = Object.assign({}, saved, body.config || {}, { enabled: true });
+      if (!String(cs.apiKey || '').trim() && String(saved.apiKey || '').trim() && !(body.config && body.config.apiKey)) {
+        cs.apiKey = saved.apiKey;
+      }
+      const q = String(body.query || '辩论').trim() || '辩论';
+      const t0 = Date.now();
+      const r2 = await customSearchResults(q, cs);
+      if (!r2.ok) return sendJson(res, 200, { ok: false, error: r2.error, elapsedMs: Date.now() - t0 });
+      return sendJson(res, 200, {
+        ok: true, query: q, elapsedMs: Date.now() - t0,
+        count: r2.sources.length,
+        samples: r2.sources.slice(0, 3),
       });
     }).catch((e) => sendJson(res, 500, { ok: false, error: e.message }));
   }
@@ -2685,6 +3761,26 @@ function handleRequest(req, res) {
   }
 
   /* —— 对话历史（文件存储） —— */
+  // 列表（元数据，走 SQLite 索引；不解析全部对话正文）
+  if (req.method === 'GET' && p === '/api/chats/list') {
+    let list = chatIndexList();
+    if (!list) {
+      try { list = readAllChats().map((c) => ({ id: c.id, mode: c.mode || 'free', title: c.title || '', created: c.created || 0, updated: c.updated || 0, msgCount: (c.messages || []).length })); } catch (_) { list = []; }
+    }
+    return sendJson(res, 200, { ok: true, chats: list, count: list.length });
+  }
+  // 单条读取（配合列表懒加载正文）
+  if (req.method === 'GET' && p.startsWith('/api/chats/') && p.split('/')[3] && !p.endsWith('/import')) {
+    const id = safeChatId(decodeURIComponent(p.split('/')[3]));
+    const fp = path.join(CHATS_DIR, id + '.json');
+    try {
+      const c = JSON.parse(fs.readFileSync(fp, 'utf8'));
+      if (!c || typeof c !== 'object' || !c.id) throw new Error('bad chat');
+      return sendJson(res, 200, { ok: true, chat: c });
+    } catch (_) {
+      return sendJson(res, 404, { ok: false, error: '对话不存在' });
+    }
+  }
   if (req.method === 'GET' && p === '/api/chats') {
     const chats = readAllChats();
     return sendJson(res, 200, { ok: true, chats, count: chats.length });
@@ -2697,6 +3793,31 @@ function handleRequest(req, res) {
       const n = writeAllChats(chats);
       return sendJson(res, 200, { ok: true, count: n });
     }).catch((e) => sendJson(res, 500, { ok: false, error: e.message }));
+  }
+  // 单条保存（前端每条消息后只落盘变了的那个对话，不再整库重写）
+  if (req.method === 'PUT' && p === '/api/chats/upsert') {
+    return readBody(req, CHATS_BODY_LIMIT).then((raw) => {
+      let body;
+      try { body = JSON.parse(raw || '{}'); } catch (_) { return sendJson(res, 400, { ok: false, error: 'JSON 解析失败' }); }
+      const c = body.chat;
+      if (!c || typeof c !== 'object' || !c.id) return sendJson(res, 400, { ok: false, error: '缺少对话数据' });
+      if (!Array.isArray(c.messages)) c.messages = [];
+      const id = safeChatId(c.id);
+      if (id.startsWith('_')) return sendJson(res, 400, { ok: false, error: '对话 id 不能以 _ 开头（内部保留前缀）' });
+      const rec = Object.assign({}, c, { id });
+      try {
+        writeJsonAtomic(path.join(CHATS_DIR, id + '.json'), rec);
+      } catch (e) { return sendJson(res, 500, { ok: false, error: '写入失败：' + e.message }); }
+      chatIndexUpsert(rec);
+      return sendJson(res, 200, { ok: true, id });
+    }).catch((e) => sendJson(res, 500, { ok: false, error: e.message }));
+  }
+  // 单条删除（配合列表删除按钮，不再整库重写）
+  if (req.method === 'DELETE' && p.startsWith('/api/chats/') && p.split('/')[3] && !p.endsWith('/import')) {
+    const id = safeChatId(decodeURIComponent(p.split('/')[3]));
+    try { fs.unlinkSync(path.join(CHATS_DIR, id + '.json')); } catch (_) {}
+    chatIndexDelete(id);
+    return sendJson(res, 200, { ok: true });
   }
   if (req.method === 'POST' && p === '/api/chats/import') {
     return readBody(req, CHATS_BODY_LIMIT).then((raw) => {
@@ -2880,6 +4001,7 @@ function handleRequest(req, res) {
     }
     return sendJson(res, 200, {
       ok: true,
+      indexReady: (() => { try { return openMemoryIndex(); } catch (_) { return false; } })(),
       long: { text: longText, size: longSize, count: longEntries.length, entries: longEntries },
       daily: dailyEntries.slice(0, 14), // 最近 14 天流水
       stats: {
@@ -2947,8 +4069,27 @@ function handleRequest(req, res) {
     }).catch((e) => sendJson(res, 500, { ok: false, error: e.message }));
   }
 
+  /* —— 记忆全文搜索（记忆中心的搜索框；长期 + 流水一并检索） —— */
+  if (req.method === 'GET' && p === '/api/memory/search') {
+    const q = String(url.searchParams.get('q') || '').trim();
+    if (!q) return sendJson(res, 400, { ok: false, error: '缺少 q 参数' });
+    let indexReady = false;
+    try { indexReady = openMemoryIndex(); } catch (_) {}
+    const results = memorySearch(q, 20);
+    return sendJson(res, 200, { ok: true, query: q, indexReady, results });
+  }
+
   if (req.method === 'POST' && p === '/api/memory/clear') {
+    try { autoBackupData('before-clear'); } catch (_) {}
     try { if (fs.existsSync(MEMORY_FILE)) fs.writeFileSync(MEMORY_FILE, '', 'utf8'); } catch (_) {}
+    // 清空 = 全部：每日流水一并删除（按钮文案即「清空全部记忆」）
+    try {
+      ensureDir(MEMORY_DIR);
+      for (const e of fs.readdirSync(MEMORY_DIR, { withFileTypes: true })) {
+        if (e.isFile() && /^\d{4}-\d{2}-\d{2}\.md$/.test(e.name)) { try { fs.unlinkSync(path.join(MEMORY_DIR, e.name)); } catch (_) {} }
+      }
+    } catch (_) {}
+    try { rebuildMemoryIndex(); } catch (_) {}
     return sendJson(res, 200, { ok: true });
   }
 
@@ -3225,6 +4366,18 @@ function handleRequest(req, res) {
     }).catch((e) => sendJson(res, 500, { ok: false, error: '入库失败：' + e.message }));
   }
 
+  /* 产物 → 资料库：引用式入库（不复制内容，永远读产物最新版） */
+  if (req.method === 'POST' && p === '/api/library/from-deliverable') {
+    return readBody(req, 64 * 1024).then((raw) => {
+      let body;
+      try { body = JSON.parse(raw || '{}'); } catch (_) { return sendJson(res, 400, { ok: false, error: 'JSON 解析失败' }); }
+      const r2 = libAddFromDeliverable(body.name, { tags: body.tags, name: body.title });
+      if (r2.error && !r2.item) return sendJson(res, 422, { ok: false, error: r2.error });
+      if (r2.error) return sendJson(res, 200, { ok: true, duplicated: true, error: r2.error, item: libPublic(r2.item) });
+      return sendJson(res, 200, { ok: true, item: libPublic(r2.item) });
+    }).catch((e) => sendJson(res, 500, { ok: false, error: e.message }));
+  }
+
   if (req.method === 'POST' && p === '/api/library/update') {
     return readBody(req, 64 * 1024).then((raw) => {
       let body;
@@ -3255,6 +4408,9 @@ function handleRequest(req, res) {
       try { body = JSON.parse(raw || '{}'); } catch (_) { return sendJson(res, 400, { ok: false, error: 'JSON 解析失败' }); }
       const q = String(body.query || '').trim();
       if (!q) return sendJson(res, 400, { ok: false, error: '请输入检索关键词' });
+      // 检索前按需重建：引用式条目的正文在产物空间，产物可能在服务运行期间被改/删，
+      // 只在启动时检查会召回不到最新内容（改动后要立刻能搜到）。
+      try { libIndexRebuildIfStale(); } catch (_) {}
       const hits = libRecall(q, { ids: Array.isArray(body.ids) ? body.ids : null });
       return sendJson(res, 200, { ok: true, query: q, count: hits.length, hits });
     }).catch((e) => sendJson(res, 500, { ok: false, error: e.message }));
@@ -3431,6 +4587,105 @@ function handleRequest(req, res) {
     }).catch((e) => sendJson(res, 500, { ok: false, error: e.message }));
   }
 
+  /* ---------------- 使用统计（从 append-only 账本读，删对话不影响历史） ---------------- */
+  if (req.method === 'GET' && p === '/api/stats') {
+    try {
+      const rows = usageReadAll();
+      const agg = usageAggregate(rows);
+      // 对话数/消息数仍来自当前真实存在的对话（这两个本来就该随删除变化）
+      let chats = 0, messages = 0, starred = 0;
+      try {
+        const all = readAllChats();
+        chats = all.length;
+        for (const c of all) {
+          const ms = Array.isArray(c.messages) ? c.messages : [];
+          messages += ms.length;
+          for (const m of ms) if (m && m.starred) starred++;
+        }
+      } catch (_) {}
+      return sendJson(res, 200, {
+        ok: true,
+        usage: agg.total,
+        activeDays: agg.activeDays,
+        streak: agg.streak,
+        days: agg.days,
+        models: agg.models,
+        chats, messages, starred,
+        ledgerRows: rows.length,
+      });
+    } catch (e) { return sendJson(res, 500, { ok: false, error: e.message }); }
+  }
+
+  /* ---------------- 辩题档案夹 API ---------------- */
+  if (req.method === 'GET' && p === '/api/cases') {
+    try {
+      const idx = caseLoadIndex();
+      const allChats = readAllChats();
+      const items = (idx.cases || []).map((c) => casePublic(c, allChats));
+      // 丢掉只剩空壳（对话和产物都没了）的辩题，避免列表越用越脏
+      const alive = items.filter((x) => x.chats.length || x.deliverables.length);
+      if (alive.length !== items.length) {
+        idx.cases = idx.cases.filter((c) => {
+          const p2 = casePublic(c, allChats);
+          return p2.chats.length || p2.deliverables.length;
+        });
+        caseSaveIndex(idx);
+      }
+      return sendJson(res, 200, { ok: true, cases: alive, count: alive.length });
+    } catch (e) { return sendJson(res, 500, { ok: false, error: e.message }); }
+  }
+
+  if (req.method === 'POST' && p === '/api/cases/attach') {
+    return readBody(req, 256 * 1024).then((raw) => {
+      let body;
+      try { body = JSON.parse(raw || '{}'); } catch (_) { return sendJson(res, 400, { ok: false, error: 'JSON 解析失败' }); }
+      const r2 = caseAttach(body.motion, { chatId: body.chatId, deliverable: body.deliverable }, { text: body.text, side: body.side });
+      if (r2.error) return sendJson(res, 400, { ok: false, error: r2.error });
+      return sendJson(res, 200, { ok: true, case: casePublic(r2.caseItem, readAllChats()) });
+    }).catch((e) => sendJson(res, 500, { ok: false, error: e.message }));
+  }
+
+  if (req.method === 'POST' && p === '/api/cases/guess') {
+    return readBody(req, 256 * 1024).then((raw) => {
+      let body;
+      try { body = JSON.parse(raw || '{}'); } catch (_) { return sendJson(res, 400, { ok: false, error: 'JSON 解析失败' }); }
+      const guess = caseGuessMotion(body.text || '');
+      const exist = guess ? caseFindByMotion(guess) : null;
+      return sendJson(res, 200, { ok: true, motion: guess, existing: exist ? exist.id : null });
+    }).catch((e) => sendJson(res, 500, { ok: false, error: e.message }));
+  }
+
+  /* 改名 / 改持方：只动索引，不动对话与产物文件名 */
+  if (req.method === 'POST' && p === '/api/cases/update') {
+    return readBody(req, 64 * 1024).then((raw) => {
+      let body;
+      try { body = JSON.parse(raw || '{}'); } catch (_) { return sendJson(res, 400, { ok: false, error: 'JSON 解析失败' }); }
+      const idx = caseLoadIndex();
+      const c = idx.cases.find((x) => x.id === body.id);
+      if (!c) return sendJson(res, 404, { ok: false, error: '辩题不存在' });
+      if (typeof body.motion === 'string' && body.motion.trim()) c.motion = body.motion.trim().slice(0, 60);
+      if (typeof body.side === 'string') c.side = body.side.trim().slice(0, 20);
+      if (Array.isArray(body.deliverables)) c.deliverables = body.deliverables.map((n) => String(n)).slice(0, 200);
+      c.updated = Date.now();
+      caseSaveIndex(idx);
+      return sendJson(res, 200, { ok: true, case: casePublic(c, readAllChats()) });
+    }).catch((e) => sendJson(res, 500, { ok: false, error: e.message }));
+  }
+
+  /* 删除辩题：只删索引（用户的对话与产物文件保留），这也是它安全的理由 */
+  if (req.method === 'POST' && p === '/api/cases/delete') {
+    return readBody(req, 64 * 1024).then((raw) => {
+      let body;
+      try { body = JSON.parse(raw || '{}'); } catch (_) { return sendJson(res, 400, { ok: false, error: 'JSON 解析失败' }); }
+      const idx = caseLoadIndex();
+      const before = idx.cases.length;
+      idx.cases = idx.cases.filter((x) => x.id !== body.id);
+      if (idx.cases.length === before) return sendJson(res, 404, { ok: false, error: '辩题不存在' });
+      caseSaveIndex(idx);
+      return sendJson(res, 200, { ok: true });
+    }).catch((e) => sendJson(res, 500, { ok: false, error: e.message }));
+  }
+
   /* 工具页（辩案工作台/简易流水单）把内容直接存为产物空间文件 */
   if (req.method === 'POST' && p === '/api/deliverables/save') {
     return readBody(req, 16 * 1024 * 1024).then((raw) => {
@@ -3480,6 +4735,8 @@ function handleRequest(req, res) {
       const searchEnabled = true; // 端侧免费搜索代理常开；有 DeepSeek 搜索 Key 时自动切官方搜索
       // 个人资料库召回：只在用户开启时生效，命中结果注入任务单
       const useLibrary = cfg.libraryEnabled !== false && body.useLibrary !== false;
+      // 召回前按需重建：引用式条目跟随产物变化，不刷新会召回不到刚改过的备赛包
+      if (useLibrary) { try { libIndexRebuildIfStale(); } catch (_) {} }
       const libHits = useLibrary
         ? libRecall(text, { ids: Array.isArray(body.libraryIds) ? body.libraryIds : null })
         : [];
@@ -3537,6 +4794,21 @@ function handleRequest(req, res) {
         if (ok) {
           const doneUsage = extractFinalUsage(startedAt, cfg.model);
           const usagePayload = doneUsage ? Object.assign({ contextWindow: ctxWindowOf(cfg.model) }, doneUsage) : undefined;
+          // 落账本：只追加。以后即使这条对话被删掉，这段消耗仍在统计里。
+          if (doneUsage) {
+            usageAppend({
+              date: USAGE_DAY(Date.now()),
+              chatId: String(body.chatId || ''),
+              mode: String(body.mode || 'free'),
+              model: String(cfg.model || ''),
+              input: Number(doneUsage.input) || 0,
+              output: Number(doneUsage.output) || 0,
+              cacheRead: Number(doneUsage.cacheRead) || 0,
+              cacheWrite: Number(doneUsage.cacheWrite) || 0,
+              reasoning: Number(doneUsage.reasoning) || 0,
+              elapsedMs: Date.now() - startedAt,
+            });
+          }
           stream('done', { runId, text: finalText || streamedText, elapsedMs: Date.now() - startedAt, usage: usagePayload });
         } else {
           stream('error', { runId, message: friendlyError(info), stderrTail: String(info.stderr || '').slice(-800) });
@@ -3555,6 +4827,26 @@ function handleRequest(req, res) {
   }
 
   return sendJson(res, 404, { ok: false, error: 'not found' });
+}
+
+/* 启动维护（后台跑，不挡窗口）：会话迁移 + 记忆蒸馏 + 三个索引刷新 + 启动快照。
+   索引是持久化镜像，重启时已是上次的状态，所以这里只是「刷新」；源没变的直接跳过。 */
+async function runStartupMaintenance() {
+  const yieldLoop = () => new Promise((r) => setImmediate(r));
+  const t0 = Date.now();
+  let mm = 'skip', ll = 'skip', cc = 'skip';
+  try { migrateZstdSessions(); } catch (_) {}
+  await yieldLoop();
+  try { distillRecentNotes(); } catch (_) {}
+  await yieldLoop();
+  try { mm = rebuildMemoryIndexIfStale(); } catch (_) {}
+  await yieldLoop();
+  try { ll = libIndexRebuildIfStale(); } catch (_) {}
+  await yieldLoop();
+  try { cc = chatIndexRebuildIfStale(); } catch (_) {}
+  await yieldLoop();
+  try { autoBackupData('startup', { oncePerDay: true }); } catch (_) {}
+  try { console.log('[startup] 维护完成 ' + (Date.now() - t0) + 'ms · memory=' + mm + ' lib=' + ll + ' chats=' + cc); } catch (_) {}
 }
 
 function startServer() {
@@ -3580,7 +4872,10 @@ function startServer() {
 
   server.listen(candidate, '127.0.0.1', () => {
     actualPort = candidate;
-    migrateZstdSessions();
+    // 维护工作一律推到下一拍、并分步让出事件循环：Node 单线程，若在 listen 回调里同步跑完，
+    // 期间任何请求都答不了；而 electron-main 是等 /api/status 成功才建窗口 —— 那会把窗口出现
+    // 硬生生推迟「全部重建 + 全量备份」的时长。索引是持久化镜像，晚几百毫秒刷新无影响。
+    setImmediate(() => { runStartupMaintenance(); });
     try {
       const bootCfg = loadConfig();
       writeDshSettings(bootCfg.model, bootCfg.baseUrl, effectiveSearchKey(bootCfg), resolveSearchProvider(bootCfg)); // 启动时同步搜索/模型配置

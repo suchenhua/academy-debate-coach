@@ -40,7 +40,7 @@ app.whenReady().then(async () => {
       '</title><style>' +
       'body{font-family:"Microsoft YaHei","PingFang SC",sans-serif;margin:0;color:#1c2434;line-height:1.6;font-size:14.5px;background:#fff}' +
       // 强制浅色：系统深色主题下 printBackground 会把底色打黑
-      'html{color-scheme:light}' + +
+      'html{color-scheme:light}' +
       'h1{font-size:1.6em;color:#1F3864}' +
       'h2{font-size:1.35em;color:#2F5496}' +
       'h3{font-size:1.15em;color:#333}' +

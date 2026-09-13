@@ -7,7 +7,8 @@
  *  - 中：按 7 种触发条件生成的建议搜索词 + 搜索结果
  *  - 下：与教练的独立对话线程（研究专用小助手，走主 App 的 /api/chat/stream）
  *
- * 通信：直接 fetch http://127.0.0.1:<主App端口>（server.js 已放行 CORS）。
+ * 通信：IPC → 主进程 http.request 转发到 http://127.0.0.1:<主App端口>
+ *（不经页面 fetch：避免 file:// 的 CORS 问题，也让服务端来源校验能放行本机窗口）。
  * 主 App 未运行时给出明确提示，不影响阅读类功能。
  *
  * 用法：electron.exe app/research-window.js [--topic "辩题"]

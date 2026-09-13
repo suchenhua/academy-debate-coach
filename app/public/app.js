@@ -65,21 +65,6 @@ function applyTheme() {
 function setTheme(pref) {
   try { localStorage.setItem(THEME_LS, pref); } catch (_) {}
   applyTheme();
-  syncToolThemes();
-}
-/* 工具页主题同步：浅色 → body.light；深色 → 移除 */
-function syncToolThemes() {
-  const resolved = resolveTheme(restoreTheme());
-  // 工具页由各自页面脚本读取 localStorage；这里仅确保主界面一致。
-  // 若工具页已在同一窗口(iframe)打开则遍历：
-  document.querySelectorAll('iframe.theme-tool').forEach((f) => {
-    try {
-      const doc = f.contentDocument;
-      if (!doc) return;
-      if (resolved === 'light') doc.body.classList.add('light');
-      else doc.body.classList.remove('light');
-    } catch (_) {}
-  });
 }
 /* ———— 界面语言（简体 / 繁体） ———— */
 const LOCALE_LS = 'academy.locale.v1';
@@ -194,12 +179,18 @@ function readLegacyChats() {
   try { return normalizeChats(JSON.parse(localStorage.getItem(LS_KEY) || '[]')); } catch (_) { return []; }
 }
 
-/* 异步加载：优先服务端文件存储；服务端为空时自动迁移旧 localStorage 数据 */
+/* 异步加载：优先服务端文件存储；服务端为空时自动迁移旧 localStorage 数据。
+   列表只取元数据（走服务端 SQLite 索引），正文在打开对话时按需拉取（懒加载），
+   对话多了之后启动不再解析全部 JSON。 */
 async function loadChatsAsync() {
   try {
-    const r = await fetchJSON(CHATS_API);
+    const r = await fetchJSON('/api/chats/list');
     if (r && r.ok && Array.isArray(r.chats)) {
-      if (r.chats.length) return normalizeChats(r.chats);
+      if (r.chats.length) {
+        const chats = normalizeChats(r.chats);
+        for (const c of chats) { c._loaded = false; savedStamps.set(c.id, c.updated); }
+        return chats;
+      }
       const legacy = readLegacyChats();
       if (legacy.length) {
         try {
@@ -210,37 +201,90 @@ async function loadChatsAsync() {
           localStorage.setItem(CHATS_LS_MIGRATED, String(Date.now()));
           console.log('[Academy] 已把 ' + legacy.length + ' 个旧对话迁移到文件存储');
         } catch (_) {}
+        for (const c of legacy) savedStamps.set(c.id, c.updated);
         return legacy;
       }
       return [];
     }
   } catch (_) {}
   // 兜底：服务端不可用时继续读 localStorage，保证对话不丢
-  return readLegacyChats();
+  const legacy = readLegacyChats();
+  for (const c of legacy) savedStamps.set(c.id, c.updated);
+  return legacy;
 }
 
-/* 保存：直接异步写服务端（本地写盘毫秒级，且调用频率低，优先保证不丢数据）；
+/* 按需加载单个对话正文（_loaded=false 的只含元数据） */
+async function ensureChatLoaded(id) {
+  const c = (state.chats || []).find((x) => x.id === id);
+  if (!c || c._loaded !== false) return c;
+  try {
+    const r = await fetchJSON(CHATS_API + '/' + encodeURIComponent(id));
+    if (r && r.ok && r.chat) {
+      const full = normalizeChats([r.chat])[0];
+      if (full) { full._loaded = true; Object.assign(c, full); }
+      else c._loaded = true;
+    } else {
+      c._loaded = true; // 拿不到正文也标记已载，避免反复请求
+    }
+  } catch (_) { c._loaded = true; }
+  return c;
+}
+
+/* 搜索需要全部正文：把只含元数据的对话一次性补齐（仅在用户搜索时触发一次） */
+async function hydrateAllChats() {
+  const pending = (state.chats || []).filter((c) => c._loaded === false);
+  if (!pending.length) return;
+  try {
+    const r = await fetchJSON(CHATS_API);
+    if (r && r.ok && Array.isArray(r.chats)) {
+      const byId = new Map(r.chats.map((c) => [c.id, c]));
+      for (const c of pending) {
+        const full = byId.get(c.id);
+        if (full) { const nf = normalizeChats([full])[0]; if (nf) { nf._loaded = true; Object.assign(c, nf); savedStamps.set(c.id, c.updated); } }
+        else c._loaded = true;
+      }
+    }
+  } catch (_) {
+    for (const c of pending) c._loaded = true;
+  }
+}
+
+/* 已落盘的对话时间戳：与 c.updated 比对判断哪些对话「脏」了需要增量保存 */
+const savedStamps = new Map();
+
+/* 保存：只上行有改动的对话（PUT /api/chats/upsert，串行防乱序），
    服务端失败时降级写 localStorage，关窗前还有同步兜底。 */
 function saveChats() {
   flushChats();
 }
+let flushChain = Promise.resolve();
 function flushChats() {
-  const chats = state.chats || [];
-  fetchJSON(CHATS_API, {
-    method: 'PUT', headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ chats }),
-  }).catch(() => {
-    try { localStorage.setItem(LS_KEY, JSON.stringify(chats.slice(0, 50))); } catch (_) {}
-  });
+  const dirty = (state.chats || []).filter((c) => c && c._loaded !== false && savedStamps.get(c.id) !== c.updated);
+  for (const c of dirty) {
+    flushChain = flushChain.then(() => {
+      const cur = (state.chats || []).find((x) => x.id === c.id);
+      if (!cur || cur._loaded === false) return undefined;
+      return fetchJSON('/api/chats/upsert', {
+        method: 'PUT', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ chat: cur }),
+      }).then(() => { savedStamps.set(cur.id, cur.updated); });
+    }).catch(() => {
+      try { localStorage.setItem(LS_KEY, JSON.stringify((state.chats || []).slice(0, 50))); } catch (_) {}
+    });
+  }
 }
-/* 关闭窗口/刷新前同步落盘，避免最后 300ms 的改动丢失 */
+/* 关闭窗口/刷新前同步落盘，避免最后 300ms 的改动丢失（同样只上行脏对话） */
 function flushChatsSync() {
-  try {
-    const xhr = new XMLHttpRequest();
-    xhr.open('PUT', CHATS_API, false);
-    xhr.setRequestHeader('Content-Type', 'application/json');
-    xhr.send(JSON.stringify({ chats: state.chats || [] }));
-  } catch (_) {}
+  const dirty = (state.chats || []).filter((c) => c && c._loaded !== false && savedStamps.get(c.id) !== c.updated);
+  for (const c of dirty) {
+    try {
+      const xhr = new XMLHttpRequest();
+      xhr.open('PUT', '/api/chats/upsert', false);
+      xhr.setRequestHeader('Content-Type', 'application/json');
+      xhr.send(JSON.stringify({ chat: c }));
+      savedStamps.set(c.id, c.updated);
+    } catch (_) {}
+  }
 }
 window.addEventListener('beforeunload', () => { flushChatsSync(); });
 
@@ -378,9 +422,10 @@ function newChat(mode) {
   renderHistory();
   focusInput();
 }
-function switchChat(id) {
+async function switchChat(id) {
   const c = state.chats.find((x) => x.id === id);
   if (!c || c.mode !== state.mode) return; // 只允许打开当前模式的对话
+  await ensureChatLoaded(id); // 懒加载：首次打开才拉正文
   state.chatId = id;
   state.messages = (c.messages || []).slice();
   state.chatIdByMode[state.mode] = id;
@@ -406,15 +451,73 @@ function ensureChat(firstText) {
 }
 
 /* ================= 消息渲染 ================= */
+/* ================= 欢迎界面（空对话时） =================
+    原来只是一条「你好我是逻敏」的气泡，打开就是个对话框，缺个像样的门面。
+    这里做成标准 AI 应用的欢迎页：品牌 + 能力介绍 + 可点的示例提示 + 常用入口。
+    模式不同，介绍与示例随之切换（复用 MODES 里的 prompts）。 */
+const WELCOME_ICONS = { free: '💬', prep: '🎯', review: '🔍', judge: '⚖️' };
+
+/* 顶部大问候语：按时段问候 + 一句引导，简短、字号大、居中 */
+function welcomeGreeting() {
+  const h = new Date().getHours();
+  const when = h < 5 ? '夜深了' : h < 11 ? '早上好' : h < 14 ? '中午好' : h < 18 ? '下午好' : '晚上好';
+  return when + '，今天想辩点什么？';
+}
+
+function renderWelcome() {
+  const modeT = modeMeta[state.mode] || {};
+  const wrap = el('div', 'welcome');
+
+  // 1) 顶部：一句大字号问候语（居中）
+  const head = el('div', 'welcome-head', '');
+  head.appendChild(el('h1', 'welcome-greet', welcomeGreeting()));
+  wrap.appendChild(head);
+
+  // 2) 当前模式说明
+  const modeBox = el('div', 'welcome-mode', '');
+  modeBox.appendChild(el('span', 'wm-icon', WELCOME_ICONS[state.mode] || '💬'));
+  const mt = el('div', 'wm-text', '');
+  mt.appendChild(el('div', 'wm-title', (modeT.title || state.mode) + '模式'));
+  mt.appendChild(el('div', 'wm-desc', modeT.desc || ''));
+  modeBox.appendChild(mt);
+  wrap.appendChild(modeBox);
+
+  // 3) 示例提示（点一下直接填入输入框）
+  const prompts = (modeT.prompts || []).slice(0, 4);
+  if (prompts.length) {
+    wrap.appendChild(el('div', 'welcome-sec', '试试这样问'));
+    const grid = el('div', 'welcome-prompts', '');
+    for (const p of prompts) {
+      const b = el('button', 'welcome-prompt', p);
+      b.type = 'button';
+      b.title = '点击填入输入框';
+      b.onclick = () => {
+        const input = $('#input');
+        if (input) {
+          input.value = p;
+          input.focus();
+          try { updateCharCount(); } catch (_) {}
+        }
+      };
+      grid.appendChild(b);
+    }
+    wrap.appendChild(grid);
+  }
+
+  // 5) 底部提示
+  const foot = el('div', 'welcome-foot', '');
+  foot.innerHTML = '<span>本模式是<b>独立</b>的对话空间，切换模式不会把这段对话带过去。</span>'
+    + '<span class="wf-hint">Ctrl + Enter 发送</span>';
+  wrap.appendChild(foot);
+  return wrap;
+}
+
 function renderMessages() {
   resetSmoothStream();
   const box = $('#messages');
   box.innerHTML = '';
   if (!state.messages.length) {
-    const modeT = modeMeta[state.mode] || {};
-    const empty = el('div', 'msg assistant');
-    empty.innerHTML = '<div class="avatar">🎓</div><div class="bubble"><div class="md"><p>你好，我是<b>逻敏</b>。当前在<b>' + (modeT.title || state.mode) + '</b>模式：' + (modeT.desc || '') + '</p><p>这是该模式<b>独立</b>的对话空间，切换模式不会把这段对话带过去。把辩题、比赛文字稿或任何辩论问题发给我即可。</p></div></div>';
-    box.appendChild(empty);
+    box.appendChild(renderWelcome());
     renderUsageSummary();
     return;
   }
@@ -715,13 +818,77 @@ let _smTicking = false;
 let _smLastCost = 0;      // 上次 mdToHtml 耗时，用于自适应降频
 let _smSkipUntil = 0;
 
-function pushStreamText(idx, fullText) {
+/* ---- 按真实时序回放 ----
+   内核 0.1.5 不再逐字写增量：整段文本在 step 结束时才落盘，但会附带
+   dt[]（每个字块的真实生成间隔，毫秒）。把它换算成「每个字块应在何时出现」，
+   再按绝对时间轴播放，观感就等同真实流式（而不是固定速度的假打字机）。
+   没有 dt（旧内核/普通流式）时自动退回原来的追赶式平滑。 */
+let _smTimeline = null;   // { chars: [...], at: [...], startedAt, cursor }
+function buildReplayTimeline(text, dt, time0, texts) {
+  const t = String(text || '');
+  if (!t) return null;
+  if (!Array.isArray(dt) || !dt.length) return null;
+  const chars = Array.from(t);
+  const n = chars.length;
+  const at = new Array(n);
+  let acc = 0;
+  /* 优先按内核给的 texts[] 逐块摊（每块的真实间隔是 dt[i]），这样
+     「打钉子」这类多字块会在同一时刻整体出现，节奏与真实生成一致；
+     拿不到 texts 时才退回按字符数均分。 */
+  if (Array.isArray(texts) && texts.length && texts.join('') === t) {
+    let ci = 0;
+    for (let i = 0; i < texts.length && ci < n; i++) {
+      acc += Number(dt[i]) || 0;
+      const blockLen = Array.from(String(texts[i])).length;
+      for (let k = 0; k < blockLen && ci < n; k++) at[ci++] = acc;
+    }
+    // 余下字符（dt 比 texts 短时）沿用最后时刻
+    while (ci < n) at[ci++] = acc;
+  } else {
+    const step = Math.max(1, Math.ceil(n / dt.length));
+    for (let i = 0; i < n; i++) {
+      const di = Math.min(dt.length - 1, Math.floor(i / step));
+      acc += Number(dt[di]) || 0;
+      at[i] = acc;
+    }
+  }
+  return { chars, at, total: acc || 0, startedAt: performance.now(), cursor: 0 };
+}
+
+function pushStreamText(idx, fullText, dt, time0, texts) {
   _smIdx = idx;
   const t = String(fullText || '');
+  // 新一段到达：若带真实时序，则以它为准重建时间轴（每段独立播放）
+  if (Array.isArray(dt) && dt.length) {
+    const tl = buildReplayTimeline(t, dt, time0, texts);
+    if (tl) { _smTimeline = tl; _smShown = ''; _smBuf = ''; if (!_smTicking) { _smTicking = true; requestAnimationFrame(replayTick); } return; }
+  }
+  _smTimeline = null;
   // 增量入缓冲（处理回退/重置场景）
   if (!t.startsWith(_smShown)) { _smShown = ''; _smBuf = t; }
   else { _smBuf = t.slice(_smShown.length); }
   if (!_smTicking) { _smTicking = true; requestAnimationFrame(smoothTick); }
+}
+
+/* 按真实时间轴推进：每次把「此刻应已出现」的字符补上 */
+function replayTick() {
+  const tl = _smTimeline;
+  if (!tl) { _smTicking = false; return; }
+  const elapsed = performance.now() - tl.startedAt;
+  while (tl.cursor < tl.chars.length && tl.at[tl.cursor] <= elapsed) tl.cursor++;
+  if (tl.cursor > _smShown.length) {
+    _smShown = tl.chars.slice(0, tl.cursor).join('');
+    renderStreamNow();
+  }
+  if (tl.cursor < tl.chars.length) {
+    requestAnimationFrame(replayTick);
+  } else {
+    _smShown = tl.chars.join('');
+    _smBuf = '';
+    _smTimeline = null;
+    _smTicking = false;
+    renderStreamNow();
+  }
 }
 
 function smoothTick() {
@@ -768,6 +935,7 @@ function resetSmoothStream() {
   _smIdx = -1;
   _smTicking = false;
   _smSkipUntil = 0;
+  _smTimeline = null;
 }
 
 /* 思考过程：直接节流渲染（不需要打字机，通常默认折叠） */
@@ -810,7 +978,7 @@ function updateRunningMessage(patch) {
           bubble.insertBefore(md, status || null);
         }
       }
-      if (md) pushStreamText(idx, state.messages[idx].streamText || '');
+      if (md) pushStreamText(idx, state.messages[idx].streamText || '', patch.dt, patch.time0, patch.texts);
     }
     if (patch.tools !== undefined) {
       let box = document.getElementById('toolsBox' + idx);
@@ -1171,22 +1339,35 @@ function renderHistory() {
     const item = el('button', 'history-item' + (c.id === state.chatId ? ' active' : ''), '');
     const t = el('span', 'h-title', c.title || '未命名');
     item.appendChild(t);
+    // 操作按钮整组包进 .history-ops：平时隐藏，hover 到该条才出现（见 style.css）
+    const ops = el('span', 'history-ops', '');
     // 重命名按钮（单击标题会切换对话，双击不可靠，改用显式按钮）
     const edit = el('span', 'history-edit', '✎');
     edit.title = '重命名';
     edit.onclick = (e) => { e.stopPropagation(); e.preventDefault(); startRenameChat(c.id, t); };
-    item.appendChild(edit);
+    ops.appendChild(edit);
     const del = el('span', 'history-del', '×');
     del.title = '删除';
     del.onclick = (e) => {
       e.stopPropagation();
+      e.preventDefault();
+      // 正文可能是懒加载的（_loaded=false），此时 messages 为空数组，数出来的 0 会误导用户
+      const msgCount = Array.isArray(c.messages) ? c.messages.length : 0;
+      const countKnown = c._loaded !== false;
+      const tip = '删除对话「' + (c.title || '未命名') + '」？' +
+        (countKnown && msgCount ? ('\n\n共 ' + msgCount + ' 条消息，删除后不可恢复。') : '\n\n删除后不可恢复。');
+      if (!window.confirm(tip)) return;
       state.chats = state.chats.filter((x) => x.id !== c.id);
+      savedStamps.delete(c.id);
+      try { fetchJSON('/api/chats/' + encodeURIComponent(c.id), { method: 'DELETE' }).catch(() => {}); } catch (_) {}
       if (state.chatId === c.id) newChat(state.mode);
       if (state.chatIdByMode[state.mode] === c.id) state.chatIdByMode[state.mode] = null;
       saveChats();
       renderHistory();
+      toast('已删除对话「' + (c.title || '未命名') + '」');
     };
-    item.appendChild(del);
+    ops.appendChild(del);
+    item.appendChild(ops);
     item.onclick = () => switchChat(c.id);
     box.appendChild(item);
   }
@@ -1317,6 +1498,12 @@ function renderHistorySearch() {
   const kw = historyQuery.trim();
   box.innerHTML = '';
   if (!kw) { renderHistory(); return; }
+  // 搜索要扫全部正文：懒加载未取回的对话先补齐一次，再重新渲染结果
+  if ((state.chats || []).some((c) => c._loaded === false)) {
+    box.appendChild(el('div', 'search-hits-head', '正在载入全部对话…'));
+    hydrateAllChats().then(() => { if (historyQuery.trim() === kw) renderHistorySearch(); }).catch(() => {});
+    return;
+  }
   const hits = searchChats(kw);
   const head = el('div', 'search-hits-head', hits.length ? ('找到 ' + hits.length + ' 条匹配（全部模式）') : '没有匹配的内容');
   box.appendChild(head);
@@ -1975,7 +2162,8 @@ function startTurn(text) {
       else if (data.stage === 'running') lastStatus = 'Agent 工作中… 已运行 ' + fmtElapsed(data.elapsedMs || 0);
     } else if (event === 'delta') {
       streamed += (data.text || '');
-      updateRunningMessage({ streamText: streamed, statusText: lastStatus });
+      // 带 dt 时按真实时序回放（内核整段落盘，dt 是事后补记的真实间隔）
+      updateRunningMessage({ streamText: streamed, statusText: lastStatus, dt: data.dt, texts: data.texts, time0: data.time0 });
     } else if (event === 'reasoning') {
       const m = runningMsg();
       if (m) {
@@ -2038,6 +2226,8 @@ function startTurn(text) {
       renderStatus();
       toast('已完成 · 用时 ' + fmtElapsed(Date.now() - startedAt));
       try { maybeAutoTitle(); } catch (_) {}
+      // 备赛/复盘/评判：一轮跑完就把这场对话归档到识别出的辩题下
+      try { if (state.mode === 'prep' || state.mode === 'review' || state.mode === 'judge') caseAutoArchive(currentChat()); } catch (_) {}
     } else if (event === 'error') {
       const m = runningMsg();
       if (m) {
@@ -2496,6 +2686,14 @@ function renderDeliverList() {
     if (it.textType && /md|markdown|txt/.test(it.ext)) { const bW=el('button','btn ghost small','转 Word'); bW.type='button'; bW.onclick=()=>deliverConvert(it,'docx'); acts.appendChild(bW); }
     if (it.ext==='csv') { const bX=el('button','btn ghost small','转 Excel'); bX.type='button'; bX.onclick=()=>deliverConvert(it,'xlsx'); acts.appendChild(bX); }
     if (it.textType) { const bP=el('button','btn ghost small','存 PDF'); bP.type='button'; bP.onclick=()=>deliverPdf(it); acts.appendChild(bP); }
+    // 文本类产物可一键送进资料库（引用式：不复制内容，永远读最新版）
+    if (it.textType && ['md','markdown','txt','csv','srt','log','json','html'].includes(String(it.ext).toLowerCase())) {
+      const bLib = el('button','btn ghost small','📚 存入资料库');
+      bLib.type='button';
+      bLib.title = '存为资料库条目（引用式，跟随这份产物更新）；之后备赛/复盘会自动召回';
+      bLib.onclick=()=>deliverToLibrary(it);
+      acts.appendChild(bLib);
+    }
     const bOpen = el('button','btn ghost small','所在文件夹'); bOpen.type='button'; bOpen.onclick=()=>deliverOpenFolder(it.name); acts.appendChild(bOpen);
     const bDel = el('button','btn ghost small danger','删除'); bDel.type='button'; bDel.onclick=()=>deliverDelete(it.name); acts.appendChild(bDel);
     card.appendChild(acts);
@@ -2578,6 +2776,20 @@ async function deliverOpenFolder(name) {
   if (!ae || !ae.showInFolder) { toast('浏览器模式下无法打开文件夹'); return; }
   await ae.showDeliverFolder(name);
 }
+/* 产物 → 资料库：引用式。存的是「指向这份产物的指针」，
+   所以产物后续修改会自动反映到召回里，不会出现两份不同步的副本。 */
+async function deliverToLibrary(it) {
+  if (!it || !it.name) return;
+  try {
+    const r = await libApi('/api/library/from-deliverable', { name: it.name });
+    if (r && r.ok) {
+      if (r.duplicated) toast('这份产物已经在资料库里了');
+      else toast('已存入资料库：' + r.item.name + '（引用式，跟随原件更新）');
+    } else {
+      toast('入库失败：' + ((r && r.error) || '未知错误'));
+    }
+  } catch (e) { toast('入库失败：' + e.message); }
+}
 async function deliverDelete(name) {
   if (!window.confirm('删除产物「' + name + '」？')) return;
   const r = await libApi('/api/deliverables/delete', { name });
@@ -2596,19 +2808,197 @@ function bindDeliverables() {
       renderDeliverList();
     };
   });
-  // 文件 / 收藏 双 tab
+  // 文件 / 辩题 / 收藏 三 tab
   document.querySelectorAll('.deliver-tab').forEach((t) => {
-    t.onclick = () => {
-      deliverState.tab = t.dataset.dtab || 'files';
-      document.querySelectorAll('.deliver-tab').forEach((x) => x.classList.toggle('active', x === t));
-      $('#deliverFilesPane').classList.toggle('hidden', deliverState.tab !== 'files');
-      $('#deliverStarsPane').classList.toggle('hidden', deliverState.tab !== 'stars');
-      if (deliverState.tab === 'stars') renderDeliverStars();
-    };
+    t.onclick = () => switchDeliverTab(t.dataset.dtab || 'files');
   });
+  bindCases();
   const folder = $('#btnDeliverFolder');
   if (folder) folder.onclick = () => { const ae=window.academyElectron; if (ae && ae.showDeliverFolder) ae.showDeliverFolder(); else toast('浏览器模式不可用'); };
   const close = $('#btnDeliverPreviewClose'); if (close) close.onclick = () => $('#deliverPreview').classList.add('hidden');
+
+
+/* ================= 辩题档案夹（产物空间 → 🗂 辩题） =================
+   索引在服务端（data/cases.json），这里只负责渲染与操作。 */
+const caseState = { items: [], search: '', loading: false };
+
+async function loadCases() {
+  if (caseState.loading) return;
+  caseState.loading = true;
+  try {
+    const r = await fetchJSON('/api/cases');
+    caseState.items = (r && r.cases) || [];
+  } catch (_) { caseState.items = []; }
+  caseState.loading = false;
+  renderCases();
+}
+
+function renderCases() {
+  const box = $('#caseList');
+  if (!box) return;
+  box.innerHTML = '';
+  const q = caseState.search.trim().toLowerCase();
+  const items = caseState.items.filter((c) => !q || String(c.motion || '').toLowerCase().includes(q));
+  const meta = $('#caseMeta');
+  if (meta) meta.textContent = items.length ? ('共 ' + items.length + ' 个辩题') : '';
+  if (!items.length) {
+    box.appendChild(el('div', 'skill-empty', q ? '没有匹配的辩题。' : '还没有辩题档案。备赛时写明辩题，Agent 会自动归档；也可以点「＋ 新建辩题」手动建。'));
+    return;
+  }
+  for (const c of items) {
+    const card = el('div', 'case-card', '');
+    const head = el('div', 'case-card-head', '');
+    const titleBox = el('div', 'case-card-title', '');
+    titleBox.appendChild(el('span', 'case-motion', c.motion || '（未命名辩题）'));
+    if (c.side) titleBox.appendChild(el('span', 'case-side', c.side));
+    head.appendChild(titleBox);
+    const ops = el('div', 'case-card-ops', '');
+    const bOpen = el('button', 'btn ghost small', '打开对话');
+    bOpen.title = '跳到这个辩题下最近的一次对话';
+    bOpen.onclick = () => caseOpenChat(c);
+    ops.appendChild(bOpen);
+    const bEdit = el('button', 'btn ghost small', '改名');
+    bEdit.onclick = () => caseRename(c);
+    ops.appendChild(bEdit);
+    const bDel = el('button', 'btn ghost small danger', '删除');
+    bDel.title = '只删除这条辩题索引，对话和产物文件都会保留';
+    bDel.onclick = () => caseRemove(c);
+    ops.appendChild(bDel);
+    head.appendChild(ops);
+    card.appendChild(head);
+
+    const sub = el('div', 'case-card-meta', '');
+    sub.textContent = c.chats.length + ' 次对话 · ' + c.deliverables.length + ' 份产物 · 更新于 ' + caseFmtTime(c.updated);
+    card.appendChild(sub);
+
+    if (c.chats.length) {
+      const ul = el('div', 'case-sub-list', '');
+      for (const ch of c.chats.slice(0, 6)) {
+        const row = el('button', 'case-sub-item', '');
+        row.appendChild(el('span', 'case-sub-title', ch.title || '未命名'));
+        if (ch.mode) row.appendChild(el('span', 'case-sub-mode', (MODES[ch.mode] || {}).title || ch.mode));
+        if (String(ch.title).indexOf('（对话已删除）') === -1) row.onclick = () => caseOpenChatById(c, ch.id);
+        else row.classList.add('disabled');
+        ul.appendChild(row);
+      }
+      if (c.chats.length > 6) ul.appendChild(el('div', 'case-sub-more', '…还有 ' + (c.chats.length - 6) + ' 次对话'));
+      card.appendChild(ul);
+    }
+    if (c.deliverables.length) {
+      const dl = el('div', 'case-sub-list', '');
+      for (const nm of c.deliverables.slice(0, 8)) {
+        const row = el('button', 'case-sub-item', '');
+        row.appendChild(el('span', 'case-sub-title', '📄 ' + nm));
+        row.onclick = () => { deliverState.tab = 'files'; switchDeliverTab('files'); deliverPreview({ name: nm }); };
+        dl.appendChild(row);
+      }
+      card.appendChild(dl);
+    }
+    box.appendChild(card);
+  }
+}
+
+function caseFmtTime(ts) {
+  if (!ts) return '—';
+  const d = new Date(ts);
+  const p = (x) => String(x).padStart(2, '0');
+  return d.getFullYear() + '-' + p(d.getMonth() + 1) + '-' + p(d.getDate()) + ' ' + p(d.getHours()) + ':' + p(d.getMinutes());
+}
+
+/* 跳到辩题下的对话：跨模式自动切（对话按模式隔离，必须先切模式） */
+async function caseOpenChatById(c, chatId) {
+  const target = c.chats.find((x) => x.id === chatId);
+  if (!target) { toast('找不到这个对话'); return; }
+  if (target.mode && target.mode !== state.mode) switchMode(target.mode);
+  const exists = state.chats.some((x) => x.id === chatId);
+  if (!exists) { toast('这个对话已不在本机'); return; }
+  await switchChat(chatId);
+  $('#deliverModal').classList.add('hidden');
+}
+async function caseOpenChat(c) {
+  const alive = (c.chats || []).filter((x) => String(x.title).indexOf('（对话已删除）') === -1);
+  if (!alive.length) { toast('这个辩题下没有可打开的对话'); return; }
+  // 最近更新的排前面：索引里 chats 是按挂载顺序，这里用列表顺序兜底
+  await caseOpenChatById(c, alive[0].id);
+}
+
+async function caseRename(c) {
+  const v = window.prompt('辩题名称：', c.motion || '');
+  if (v === null) return;
+  const motion = v.trim();
+  if (!motion) { toast('辩题名称不能为空'); return; }
+  const side = window.prompt('持方（可留空）：', c.side || '');
+  try {
+    const r = await libApi('/api/cases/update', { id: c.id, motion, side: side === null ? c.side : side.trim() });
+    if (r && r.ok) { toast('已更新'); loadCases(); }
+    else toast('更新失败：' + ((r && r.error) || '未知错误'));
+  } catch (e) { toast('更新失败：' + e.message); }
+}
+
+async function caseRemove(c) {
+  if (!window.confirm('删除辩题「' + (c.motion || '未命名') + '」？\n\n只删除这条归档索引，你的对话记录和产物文件都会保留。')) return;
+  try {
+    const r = await libApi('/api/cases/delete', { id: c.id });
+    if (r && r.ok) { toast('已删除辩题归档'); loadCases(); }
+    else toast('删除失败：' + ((r && r.error) || '未知错误'));
+  } catch (e) { toast('删除失败：' + e.message); }
+}
+
+async function caseCreate() {
+  const motionEl = $('#caseNewMotion');
+  const sideEl = $('#caseNewSide');
+  const motion = (motionEl && motionEl.value || '').trim();
+  if (!motion) { toast('先填上辩题'); return; }
+  try {
+    // 当前对话也一起挂上去：新建辩题通常就是为眼前这场备赛
+    const r = await libApi('/api/cases/attach', { motion, side: (sideEl && sideEl.value || '').trim(), chatId: state.chatId || '' });
+    if (r && r.ok) {
+      toast('已创建辩题档案');
+      if (motionEl) motionEl.value = '';
+      if (sideEl) sideEl.value = '';
+      $('#caseNewForm').classList.add('hidden');
+      loadCases();
+    } else toast('创建失败：' + ((r && r.error) || '未知错误'));
+  } catch (e) { toast('创建失败：' + e.message); }
+}
+
+/* 备赛/复盘/评判对话跑完一轮后，自动把当前对话归档到识别出的辩题下 */
+let _caseAutoDone = {};
+async function caseAutoArchive(chat) {
+  if (!chat || !chat.id || _caseAutoDone[chat.id]) return;
+  const firstUser = (chat.messages || []).find((m) => m.role === 'user');
+  if (!firstUser || !firstUser.text) return;
+  try {
+    const g = await libApi('/api/cases/guess', { text: firstUser.text });
+    if (!g || !g.ok || !g.motion) return;
+    _caseAutoDone[chat.id] = true;
+    await libApi('/api/cases/attach', { motion: g.motion, chatId: chat.id });
+  } catch (_) {}
+}
+
+function bindCases() {
+  const srch = $('#caseSearch');
+  if (srch) srch.oninput = () => { caseState.search = srch.value; renderCases(); };
+  const bNew = $('#btnCaseNew');
+  if (bNew) bNew.onclick = () => { const f = $('#caseNewForm'); f.classList.toggle('hidden'); if (!f.classList.contains('hidden')) $('#caseNewMotion').focus(); };
+  const bCancel = $('#btnCaseNewCancel');
+  if (bCancel) bCancel.onclick = () => $('#caseNewForm').classList.add('hidden');
+  const bSave = $('#btnCaseNewSave');
+  if (bSave) bSave.onclick = caseCreate;
+  const bRef = $('#btnCaseRefresh');
+  if (bRef) bRef.onclick = loadCases;
+}
+
+/* 切 tab（供外部调用，如从辩题卡点产物名跳回文件页） */
+function switchDeliverTab(tab) {
+  deliverState.tab = tab || 'files';
+  document.querySelectorAll('.deliver-tab').forEach((x) => x.classList.toggle('active', x.dataset.dtab === deliverState.tab));
+  const f = $('#deliverFilesPane'); if (f) f.classList.toggle('hidden', deliverState.tab !== 'files');
+  const c = $('#deliverCasesPane'); if (c) c.classList.toggle('hidden', deliverState.tab !== 'cases');
+  const s = $('#deliverStarsPane'); if (s) s.classList.toggle('hidden', deliverState.tab !== 'stars');
+  if (deliverState.tab === 'stars') renderDeliverStars();
+  if (deliverState.tab === 'cases') loadCases();
+}
 }
 
 /* ================= 扩展工具：文档处理开关 ================= */
@@ -2622,6 +3012,175 @@ async function loadExtToolsToggle() {
     $('#extendedToolsLabel').textContent = extToolsLabel(on);
   } catch (_) {}
 }
+/* ================= 自定义搜索服务（设置 → 高级） =================
+   背景：内置「基础检索」是免费抓取网页，部分网络下会被反爬返回无关结果。
+   这里让用户接入自己可用的搜索服务（Tavily / SearXNG / Brave / 自建），
+   接入后「基础检索」优先走它。做成开放适配器：填地址模板 + 字段路径，
+   任何返回 JSON 的服务都能接。 */
+let csState = { enabled: false, method: 'GET', presets: [], hasKey: false };
+
+function csField(id) { const el = document.getElementById(id); return el ? el.value : ''; }
+function csSet(id, v) { const el = document.getElementById(id); if (el) el.value = v == null ? '' : String(v); }
+
+function renderCsEnabled() {
+  const t = document.getElementById('customSearchToggle');
+  const lab = document.getElementById('customSearchLabel');
+  const form = document.getElementById('customSearchForm');
+  const on = !!(t && t.checked);
+  if (lab) lab.textContent = on ? '开' : '关（默认）';
+  if (form) form.classList.toggle('hidden', !on);
+  if (t) t.dataset.dirty = '1';
+}
+
+function csApplyMethod(m) {
+  csState.method = m === 'POST' ? 'POST' : 'GET';
+  document.querySelectorAll('#csMethodChoices .gen-choice').forEach(function (b) {
+    b.classList.toggle('active', b.dataset.csMethod === csState.method);
+  });
+  const bodyField = document.getElementById('csBodyField');
+  if (bodyField) bodyField.classList.toggle('hidden', csState.method !== 'POST');
+}
+
+function csApplyPreset(id) {
+  const p = (csState.presets || []).find(function (x) { return x.id === id; });
+  const note = document.getElementById('customSearchPresetNote');
+  if (!p) { if (note) note.textContent = ''; return; }
+  // 只填「格式」，Key 不动（用户可能已经填过）
+  csSet('csUrl', p.urlTemplate);
+  csSet('csHeaders', p.headers);
+  csSet('csBody', p.bodyTemplate);
+  csSet('csResultsPath', p.resultsPath);
+  csSet('csTitlePath', p.titlePath);
+  csSet('csUrlPath', p.urlPath);
+  csSet('csSnippetPath', p.snippetPath);
+  if (!csField('csName').trim()) csSet('csName', p.name);
+  csApplyMethod(p.method);
+  if (note) {
+    note.innerHTML = (p.note ? esc(p.note) : '')
+      + (p.signup ? '　<a href="' + esc(p.signup) + '" target="_blank" rel="noopener">去注册 / 查看文档 ↗</a>' : '');
+  }
+}
+
+function csCollect() {
+  return {
+    enabled: !!(document.getElementById('customSearchToggle') || {}).checked,
+    name: csField('csName'),
+    urlTemplate: csField('csUrl'),
+    method: csState.method,
+    headers: csField('csHeaders'),
+    bodyTemplate: csField('csBody'),
+    apiKey: csField('csApiKey'),
+    resultsPath: csField('csResultsPath'),
+    titlePath: csField('csTitlePath'),
+    urlPath: csField('csUrlPath'),
+    snippetPath: csField('csSnippetPath'),
+  };
+}
+
+async function loadCustomSearchUI() {
+  try {
+    const r = await fetchJSON('/api/search/custom');
+    if (!r || !r.ok) return;
+    csState.presets = r.presets || [];
+    csState.hasKey = !!(r.config && r.config.hasKey);
+    const c = r.config || {};
+    const sel = document.getElementById('customSearchPreset');
+    if (sel) {
+      sel.innerHTML = '<option value="">— 请选择 —</option>'
+        + csState.presets.map(function (p) { return '<option value="' + esc(p.id) + '">' + esc(p.name) + '</option>'; }).join('');
+    }
+    const t = document.getElementById('customSearchToggle');
+    if (t) t.checked = !!c.enabled;
+    csSet('csName', c.name);
+    csSet('csUrl', c.urlTemplate);
+    csSet('csHeaders', c.headers);
+    csSet('csBody', c.bodyTemplate);
+    csSet('csResultsPath', c.resultsPath);
+    csSet('csTitlePath', c.titlePath);
+    csSet('csUrlPath', c.urlPath);
+    csSet('csSnippetPath', c.snippetPath);
+    const kh = document.getElementById('csKeyHint');
+    if (kh) {
+      kh.innerHTML = csState.hasKey
+        ? '已保存 Key（留空表示不修改）。请求头里用 <code>{apiKey}</code> 引用。'
+        : '保存在本机 <code>data/config.json</code>。请求头里用 <code>{apiKey}</code> 引用，没写的话会自动加 <code>Authorization: Bearer</code>。';
+    }
+    csApplyMethod(c.method || 'GET');
+    renderCsEnabled();
+  } catch (_) {}
+}
+
+async function saveCustomSearch() {
+  const out = document.getElementById('customSearchResult');
+  const c = csCollect();
+  if (c.enabled && !String(c.urlTemplate || '').trim()) {
+    if (out) { out.textContent = '❌ 启用时必须填「请求地址模板」'; out.className = 'settings-result err'; }
+    return;
+  }
+  try {
+    const r = await fetchJSON('/api/search/custom', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(c),
+    });
+    if (!r || !r.ok) throw new Error((r && r.error) || '保存失败');
+    csState.hasKey = !!(r.config && r.config.hasKey);
+    csSet('csApiKey', '');
+    if (out) {
+      out.textContent = '✅ 已保存' + (c.enabled ? '（已启用，下次搜索生效）' : '（未启用）');
+      out.className = 'settings-result ok';
+    }
+  } catch (e) {
+    if (out) { out.textContent = '❌ ' + (e.message || '保存失败'); out.className = 'settings-result err'; }
+  }
+}
+
+async function testCustomSearch() {
+  const out = document.getElementById('customSearchResult');
+  const btn = document.getElementById('btnCustomSearchTest');
+  const c = csCollect();
+  if (!String(c.urlTemplate || '').trim()) {
+    if (out) { out.textContent = '❌ 先填「请求地址模板」再测试'; out.className = 'settings-result err'; }
+    return;
+  }
+  if (btn) { btn.disabled = true; btn.textContent = '测试中…'; }
+  if (out) { out.textContent = '正在用「辩论」试搜一次…'; out.className = 'settings-result'; }
+  try {
+    const r = await fetchJSON('/api/search/custom/test', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ query: '辩论', config: c }),
+    });
+    if (r && r.ok) {
+      const s = (r.samples || [])[0];
+      if (out) {
+        out.innerHTML = '✅ 成功：' + r.count + ' 条结果，用时 ' + r.elapsedMs + 'ms'
+          + (s ? '<br><span style="color:var(--muted)">样例：' + esc(String(s.title || s.url).slice(0, 60)) + '</span>' : '');
+        out.className = 'settings-result ok';
+      }
+    } else {
+      if (out) { out.textContent = '❌ ' + ((r && r.error) || '测试失败'); out.className = 'settings-result err'; }
+    }
+  } catch (e) {
+    if (out) { out.textContent = '❌ ' + (e.message || '测试失败'); out.className = 'settings-result err'; }
+  } finally {
+    if (btn) { btn.disabled = false; btn.textContent = '🔌 测试一下'; }
+  }
+}
+
+function bindCustomSearch() {
+  const t = document.getElementById('customSearchToggle');
+  if (t) t.onchange = renderCsEnabled;
+  document.querySelectorAll('#csMethodChoices .gen-choice').forEach(function (b) {
+    b.onclick = function () { csApplyMethod(b.dataset.csMethod); };
+  });
+  const sel = document.getElementById('customSearchPreset');
+  if (sel) sel.onchange = function () { csApplyPreset(sel.value); };
+  const bs = document.getElementById('btnCustomSearchSave');
+  if (bs) bs.onclick = saveCustomSearch;
+  const bt = document.getElementById('btnCustomSearchTest');
+  if (bt) bt.onclick = testCustomSearch;
+  loadCustomSearchUI();
+}
+
 async function saveExtToolsToggle() {
   const t = $('#extendedToolsToggle'); if (!t) return;
   const want = t.checked;
@@ -2917,6 +3476,50 @@ function openMemoryNew(scope) {
   };
 }
 
+/* —— 记忆中心全文搜索（长期 + 流水一并通过服务端 FTS 索引检索） —— */
+async function memorySearchRun() {
+  const inp = $('#memorySearchInput');
+  const panel = $('#memorySearchPanel');
+  const q = (inp ? inp.value : '').trim();
+  if (!panel) return;
+  if (!q) { toast('先输入要搜索的关键词'); return; }
+  // 显示搜索结果面板，取消 Tab 高亮；切回任意 Tab 即恢复原视图
+  document.querySelectorAll('.memory-tab').forEach((x) => x.classList.remove('active'));
+  document.querySelectorAll('.memory-panel').forEach((p) => p.classList.toggle('active', p.id === 'memorySearchPanel'));
+  panel.innerHTML = '<div class="mem-empty">搜索中…</div>';
+  try {
+    const r = await fetchJSON('/api/memory/search?q=' + encodeURIComponent(q));
+    if (!r || !r.ok) throw new Error((r && r.error) || '搜索失败');
+    const hits = r.results || [];
+    panel.innerHTML = '';
+    const tip = el('div', 'mem-day-head');
+    tip.appendChild(el('span', null, '🔎 「' + q + '」命中 ' + hits.length + ' 条'));
+    panel.appendChild(tip);
+    if (!hits.length) {
+      panel.appendChild(el('div', 'mem-empty', '没有找到相关记忆。试试换更短的关键词，比如「判准」「质询」。'));
+      return;
+    }
+    for (const h of hits) {
+      const card = el('div', 'mem-entry');
+      const head = el('div', 'mem-entry-head');
+      const t = el('div', 'mem-entry-title', String(h.title || '（未命名）').replace(/^#+\s*/, ''));
+      t.appendChild(el('span', 'mem-entry-time', (h.scope === 'long' ? '📚 长期' : '🗓 ' + (h.file || '')) + (h.time ? ' · ' + String(h.time).slice(0, 16) : '')));
+      head.appendChild(t);
+      card.appendChild(head);
+      card.appendChild(el('div', 'mem-entry-body', h.body || '（无内容）'));
+      panel.appendChild(card);
+    }
+  } catch (e) {
+    panel.innerHTML = '<div class="mem-empty">搜索失败：' + esc(e.message || '') + '</div>';
+  }
+}
+function bindMemorySearchUI() {
+  const b = $('#btnMemorySearch');
+  if (b) b.onclick = memorySearchRun;
+  const inp = $('#memorySearchInput');
+  if (inp) inp.onkeydown = (e) => { if (e.key === 'Enter') { e.preventDefault(); memorySearchRun(); } };
+}
+
 function renderMemoryViews(j) {
   const stats = j.stats || { longCount: 0, dailyCount: 0, dailyFiles: 0, totalBytes: 0 };
   $('#memoryMeta').textContent = [
@@ -2942,7 +3545,7 @@ function renderMemoryViews(j) {
   dailyPanel.appendChild(memPanelBar('daily', '＋ 新增今日流水'));
   const daily = j.daily || [];
   if (!daily.length) {
-    dailyPanel.appendChild(el('div', 'mem-empty', '暂无每日流水。Agent 的短期观察会归档到「当日流水」，几天后其中值得保留的会自动晋升为长期记忆；也可以点上方「＋ 新增今日流水」手动记一笔。'));
+    dailyPanel.appendChild(el('div', 'mem-empty', '暂无每日流水。Agent 的短期观察会归档到「当日流水」，其中值得保留的会自动晋升为长期记忆；14 天后未晋升的会并入月度归档（archive-月份.md），不会丢失。也可以点上方「＋ 新增今日流水」手动记一笔。'));
   } else {
     for (const d of daily) {
       const grp = el('div', 'mem-day-group');
@@ -2993,7 +3596,7 @@ async function clearMemory() {
 }
 
 /* ================= 个人资料库 ================= */
-const libState = { items: [], enabled: true, busy: false };
+const libState = { items: [], enabled: true, busy: false, filter: 'all' };
 
 async function libApi(pathname, body) {
   // 统一兜底：HTTP 错误（含 4xx）也转成 { ok:false, error }，调用处直接判 ok
@@ -3041,6 +3644,12 @@ function libItemCard(it) {
   d.appendChild(head);
   if (it.preview) d.appendChild(el('div', 'lib-item-preview', it.preview));
   const meta = el('div', 'lib-item-meta');
+  meta.appendChild(el('span', 'lib-tag cat', LIB_CATS[libCategory(it)] || '📦 其他'));
+  // 引用式条目（来自产物空间）：标出来历，原件被删时明确提示而不是静默空掉
+  if (it.kind === 'deliverable') {
+    if (it.missing) meta.appendChild(el('span', 'lib-tag warn', '⚠ 原件已删除'));
+    else meta.appendChild(el('span', 'lib-tag link', '🔗 来自产物 · 跟随更新'));
+  }
   meta.appendChild(el('span', null, '🕘 ' + fmtTime(it.addedAt)));
   if (it.hasFile) meta.appendChild(el('span', null, '· ' + fmtFileSize(it.size || 0)));
   for (const tg of (it.tags || [])) meta.appendChild(el('span', 'lib-tag', tg));
@@ -3073,13 +3682,39 @@ function libItemCard(it) {
   return d;
 }
 
+/* 资料分类（与产物空间的 chip 筛选同一套交互）：按来源类型自动归类 */
+const LIB_CATS = {
+  doc: '📝 文档', word: '📘 Word', pdf: '📕 PDF', img: '🖼 图片OCR', other: '📦 其他',
+};
+function libCategory(it) {
+  const ext = String(it.ext || '').toLowerCase();
+  if (it.kind === 'ocr' || /^(png|jpg|jpeg|bmp|tif|tiff)$/.test(ext)) return 'img';
+  if (ext === 'pdf') return 'pdf';
+  if (/^(doc|docx)$/.test(ext)) return 'word';
+  if (/^(md|markdown|txt|srt)$/.test(ext) || it.kind === 'paste') return 'doc';
+  return 'other';
+}
+
 function renderLibraryList() {
   const box = $('#libList');
   if (!box) return;
   box.innerHTML = '';
-  const items = libState.items || [];
+  const all = libState.items || [];
+  const items = libState.filter === 'all' ? all : all.filter((it) => libCategory(it) === libState.filter);
+  // 分类计数同步到 chip 上，一眼看清每类几份
+  const counts = { all: all.length };
+  for (const it of all) counts[libCategory(it)] = (counts[libCategory(it)] || 0) + 1;
+  document.querySelectorAll('#libChips .chip').forEach((c) => {
+    const k = c.dataset.lfilter || 'all';
+    const n = counts[k] || 0;
+    c.textContent = (k === 'all' ? '全部' : LIB_CATS[k]) + (n ? ' ' + n : '');
+  });
+  $('#libCount').textContent = '共 ' + all.length + ' 份' + (libState.filter !== 'all' ? ' · 当前分类 ' + items.length + ' 份' : '');
   if (!items.length) {
-    box.appendChild(el('div', 'lib-empty', '资料库还是空的。上传一份备赛包或模辩文字稿，之后备赛 / 复盘时，Agent 会自动检索并优先引用你自己的口径和数据。'));
+    const msg = all.length
+      ? '这个分类下还没有资料。上传或粘贴时会按文件类型自动归到对应分类。'
+      : '资料库还是空的。上传一份备赛包或模辩文字稿，之后备赛 / 复盘时，Agent 会自动检索并优先引用你自己的口径和数据。';
+    box.appendChild(el('div', 'lib-empty', msg));
     return;
   }
   for (const it of items) box.appendChild(libItemCard(it));
@@ -3098,26 +3733,101 @@ async function libPreview(it) {
   } catch (e) { toast('预览失败：' + e.message); }
 }
 
+/* 批量入库：支持多文件 + 整个文件夹拖入。
+   文件夹通过两次选择达成：①「选择文件」用 webkitdirectory 选文件夹；②拖放区收下 DataTransferItem
+   递归展开出的目录条目。上限 LIB_BATCH_LIMIT 份，OCR 的图片会慢一些，逐个出结果不卡界面。 */
+const LIB_BATCH_LIMIT = 100;
+const LIB_SUPPORTED_EXT = new Set(['txt', 'md', 'markdown', 'srt', 'pdf', 'docx', 'png', 'jpg', 'jpeg', 'bmp', 'tif', 'tiff']);
+
+function libExtOfName(name) {
+  const m = String(name || '').match(/\.([a-zA-Z0-9]+)$/);
+  return m ? m[1].toLowerCase() : '';
+}
+
+/* 从拖放进来的 DataTransferItem 里递归捞出所有文件（webkitGetAsEntry 才能拿到目录） */
+async function filesFromDataTransfer(dt) {
+  const out = [];
+  const items = dt && dt.items ? Array.from(dt.items) : [];
+  const entries = items
+    .map((it) => (it.webkitGetAsEntry ? it.webkitGetAsEntry() : null))
+    .filter(Boolean);
+  if (!entries.length) return Array.from((dt && dt.files) || []);
+
+  async function walk(entry, prefix) {
+    // 目录深度限制，防止整个磁盘被拖进来时卡死
+    const depth = prefix ? prefix.split('/').length : 0;
+    if (depth > 6) return;
+    if (entry.isFile) {
+      const f = await new Promise((resolve) => entry.file(resolve, () => resolve(null)));
+      if (f) out.push(f);
+      return;
+    }
+    if (!entry.isDirectory) return;
+    const reader = entry.createReader();
+    const kids = await new Promise((resolve) => {
+      const acc = [];
+      const readMore = () => reader.readEntries(
+        (batch) => { if (!batch.length) return resolve(acc); acc.push(...batch); readMore(); },
+        () => resolve(acc)
+      );
+      readMore();
+    });
+    for (const k of kids) await walk(k, prefix ? prefix + '/' + entry.name : entry.name);
+  }
+  for (const e of entries) await walk(e, '');
+  return out;
+}
+
 async function libUploadFiles(files) {
-  const list = Array.from(files || []).slice(0, 10);
+  let list = Array.from(files || []);
   if (!list.length) return;
   if (libState.busy) { toast('还有文件在入库，请稍候'); return; }
+
+  // 过滤掉不支持的类型，避免一个个传上去再被服务端拒
+  const skipped = [];
+  list = list.filter((f) => {
+    const ok = LIB_SUPPORTED_EXT.has(libExtOfName(f.name));
+    if (!ok) skipped.push(f.name);
+    return ok;
+  });
+
+  if (!list.length) {
+    toast(skipped.length ? ('没有可入库的文件（已跳过 ' + skipped.length + ' 个不支持的格式）') : '没有可入库的文件');
+    return;
+  }
+
+  const over = list.length - LIB_BATCH_LIMIT;
+  if (over > 0) {
+    list = list.slice(0, LIB_BATCH_LIMIT);
+    toast('一次最多入库 ' + LIB_BATCH_LIMIT + ' 份，本次取前 ' + LIB_BATCH_LIMIT + ' 份（还有 ' + over + ' 份请分批处理）');
+  }
+
   libState.busy = true;
   const box = $('#libUploadState');
   box.classList.remove('hidden');
-  let ok = 0, fail = 0, failMsg = '';
-  for (const file of list) {
-    box.textContent = '正在入库：' + file.name + ' …';
+  const failures = [];
+  let ok = 0;
+  for (let i = 0; i < list.length; i++) {
+    const file = list[i];
+    box.textContent = '正在入库（' + (i + 1) + '/' + list.length + '）：' + file.name + ' …';
     try {
       const b64 = await fileToBase64(file);
       const r = await libApi('/api/library/upload', { name: file.name, data: b64 });
       if (r && r.ok) ok++;
-      else { fail++; failMsg = (r && r.error) || '未知错误'; }
-    } catch (e) { fail++; failMsg = e.message; }
+      else failures.push(file.name + '：' + ((r && r.error) || '未知错误'));
+    } catch (e) {
+      failures.push(file.name + '：' + e.message);
+    }
   }
   libState.busy = false;
-  box.textContent = '入库完成：成功 ' + ok + ' 份' + (fail ? '，失败 ' + fail + ' 份（' + failMsg + '）' : '');
-  toast('入库完成：成功 ' + ok + ' 份' + (fail ? '，失败 ' + fail + ' 份' : ''));
+
+  const parts = ['成功 ' + ok + ' 份'];
+  if (failures.length) parts.push('失败 ' + failures.length + ' 份');
+  if (skipped.length) parts.push('跳过 ' + skipped.length + ' 份（格式不支持）');
+  const summary = '入库完成：' + parts.join('，');
+  box.textContent = summary + (failures.length ? '\n' + failures.slice(0, 5).join('\n') + (failures.length > 5 ? '\n…等 ' + failures.length + ' 项' : '') : '');
+  box.style.whiteSpace = 'pre-wrap';
+  toast(summary);
   await refreshLibrary();
 }
 
@@ -3206,6 +3916,14 @@ async function resetLibSynonyms() {
 function bindLibrary() {
   const btn = $('#btnLibrary');
   if (btn) btn.onclick = openLibrary;
+  // 分类筛选 chips（与产物空间同一套交互）
+  document.querySelectorAll('#libChips .chip').forEach((c) => {
+    c.onclick = () => {
+      libState.filter = c.dataset.lfilter || 'all';
+      document.querySelectorAll('#libChips .chip').forEach((x) => x.classList.toggle('active', x === c));
+      renderLibraryList();
+    };
+  });
   const pick = $('#btnLibPick');
   const input = $('#libFileInput');
   if (pick && input) pick.onclick = () => input.click();
@@ -3219,13 +3937,30 @@ function bindLibrary() {
   if (drop) {
     drop.addEventListener('dragover', (e) => { e.preventDefault(); drop.classList.add('dragover'); });
     drop.addEventListener('dragleave', () => drop.classList.remove('dragover'));
-    drop.addEventListener('drop', (e) => {
+    drop.addEventListener('drop', async (e) => {
       e.preventDefault();
       e.stopPropagation();
       drop.classList.remove('dragover');
-      const files = e.dataTransfer ? Array.from(e.dataTransfer.files || []) : [];
-      if (files.length) libUploadFiles(files);
+      if (libState.busy) { toast('还有文件在入库，请稍候'); return; }
+      boxTextSet(box, '正在读取拖入的内容…');
+      // 拖文件夹时 dataTransfer.files 只有目录本身，必须走 webkitGetAsEntry 递归展开
+      let files = [];
+      try { files = await filesFromDataTransfer(e.dataTransfer); }
+      catch (_) { files = Array.from((e.dataTransfer && e.dataTransfer.files) || []); }
+      if (!files.length) { $('#libUploadState').classList.add('hidden'); toast('没有识别到可入库的文件'); return; }
+      libUploadFiles(files);
     });
+    function boxTextSet(elm, s) { if (elm) { elm.classList.remove('hidden'); elm.textContent = s; } }
+  }
+  // 「选择文件夹」：webkitdirectory 一次拿整个目录（不支持的浏览器会退化成普通多选）
+  const pickDir = $('#btnLibPickDir');
+  const dirInput = $('#libDirInput');
+  if (pickDir && dirInput) {
+    pickDir.onclick = () => dirInput.click();
+    dirInput.onchange = () => {
+      if (dirInput.files && dirInput.files.length) libUploadFiles(dirInput.files);
+      dirInput.value = '';
+    };
   }
   const btnSynSave = $('#btnLibSynSave');
   if (btnSynSave) btnSynSave.onclick = saveLibSynonyms;
@@ -3290,8 +4025,10 @@ function fmtToken(n) {
   return String(n);
 }
 
-function renderStatsHeatmap(dayCount) {
+/* byToken=true 时格子里的值是当天 token 数（账本口径）；否则是消息数（本地兜底口径） */
+function renderStatsHeatmap(dayCount, byToken = false) {
   const box = $('#statsHeatmap');
+  if (!box) return;
   box.innerHTML = '';
   const today = new Date();
   // 从 12 周前（对齐周一）到今天
@@ -3338,23 +4075,40 @@ function renderStatsHeatmap(dayCount) {
         c.classList.add('l' + lvl);
       }
       if (cell.future) c.classList.add('future');
-      c.title = cell.key + '：' + cell.n + ' 条消息';
+      c.title = byToken ? (cell.key + '：' + fmtToken(cell.n) + ' tokens') : (cell.key + '：' + cell.n + ' 条消息');
       row.appendChild(c);
     }
     box.appendChild(row);
   }
 }
-function renderStatsCards(s) {
+/* fromLedger=true 时 s 是服务端 /api/stats 的返回；否则是本地 collectStats() 兜底 */
+function renderStatsCardsFromStats(s, isLocal) {
   const grid = $('#statsGrid');
+  if (!grid) return;
   grid.innerHTML = '';
+  const u = s.usage || s;                     // 服务端包在 usage 里，本地是扁平的
+  const input = Number(u.input) || 0;
+  const output = Number(u.output) || 0;
+  const cacheRead = Number(u.cacheRead) || 0;
+  const cacheWrite = Number(u.cacheWrite) || 0;
+  const reasoning = Number(u.reasoning) || 0;
+  const totalTok = input + output + cacheRead + cacheWrite + reasoning;
+  const hitRate = (input + cacheRead) > 0 ? (cacheRead / (input + cacheRead) * 100) : 0;
   const cards = [
-    ['💬', fmtToken(s.msgs), '总消息数'],
-    ['🗂', String(s.chats), '总对话数'],
-    ['🔢', fmtToken(s.input), '输入 Token'],
-    ['📤', fmtToken(s.output), '输出 Token'],
-    ['⚡', fmtToken(s.saved), '缓存节省 Token'],
-    ['🧩', fmtToken(s.cacheWrite), '缓存写入'],
+    ['💬', fmtToken(s.msgs != null ? s.msgs : (s.messages || 0)), '总消息数'],
+    ['🗂', String(s.chats || 0), '总对话数'],
+    ['🔢', fmtToken(input), '输入 Token'],
+    ['📤', fmtToken(output), '输出 Token'],
+    ['⚡', fmtToken(cacheRead), '缓存节省 Token'],
+    ['🎯', hitRate.toFixed(1) + '%', '缓存命中率'],
   ];
+  if (!isLocal) {
+    // 账本才有的口径：活跃天数 / 连续天数 / 总轮次 / 总消耗
+    cards.push(['🗓', String(s.activeDays || 0) + ' 天', '活跃天数']);
+    if (s.streak) cards.push(['🔥', String(s.streak) + ' 天', '连续活跃']);
+    cards.push(['🔁', fmtToken((u.turns || 0)), '对话轮次']);
+    cards.push(['📊', fmtToken(totalTok), '累计 Token']);
+  }
   for (const [ic, val, label] of cards) {
     const c = el('div', 'stats-card');
     c.appendChild(el('div', 'sc-icon', ic));
@@ -3364,11 +4118,70 @@ function renderStatsCards(s) {
   }
 }
 
+/* 统计面板：数据源是服务端 append-only 用量账本（/api/stats），
+   不再从「当前还存在的对话」里现算 —— 删掉对话不会让历史消耗凭空消失。
+   本地 collectStats() 仅作为服务不可用时的兜底。 */
+let statsCache = null;
+async function fetchStats() {
+  try {
+    const r = await fetchJSON('/api/stats');
+    if (r && r.ok) { statsCache = r; return r; }
+  } catch (_) {}
+  return null;
+}
+
 function renderStatsPane() {
-  const s = collectStats();
-  renderStatsHeatmap(s.dayCount);
-  renderStatsCards(s);
+  // 先渲染本地兜底（即时可见），拿到服务端数据再刷新为权威值
+  const local = collectStats();
+  renderStatsHeatmap(local.dayCount);
+  renderStatsCardsFromStats(local, true);
   renderStatsLegend();
+  fetchStats().then((r) => {
+    if (!r) return;
+    renderStatsCardsFromStats(r, false);
+    renderStatsHeatmapFromLedger(r.days || []);
+    renderStatsModels(r.models || []);
+    renderStatsFootnote(r);
+  });
+}
+
+/* 按账本的「按天 token」画热力图（原来是按消息数，与用量无关） */
+function renderStatsHeatmapFromLedger(days) {
+  const map = {};
+  for (const d of days) {
+    map[d.date] = (Number(d.input) || 0) + (Number(d.output) || 0) + (Number(d.cacheRead) || 0);
+  }
+  renderStatsHeatmap(map, true);
+}
+
+function renderStatsModels(models) {
+  const box = $('#statsModels');
+  if (!box) return;
+  box.innerHTML = '';
+  if (!models.length) { box.classList.add('hidden'); return; }
+  box.classList.remove('hidden');
+  const head = el('div', 'stats-subhead', '按模型');
+  box.appendChild(head);
+  for (const m of models.slice(0, 6)) {
+    const row = el('div', 'stats-model-row', '');
+    row.appendChild(el('span', 'sm-name', m.model));
+    row.appendChild(el('span', 'sm-turns', m.turns + ' 轮'));
+    row.appendChild(el('span', 'sm-val', fmtToken((Number(m.input) || 0) + (Number(m.output) || 0)) + ' tokens'));
+    box.appendChild(row);
+  }
+}
+
+function renderStatsFootnote(r) {
+  const box = $('#statsFoot');
+  if (!box) return;
+  const u = r.usage || {};
+  const saved = Number(u.cacheRead) || 0;
+  const parts = [];
+  parts.push('活跃 ' + (r.activeDays || 0) + ' 天');
+  if (r.streak) parts.push('连续 ' + r.streak + ' 天');
+  if (saved > 0) parts.push('缓存节省 ' + fmtToken(saved));
+  parts.push('账本 ' + (r.ledgerRows || 0) + ' 条（删对话不影响历史）');
+  box.textContent = parts.join(' · ');
 }
 
 /* ================= 个人数据备份（导出 / 导入） ================= */
@@ -3529,6 +4342,7 @@ function bindEvents() {
   bindSkillsUI();
   bindDeliverables();
   bindExtTools();
+  try { bindCustomSearch(); } catch (_) {}
   // 重新查看新手引导
   const btnWiz = $('#btnShowWizard');
   if (btnWiz) btnWiz.onclick = () => { $('#settingsModal').classList.add('hidden'); openWelcome(1); };
@@ -3545,7 +4359,7 @@ function bindEvents() {
       document.querySelectorAll('.memory-panel').forEach((p) => p.classList.toggle('active', p.id === ('memory' + (b.dataset.mtab === 'daily' ? 'Daily' : b.dataset.mtab === 'stats' ? 'Stats' : 'Long') + 'Panel')));
     };
   });
-  $('#btnCompact').onclick = compactContext;
+  bindMemorySearchUI();
   // Ctrl/Cmd+A：焦点在输入框/设置输入项时交给浏览器默认（只全选该框内容）；
   // 否则把全选收窄到对话内容，避免把整页 UI 的字都框进去。
   document.addEventListener('keydown', (e) => {
