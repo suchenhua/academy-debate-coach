@@ -42,7 +42,7 @@ function fail(msg) { console.error('✗ ' + msg); process.exit(1); }
 
 /* 发版前版本一致性自检：APP_VERSION 是单一来源，但 README 标题/正文、安装外壳
    AssemblyVersion 仍需手工同步。这里只做「提醒 + 可选阻断」，避免发版后
-   安装程序自称 2.0.0 而 App 里显示 2.1.0 这类不一致。
+   安装程序与 App 自称的版本号不一致。
    用 ACADEMY_STRICT_VERSION=1 可把不一致升级为打包失败。 */
 function checkVersionConsistency() {
   const serverSrc = path.join(ROOT, 'app', 'server.js');
@@ -61,7 +61,11 @@ function checkVersionConsistency() {
   const cs = path.join(ROOT, 'tools', 'sfx', 'SfxLauncher.cs');
   if (fs.existsSync(cs)) {
     const am = fs.readFileSync(cs, 'utf8').match(/AssemblyVersion\(\s*["'](\d+)\.(\d+)\.(\d+)\.(\d+)["']/);
-    if (am && !(am[2] === ver.split('.')[0] && am[3] === ver.split('.')[1] && am[4] === ver.split('.')[2])) {
+    // 捕获组是 [1]=major [2]=minor [3]=patch [4]=build，
+    // 要和 APP_VERSION 的 major.minor.patch 逐位对应（早先这里索引整体错开了一位，
+    // 结果「一致也报不一致、真不一致反而可能漏报」，等于护栏失效）
+    const want = ver.split('.');
+    if (am && !(am[1] === want[0] && am[2] === want[1] && am[3] === want[2])) {
       problems.push('SfxLauncher.cs AssemblyVersion 为 ' + am[1] + '.' + am[2] + '.' + am[3] + '.' + am[4] + '（应为 ' + ver + '.0）');
     }
   }
@@ -77,7 +81,7 @@ log('== Academy 辩论教练 · 一键打包 ==');
 if (!fs.existsSync(DSH_BIN) || !fs.existsSync(NODE)) {
   log('运行内核不完整，尝试自动补齐…');
   const setup = spawnSync(process.execPath, [path.join(ROOT, 'tools', 'setup-runtime.js')], { cwd: ROOT, stdio: 'inherit' });
-  if (setup.status !== 0) fail('运行内核补齐失败（检查 D:\\AI\\H\\ai-forum\\runtime 是否存在）');
+  if (setup.status !== 0) fail('运行内核补齐失败（用 ACADEMY_DSH_SOURCE=<已解压的 runtime 目录> 指定来源后重试）');
 }
 if (!fs.existsSync(DSH_BIN)) fail('DSH 内核缺失: ' + DSH_BIN);
 if (!fs.existsSync(NODE)) fail('内置 node 缺失: ' + NODE);

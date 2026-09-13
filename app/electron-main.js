@@ -16,7 +16,7 @@
  * ----------------------------------------------- */
 'use strict';
 
-const { app, BrowserWindow, ipcMain, dialog, Menu } = require('electron');
+const { app, BrowserWindow, ipcMain, dialog, Menu, shell } = require('electron');
 const { spawn, exec } = require('child_process');
 const http = require('http');
 const path = require('path');
@@ -193,6 +193,19 @@ function createWindow(url) {
   });
 
   mainWindow.loadURL(url);
+
+  // 网页里的外链（教程中的 DeepSeek 官网等）一律交给系统默认浏览器打开。
+  // 不处理的话 Electron 会开出一个没有 preload 的裸窗口，小白会以为「点坏了」。
+  mainWindow.webContents.setWindowOpenHandler(({ url: target }) => {
+    try { if (/^https?:\/\//i.test(target)) shell.openExternal(target); } catch (_) {}
+    return { action: 'deny' };
+  });
+  // 页面自身也不允许被导航离开本应用（防误点把整个界面顶替掉）
+  mainWindow.webContents.on('will-navigate', (e, target) => {
+    if (String(target).startsWith('http://127.0.0.1:')) return;
+    e.preventDefault();
+    try { if (/^https?:\/\//i.test(target)) shell.openExternal(target); } catch (_) {}
+  });
 
   // 关窗前先让前端把未落盘的数据同步写入（小白场景：绝不丢对话）
   let allowClose = false;

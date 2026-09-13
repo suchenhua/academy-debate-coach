@@ -29,8 +29,12 @@ if errorlevel 2 exit /b 0
 
 echo.
 echo [1/4] 停止程序...
-powershell -NoProfile -ExecutionPolicy Bypass -Command "$ErrorActionPreference='SilentlyContinue'; Get-CimInstance Win32_Process -Filter \"Name='node.exe'\" | Where-Object { $_.CommandLine -like '*AcademyDebateCoach*' } | ForEach-Object { Stop-Process -Id $_.ProcessId -Force }" >nul 2>&1
-powershell -NoProfile -ExecutionPolicy Bypass -Command "$ErrorActionPreference='SilentlyContinue'; Get-Process electron -ErrorAction SilentlyContinue | Where-Object { $_.Path -like '*AcademyDebateCoach*' } | ForEach-Object { Stop-Process -Id $_.Id -Force }" >nul 2>&1
+rem 既按默认目录名匹配，也按「当前实际安装目录」匹配 —— 用户自选/改名安装时
+rem 只有后者能命中，否则文件被占用，最后一步 rmdir 会失败。
+powershell -NoProfile -ExecutionPolicy Bypass -Command "$ErrorActionPreference='SilentlyContinue'; $dest='!DEST!'; Get-CimInstance Win32_Process -Filter \"Name='node.exe'\" | Where-Object { $_.CommandLine -and ($_.CommandLine -like '*AcademyDebateCoach*' -or $_.CommandLine -like ('*' + $dest + '*')) } | ForEach-Object { Stop-Process -Id $_.ProcessId -Force }" >nul 2>&1
+powershell -NoProfile -ExecutionPolicy Bypass -Command "$ErrorActionPreference='SilentlyContinue'; $dest='!DEST!'; Get-Process electron -ErrorAction SilentlyContinue | Where-Object { $_.Path -and ($_.Path -like '*AcademyDebateCoach*' -or $_.Path -like ($dest + '*')) } | ForEach-Object { Stop-Process -Id $_.Id -Force }" >nul 2>&1
+rem 给系统一点时间释放文件句柄，否则紧接着的 rmdir 可能删不干净
+powershell -NoProfile -Command "Start-Sleep -Milliseconds 1500" >nul 2>&1
 
 echo [2/4] 正在备份你的数据...
 set "BAKDIR=%USERPROFILE%\Desktop\Academy辩论教练-数据备份"
@@ -77,6 +81,9 @@ echo   你的数据备份保存在：
 echo     %BAKZIP%
 echo.
 echo   重装后可把备份里的 data 文件夹放回安装目录恢复记录。
+echo.
+echo   小提醒：备份 zip 里有你的 API Key，请妥善保管；
+echo          如果不再重装，确认数据已另存后可以把这个 zip 删掉。
 echo ============================================================
 echo.
 echo （按任意键关闭，将打开备份所在文件夹）

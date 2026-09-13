@@ -40,6 +40,12 @@ for (const f of ['AGENTS.md', 'SOUL.md', 'TOOLS.md', 'README.md', 'INSTALL.md', 
   const p = path.join(ROOT, f);
   if (fs.existsSync(p)) files.push(p);
 }
+/* runtime/ 整体是第三方内核（几万个文件，不扫），但下面这两个是**我们自己写的**，
+   而且 patch 里正好出现过「开发机绝对路径」导致分包后在别人机器上内核起不来的事故。 */
+for (const f of ['runtime/persona.patch.yml', 'runtime/academy-text-stream.mjs']) {
+  const p = path.join(ROOT, f);
+  if (fs.existsSync(p)) files.push(p);
+}
 
 // 2) 删除独立的 QFUD 声明 txt（这些是旧的内部标记，开源版不应存在）
 let removedTxt = 0;
@@ -100,5 +106,51 @@ if (badRefs.length) {
   console.log('  ✓ 无内部资料路径/人名引用');
 }
 
+/* 5) 阻断项：这几类命中就是「不能发」，pack.js 会据此拒绝打包。
+   （原来这里只报告不阻断，结果 patch 里带开发机绝对路径照样进了包 ——
+     那个文件在别人机器上会让内核整个起不来，用户只看到「Agent 运行失败」。）
+
+   注意「开发机路径」这一项的写法：**不把本机路径/用户名/工作区名写进本文件**，
+   而是运行时从 __dirname 推导出当前项目路径，再检查有没有文件把它写死了。
+   否则这个检查脚本自己就成了泄露源（刚踩过这个坑）。 */
+const PARENT = path.dirname(ROOT);
+const SELF_PATHS = [ROOT, ROOT.replace(/\\/g, '/'), PARENT, PARENT.replace(/\\/g, '/')]
+  .filter((s) => s && s.length > 3);
+
+const BLOCKERS = [
+  ['API Key 形态（sk-…）', /sk-[A-Za-z0-9_-]{20,}/g],
+  ['真实用户目录（非占位）', /[A-Za-z]:\\Users\\(?!你的用户名)/g],
+];
+const extra = (process.env.ACADEMY_SELF_PATTERNS || '').split(',').map((s) => s.trim()).filter(Boolean);
+extra.forEach((p) => BLOCKERS.push(['自定义（ACADEMY_SELF_PATTERNS）', new RegExp(p, 'g')]));
+
+const blockers = [];
+for (const file of files) {
+  if (file === SELF) continue;
+  if (!TEXT_EXT.has(path.extname(file).toLowerCase())) continue;
+  let text;
+  try { text = fs.readFileSync(file, 'utf8'); } catch (e) { continue; }
+  if (!text) continue;
+  for (const [label, re] of BLOCKERS) {
+    re.lastIndex = 0;
+    const m = re.exec(text);
+    if (m) blockers.push(path.relative(ROOT, file) + ' → ' + label + '：' + m[0].slice(0, 60));
+  }
+  const leaked = SELF_PATHS.find((p) => text.indexOf(p) !== -1);
+  if (leaked) blockers.push(path.relative(ROOT, file) + ' → 写死了本机项目路径：' + leaked);
+}
+console.log('');
+if (blockers.length) {
+  console.log('  ❌ 阻断项命中（不允许打包）：');
+  blockers.forEach((b) => console.log('    · ' + b));
+  console.log('  修正后重新运行；确认误报可用 ACADEMY_SKIP_SANITIZE_BLOCK=1 放行（不推荐）。');
+} else {
+  console.log('  ✓ 阻断项检查通过（无 API Key / 无开发机路径 / 无真实用户目录）');
+}
+
 console.log('== 开源合规检查完成 ==');
 console.log('  提示：许可证采用 CC BY-NC-SA 4.0，知识库来源署名见各文件头部与 LICENSE.md。');
+
+if (blockers.length && process.env.ACADEMY_SKIP_SANITIZE_BLOCK !== '1') {
+  process.exit(1);
+}

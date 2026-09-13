@@ -3,7 +3,10 @@
  * 把已验证可用的 DSH 扁平内核 + node.exe 复制进 App（一次性，存在则跳过）。
  * 用法：
  *   node tools/setup-runtime.js
- *   ACADEMY_DSH_SOURCE=D:\other\runtime node tools/setup-runtime.js
+ *   ACADEMY_DSH_SOURCE=<已解压好的 runtime 目录> node tools/setup-runtime.js
+ *
+ * 不设该环境变量时会报错退出 —— 这里刻意不写死任何本机路径，
+ * 否则分发包里会带上开发机的目录（既是隐私泄露，换台机器也必然失效）。
  */
 'use strict';
 const fs = require('fs');
@@ -11,7 +14,13 @@ const path = require('path');
 const { spawnSync } = require('child_process');
 
 const ROOT = path.resolve(__dirname, '..');
-const SOURCE = process.env.ACADEMY_DSH_SOURCE || 'D:\\AI\\H\\ai-forum\\runtime';
+const SOURCE = (process.env.ACADEMY_DSH_SOURCE || '').trim();
+if (!SOURCE) {
+  console.error('✗ 未指定内核来源目录。');
+  console.error('  请把已解压好的 runtime 目录用环境变量传进来，例如：');
+  console.error('    ACADEMY_DSH_SOURCE=D:\\some\\extracted\\runtime node tools/setup-runtime.js');
+  process.exit(1);
+}
 /* DSH 内核两种布局都要认：新版扁平 runtime/dsh/@deepseek-ai/...，旧版嵌套 runtime/dsh/node_modules/@deepseek-ai/... */
 const DSH_BIN_CANDIDATES = [
   path.join(ROOT, 'runtime', 'dsh', '@deepseek-ai', 'dsh', 'lib', 'bin.js'),

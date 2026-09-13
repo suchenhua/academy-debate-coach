@@ -21,7 +21,8 @@ const MODES = {
     '给这段攻防做逐帧纠偏，并给出可以直接替换的表述',
     '诊断这场比赛的主线形态（1/2/0 型），并给 3 条改进优先级',
   ]},
-  judge: { title: '评判', desc: '三票制评分 + 九段式述票。请写明赛制和比赛文字稿。', prompts: [
+  judge: { title: '评判', desc: '三票制评分 + 九段式述票。需提供带明确发言人的完整文字转写——腾讯会议转写几乎无可替代。',
+    placeholder: '评判 · 粘贴带明确发言人的完整文字转写——腾讯会议转写自带逐句发言人标注，几乎无可替代（Ctrl+Enter 发送）', prompts: [
     '你当评委：三票制给这场比赛打分，并写九段式述票词',
     '给我一份可以直接照着念的述票词，比赛文字稿如下…',
     '咨询判准：印象票、环节票、总结票分别怎么投？',
@@ -515,16 +516,23 @@ function renderWelcome() {
 function renderMessages() {
   resetSmoothStream();
   const box = $('#messages');
+  const wasStick = stickBottom;
+  const prevTop = box.scrollTop;
   box.innerHTML = '';
   if (!state.messages.length) {
     box.appendChild(renderWelcome());
+    stickBottom = true;
+    syncToBottomBtn();
     renderUsageSummary();
     return;
   }
   for (const [idx, m] of state.messages.entries()) {
     box.appendChild(renderMessage(idx, m));
   }
-  scrollBottom();
+  // 用户在底部 → 跟随新内容；用户正在往上读 → 保留原阅读位置，别把人拽走
+  if (wasStick) scrollBottom();
+  else box.scrollTop = prevTop;
+  syncToBottomBtn();
   renderUsageSummary();
 }
 
@@ -804,9 +812,56 @@ function typingIndicator() {
   return wrap;
 }
 
-function scrollBottom() {
+/* ── 滚动跟随（生成过程中不再强制下拉） ──
+   只有「用户本来就在底部」时才跟着新内容走；用户往上翻阅读后停下，
+   输入框上方浮出「回到底部」，点一下回到最新并恢复跟随。 */
+const STICK_THRESHOLD = 48;   // 距底部多少 px 以内算「在底部」
+let stickBottom = true;
+
+function atBottom() {
   const box = $('#messages');
-  requestAnimationFrame(() => { box.scrollTop = box.scrollHeight; });
+  if (!box) return true;
+  return box.scrollHeight - box.scrollTop - box.clientHeight <= STICK_THRESHOLD;
+}
+
+function syncToBottomBtn() {
+  const btn = $('#btnToBottom');
+  if (btn) btn.classList.toggle('hidden', stickBottom);
+}
+
+/* 跟随式滚动：仅在用户仍在底部时滚（生成过程用这个）。
+   注意 rAF 里要重新读一次几何位置：scroll 事件是异步派发的，
+   用户刚翻上去时 stickBottom 还没更新，只看标志位会把人拽回底部。 */
+function autoScroll() {
+  if (!stickBottom) return;
+  const box = $('#messages');
+  if (!box) return;
+  requestAnimationFrame(() => {
+    if (!stickBottom || !atBottom()) return;
+    box.scrollTop = box.scrollHeight;
+  });
+}
+
+/* 主动回到底部并恢复跟随：发送 / 切换对话 / 点「回到底部」。
+   用同步落底（读 scrollHeight 会强制排版），不走 rAF —— 少一帧竞态，也不闪。 */
+function scrollBottom() {
+  stickBottom = true;
+  syncToBottomBtn();
+  const box = $('#messages');
+  if (box) box.scrollTop = box.scrollHeight;
+}
+
+function initScrollFollow() {
+  const box = $('#messages');
+  if (!box) return;
+  box.addEventListener('scroll', () => {
+    const next = atBottom();
+    if (next === stickBottom) return;
+    stickBottom = next;
+    syncToBottomBtn();
+  }, { passive: true });
+  const btn = $('#btnToBottom');
+  if (btn) btn.addEventListener('click', () => scrollBottom());
 }
 
 /* ── 流式平滑显示（打字机）：DSH 是批量写入的，一次到一大块，
@@ -1039,7 +1094,7 @@ function updateRunningMessage(patch) {
       }
     }
   }
-  scrollBottom();
+  autoScroll();
 }
 
 function copyText(text) {
@@ -1256,7 +1311,7 @@ function updateModeUI() {
   });
   $('#modeTitle').textContent = modeMeta[state.mode].title;
   $('#modeDesc').textContent = modeMeta[state.mode].desc;
-  $('#input').placeholder = modeMeta[state.mode].title + ' · 输入后 Ctrl+Enter 发送';
+  $('#input').placeholder = modeMeta[state.mode].placeholder || (modeMeta[state.mode].title + ' · 输入后 Ctrl+Enter 发送');
   const hs = document.querySelector('.side-head h3');
   if (hs) hs.textContent = '🕘 对话历史 · ' + modeMeta[state.mode].title;
 }
@@ -1592,6 +1647,8 @@ function switchMode(mode) {
 function focusInput() { $('#input').focus(); }
 
 /* ================= 状态 / 配置 ================= */
+let apikeyHelpAutoOpened = false; // 「获取 API Key」教程只在首次没配 Key 时自动展开一次
+
 async function refreshStatus() {
   try {
     const s = await fetchJSON('/api/status');
@@ -1600,6 +1657,8 @@ async function refreshStatus() {
     if (!s.hasKey) {
       $('#keyBanner').classList.remove('hidden');
       $('#welcomeNote').classList.remove('hidden');
+      const ak = $('#apikeyHelp');
+      if (ak && !apikeyHelpAutoOpened) { ak.open = true; apikeyHelpAutoOpened = true; }
     } else {
       $('#keyBanner').classList.add('hidden');
       $('#welcomeNote').classList.add('hidden');
@@ -1668,7 +1727,7 @@ function switchSettingsPane(pane) {
 /* ———— 关于应用 ———— */
 const ABOUT_LICENSE_URL = 'https://creativecommons.org/licenses/by-nc-sa/4.0/deed.zh';
 function renderAboutPane() {
-  const ver = (state.status && state.status.version) || '2.0.0';
+  const ver = (state.status && state.status.version) || '2.1.0';
   const v = 'v' + String(ver).replace(/^v/i, '');
   const elVer = $('#aboutVersion');
   if (elVer) elVer.textContent = v;
@@ -2140,6 +2199,7 @@ function startTurn(text) {
   persistChat();
   renderMessages();
   renderHistory();
+  scrollBottom();   // 自己发起的对话总是跟到底（即使刚才在往上翻）
 
   state.running = true;
   state.status = { ...(state.status || {}), busy: true };
@@ -3503,7 +3563,10 @@ async function memorySearchRun() {
       const card = el('div', 'mem-entry');
       const head = el('div', 'mem-entry-head');
       const t = el('div', 'mem-entry-title', String(h.title || '（未命名）').replace(/^#+\s*/, ''));
-      t.appendChild(el('span', 'mem-entry-time', (h.scope === 'long' ? '📚 长期' : '🗓 ' + (h.file || '')) + (h.time ? ' · ' + String(h.time).slice(0, 16) : '')));
+      const srcLabel = h.scope === 'long' ? '📚 长期'
+        : h.scope === 'archive' ? '📦 归档 ' + (h.file || '')
+          : '🗓 ' + (h.file || '');
+      t.appendChild(el('span', 'mem-entry-time', srcLabel + (h.time ? ' · ' + String(h.time).slice(0, 16) : '')));
       head.appendChild(t);
       card.appendChild(head);
       card.appendChild(el('div', 'mem-entry-body', h.body || '（无内容）'));
@@ -4608,7 +4671,7 @@ function openWelcome(startStep) {
 
 /* 向导高级选项：服务商 → 自动填地址/模型 */
 const WIZARD_PROVIDERS = {
-  deepseek:    { baseUrl: 'https://api.deepseek.com',            models: ['deepseek-flash', 'deepseek-v4-pro', 'deepseek-v4-flash', 'deepseek-chat'], name: 'DeepSeek 官方' },
+  deepseek:    { baseUrl: 'https://api.deepseek.com',            models: ['deepseek-flash', 'deepseek-v4-pro', 'deepseek-chat'], name: 'DeepSeek 官方' },
   siliconflow: { baseUrl: 'https://api.siliconflow.cn/v1',       models: ['deepseek-ai/DeepSeek-V3', 'Qwen/Qwen2.5-72B-Instruct', 'deepseek-ai/DeepSeek-R1'], name: '硅基流动' },
   moonshot:    { baseUrl: 'https://api.moonshot.cn/v1',          models: ['moonshot-v1-8k', 'moonshot-v1-32k', 'moonshot-v1-128k'], name: 'Moonshot Kimi' },
   zhipu:       { baseUrl: 'https://open.bigmodel.cn/api/paas/v4', models: ['glm-4-flash', 'glm-4-plus', 'glm-4-air'], name: '智谱 GLM' },
@@ -4702,6 +4765,7 @@ function init() {
     // 旧缓存页面缺少新控件时，也保证状态检测继续执行
     console.error('[Academy] 绑定控件失败（请刷新页面或 Ctrl+F5 强制刷新）:', e);
   }
+  try { initScrollFollow(); } catch (e) { console.error('[Academy] 滚动跟随初始化失败:', e); }
   // 应用外观 + 界面语言
   try { applyTheme(); } catch (_) {}
   try { applyChatFs(); } catch (_) {}

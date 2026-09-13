@@ -12,10 +12,18 @@ const path = require('path');
 const { spawnSync } = require('child_process');
 
 const ROOT = path.resolve(__dirname, '..');
+/* 知识库同步来源。刻意不写死本机路径：分发包里带上开发机目录既是隐私泄露、
+   换台机器也必然失效。需要同步时用环境变量指定，例如：
+     ACADEMY_KNOWLEDGE_SRC_LOGISME=<目录> ACADEMY_KNOWLEDGE_SRC_ACADEMY=<目录> node tools/refresh-knowledge.js */
 const SRC = {
-  logisme: 'E:\\辩论助手工作区\\logisme-debate-coach-v1（skill版本开发）',
-  academy: 'E:\\辩论助手工作区\\academy-coach',
+  logisme: (process.env.ACADEMY_KNOWLEDGE_SRC_LOGISME || '').trim(),
+  academy: (process.env.ACADEMY_KNOWLEDGE_SRC_ACADEMY || '').trim(),
 };
+if (!SRC.logisme && !SRC.academy) {
+  console.error('✗ 未指定同步来源目录。');
+  console.error('  例：ACADEMY_KNOWLEDGE_SRC_LOGISME=<目录> ACADEMY_KNOWLEDGE_SRC_ACADEMY=<目录> node tools/refresh-knowledge.js');
+  process.exit(1);
+}
 const TEXT_EXT = new Set(['.md', '.txt', '.py', '.ps1', '.html']);
 const EXCLUDE_DIRS = new Set(['__pycache__', 'node_modules', '.git', 'outputs', 'temp']);
 

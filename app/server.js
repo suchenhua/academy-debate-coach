@@ -10,7 +10,7 @@
  *      - DSH_HOME 隔离在 data/.dsh，API Key 只通过子进程环境变量透传
  *   3. 通过 SSE 把运行状态推给 HTML 前端
  *
- * 调用契约（来自 D:\AI\H\封装Agent工作流程.md）：
+ * 调用契约（来自 DSH 内核的 headless 用法）：
  *   - 入口：runtime/dsh/node_modules/@deepseek-ai/dsh/lib/bin.js
  *   - stdout = 最终回复文本；exit 0 = 完成，非 0 = 出错
  *   - 凭证：DEEPSEEK_API_KEY 环境变量
@@ -74,14 +74,39 @@ function ensureStreamPlugin() {
     console.log('[stream] 插件恢复失败：' + e.message);
   }
 }
+
+/* 把补丁模板实例化成本机可用的补丁。
+   为什么需要：patch loader 只认**绝对路径**（相对路径会按 profile 目录解析，内核起不来），
+   但分发包里绝不能带开发机路径（既是隐私泄露，换台机器也必然失效）。
+   所以模板里存相对占位，运行时把补丁生成到 data/ 下使用 ——
+   runtime/ 里的模板保持原样：开发目录同时就是打包目录，一旦就地改写，
+   跑一次 App 就会把模板写脏、下次打包又把开发机路径带进去。 */
+function materializePatch() {
+  try {
+    if (!fs.existsSync(PERSONA_PATCH)) return PERSONA_PATCH;
+    const src = fs.readFileSync(PERSONA_PATCH, 'utf8');
+    const abs = STREAM_PLUGIN.replace(/\\/g, '/');
+    const next = src.replace(/^(\s*name:\s*).*academy-text-stream\.mjs\s*$/m, '$1' + abs);
+    if (next === src) return PERSONA_PATCH;   // 模板里已是绝对路径（手工改过）→ 直接用
+    ensureDir(DATA_DIR);
+    const out = path.join(DATA_DIR, 'persona.patch.yml');
+    let cur = '';
+    try { cur = fs.readFileSync(out, 'utf8'); } catch (_) {}
+    if (cur !== next) fs.writeFileSync(out, next, 'utf8');
+    return out;
+  } catch (e) {
+    console.log('[stream] 补丁实例化失败（回退用模板）：' + e.message);
+    return PERSONA_PATCH;
+  }
+}
 /* 用量账本（append-only）：每次对话跑完追加一行 jsonl。
    为什么要独立账本：原先用量挂在「每条消息」上，删掉对话 = 那段消耗凭空消失，
    统计变成幸存者偏差。账本只增不改，删对话不影响历史消耗。 */
 const USAGE_FILE = path.join(DATA_DIR, 'usage.jsonl');
 
 // 发行版本号（单一来源：/api/status 下发给前端「设置 → 关于应用」）
-// 发版时改这里，并同步 electron-main.js 的 AssemblyVersion、README、打包产物名
-const APP_VERSION = '2.0.0';
+// 发版时改这里，并同步 tools/sfx/SfxLauncher.cs 的 AssemblyVersion 与 README（pack.js 会自检这三处）
+const APP_VERSION = '2.1.0';
 const DEFAULT_MODEL = 'deepseek-chat';
 const DEFAULT_PORT = 8787;
 const MAX_BODY = 6 * 1024 * 1024; // 允许粘贴很长的比赛文字稿
@@ -291,7 +316,6 @@ function writeDshSettings(model, baseUrl, searchApiKey, searchProvider) {
   const presetModels = [
     { id: 'deepseek-flash', name: 'DeepSeek-V4.1-Flash', ctx: 1048576, max: 393216 },
     { id: 'deepseek-v4-pro', name: 'DeepSeek-V4-Pro', ctx: 1048576, max: 393216 },
-    { id: 'deepseek-v4-flash', name: 'DeepSeek-V4-Flash', ctx: 1048576, max: 393216 },
     { id: 'deepseek-chat', name: 'DeepSeek-V3 (deepseek-chat)', ctx: 131072, max: 65536 },
     { id: 'deepseek-reasoner', name: 'DeepSeek-R1 (deepseek-reasoner)', ctx: 131072, max: 65536 },
     { id: modelId, name: modelId, ctx: 131072, max: 393216 },
@@ -555,19 +579,9 @@ const MODE_META = {
 };
 
 /* ---------------- 多级记忆（长期 memory.md + 每日流水 memory/yyyy-mm-dd.md） ---------------- */
-/* QClaw 启发：L1 长期精炼 / L2 每日流水 / 主动召回（关键词）+ 自动蒸馏晋升。 */
+/* QClaw 启发：长期精炼 / 每日流水 / 主动召回（关键词）+ 自动蒸馏晋升。 */
 const MEMORY_DIR = path.join(DATA_DIR, 'memory');
-const MEMORY_MAX_CHARS = 14000; // 注入给 Agent 的长期记忆最长字符
 const MEMORY_FILE_MAX = 256 * 1024; // 长期 memory.md 上限
-
-/* ---- L1：长期记忆（memory.md，精炼持久事实） ---- */
-function readLongMemory() {
-  try {
-    const s = fs.readFileSync(MEMORY_FILE, 'utf8').trim();
-    if (!s) return '';
-    return s.length > MEMORY_MAX_CHARS ? s.slice(-MEMORY_MAX_CHARS) + '\n\n（长期记忆较长，仅展示最近部分）' : s;
-  } catch (_) { return ''; }
-}
 
 /* ---- L2：每日流水 memory/YYYY-MM-DD.md ---- */
 function dailyFileFor(date) {
@@ -578,51 +592,174 @@ function dailyFileFor(date) {
   return path.join(MEMORY_DIR, y + '-' + m + '-' + day + '.md');
 }
 
-function readDaily(daysBack) {
-  ensureDir(MEMORY_DIR);
-  const parts = [];
-  for (let i = daysBack; i >= 0; i--) {
-    const d = new Date(Date.now() - i * 86400000);
-    try {
-      const c = fs.readFileSync(dailyFileFor(d), 'utf8').trim();
-      if (c) parts.push('### ' + dailyFileFor(d).split(/[\\/]/).pop() + '\n\n' + c);
-    } catch (_) {}
-  }
-  return parts.join('\n\n');
+/* ---------------- 注入预算与按需挑选（记忆注入瘦身） ----------------
+   原实现：长期记忆「无条件全量注入」（上限 14000 字）、最近流水无上限、
+   且晋升过的流水在「长期记忆」和「最近流水」里各出现一次 —— 数据量上来后
+   每轮固定成本过高，且 5 档裁剪从不触碰记忆段（地板被焊死）。
+   现改为：长期记忆 = 最近 N 条常驻 + 与当前问题相关的 top-N（各有字符上限）；
+   流水 = 只注入未晋升部分；跨段落按内容指纹判重。 */
+const MEM_LONG_MAX = 4000;    // 长期记忆段落注入上限
+const MEM_DAILY_MAX = 3000;   // 最近流水段落注入上限
+const MEM_ENTRY_MAX = 1500;   // 单条记忆注入上限（防一条特别长的条目吃光预算）
+const MEM_CORE_ENTRIES = 3;   // 无条件常驻的最近长期记忆条数
+const MEM_RECALL_ENTRIES = 5; // 按当前问题召回的长期记忆条数
+
+/** 单条超长时截断（预算与可读性都要） */
+function memClamp(text, max) {
+  const s = String(text || '');
+  return s.length > max ? s.slice(0, max) + '…（本条过长已截断）' : s;
 }
 
-/* ---- 统一追加：long=true 进长期，否则进当日流水 ---- */
+/** 内容指纹：判重用（与蒸馏去重同一口径 —— 去空白后取前 40 字） */
+function memFingerprint(s) {
+  return String(s || '').replace(/\s+/g, '').slice(0, 40);
+}
+
+function readTextFile(fp) {
+  try { return fs.readFileSync(fp, 'utf8'); } catch (_) { return ''; }
+}
+
+/** 记忆条目 → 注入文本（保留原有小标题） */
+function memoryEntryText(title, body) {
+  const b = String(body || '').trim();
+  if (!b) return '';
+  return (title ? '## ' + title + '\n\n' : '') + b;
+}
+
+/**
+ * 按需挑选长期记忆：最近 MEM_CORE_ENTRIES 条常驻 + 与当前问题相关的 top-N。
+ * 返回 { text, shown, total, fps }；fps 是「本轮真正注入」条目的指纹，供下游判重。
+ */
+function selectLongMemory(text) {
+  const entries = parseMemoryEntries(readTextFile(MEMORY_FILE));
+  const total = entries.length;
+  if (!total) return { text: '', shown: 0, total: 0, fps: new Set() };
+
+  const picked = [];                 // {title, body}
+  const pickedFps = new Set();
+  for (let i = total - 1; i >= 0 && picked.length < MEM_CORE_ENTRIES; i--) {
+    picked.push(entries[i]);
+    pickedFps.add(memFingerprint(entries[i].body));
+  }
+  try {
+    const cap = MEM_CORE_ENTRIES + MEM_RECALL_ENTRIES;
+    for (const h of memorySearch(String(text || ''), cap, { onlyLong: true })) {
+      if (picked.length >= cap) break;
+      const fp = memFingerprint(h.body);
+      if (pickedFps.has(fp)) continue;
+      pickedFps.add(fp);
+      picked.push({ title: h.title, body: h.body });
+    }
+  } catch (_) {}
+
+  const kept = [];
+  const fps = new Set();
+  let used = 0;
+  for (const it of picked) {
+    const chunk = memClamp(memoryEntryText(it.title, it.body), MEM_ENTRY_MAX);
+    if (!chunk) continue;
+    // 超预算时跳过而不是 break：先入队的「最近常驻核心」已经放进去了，优先保住它们
+    if (used + chunk.length > MEM_LONG_MAX && kept.length) continue;
+    kept.push(chunk);
+    fps.add(memFingerprint(it.body));
+    used += chunk.length + 5;
+  }
+  return { text: kept.join('\n\n---\n\n'), shown: kept.length, total, fps };
+}
+
+/**
+ * 最近流水：只注入尚未晋升进长期记忆的部分，且有字符上限。
+ * longFps = 本轮已注入的长期记忆指纹（晋升后的副本不再重复占预算）。
+ */
+function selectRecentDaily(daysBack, longFps, maxChars) {
+  const parts = [];
+  let used = 0;
+  let skipped = 0;
+  for (let i = daysBack; i >= 0; i--) {
+    const fp = dailyFileFor(new Date(Date.now() - i * 86400000));
+    const raw = readTextFile(fp).trim();
+    if (!raw) continue;
+    const day = path.basename(fp);
+    for (const e of parseMemoryEntries(raw)) {
+      const body = String(e.body || '').trim();
+      if (!body) continue;
+      if (longFps && longFps.has(memFingerprint(body))) { skipped++; continue; }
+      const chunk = memClamp('### ' + day + ' · ' + (e.title || '备忘') + '\n\n' + body, MEM_ENTRY_MAX);
+      if (used + chunk.length > maxChars) return { text: parts.join('\n\n'), skipped };
+      parts.push(chunk);
+      used += chunk.length + 2;
+    }
+  }
+  return { text: parts.join('\n\n'), skipped };
+}
+
+/* ---- 长期记忆写入：同类合并 + 条目上限 ----
+   合并①：已有条目内容与新内容一致（同一件事又记一遍）→ 不重复写；
+   合并②：新内容完整覆盖某条旧内容 → 用新内容替换旧条（合成更全的一条）；
+   上限：条目数超过 MEM_LONG_MAX_ENTRIES 时，最旧的溢出条目移入
+        memory/archive-long.md（内容不丢，仍参与召回，只是不再常驻注入）。 */
+const MEM_LONG_MAX_ENTRIES = 40;
+
+function archiveLongEntries(entries) {
+  if (!entries.length) return;
+  ensureDir(MEMORY_DIR);
+  const digest = path.join(MEMORY_DIR, 'archive-long.md');
+  const prev = readTextFile(digest);
+  const blocks = entries.map((e) => memoryEntryText(e.title, e.body));
+  let next = (prev ? prev.replace(/\s*$/, '') + '\n\n---\n\n' : '') + blocks.join('\n\n---\n\n') + '\n';
+  if (next.length > MEMORY_FILE_MAX) next = next.slice(-MEMORY_FILE_MAX);
+  try { fs.writeFileSync(digest, next, 'utf8'); } catch (_) {}
+}
+
+/** 写入一条长期记忆（含合并与上限）。返回是否真的写入了。 */
+function appendLongMemory(text) {
+  const body = String(text || '').trim();
+  if (!body) return false;
+  const entries = parseMemoryEntries(readTextFile(MEMORY_FILE));
+  const norm = (s) => String(s || '').replace(/\s+/g, '');
+  const nb = norm(body);
+
+  // 合并①：完全重复 → 不写（判重必须用全文，用前缀会把「更完整的新版本」误判成重复）
+  if (entries.some((e) => norm(e.body) === nb)) return false;
+  // 合并②：新内容完整覆盖某条旧内容 → 用新内容替换旧条
+  let list = entries.filter((e) => !(e.body && norm(e.body).length >= 20 && nb.includes(norm(e.body))));
+  const iso = new Date().toISOString().replace('T', ' ').slice(0, 19);
+  list.push({ title: iso + ' · 长期记忆', body });
+
+  if (list.length > MEM_LONG_MAX_ENTRIES) {
+    archiveLongEntries(list.slice(0, list.length - MEM_LONG_MAX_ENTRIES));
+    list = list.slice(list.length - MEM_LONG_MAX_ENTRIES);
+  }
+  memoryWriteSegments(MEMORY_FILE, list.map((e) => memoryEntryText(e.title, e.body)));
+  return true;
+}
+
+/* ---- 统一追加：long=true 进长期（走合并/上限），否则进当日流水 ---- */
 function appendMemory(text, opts) {
   const t = String(text || '').trim();
   if (!t) return 0;
   const toLong = !!(opts && opts.long);
-  const iso = new Date().toISOString().replace('T', ' ').slice(0, 19);
-  const title = iso + (toLong ? ' · 长期记忆' : ' · 备忘');
-  const stamp = '## ' + title;
-  const block = '\n\n---\n\n' + stamp + '\n\n' + t + '\n';
+  try {
+    // 长期记忆：合并 + 条目上限，写完由 appendLongMemory 内部重建索引
+    if (toLong) return appendLongMemory(t) ? t.length : 0;
+
+    ensureDir(MEMORY_DIR);
+    const iso = new Date().toISOString().replace('T', ' ').slice(0, 19);
+    const title = iso + ' · 备忘';
+    const field = dailyFileFor();
+    const fileKey = path.basename(field).replace(/\.md$/, '');
+    const prev = fs.existsSync(field) ? fs.readFileSync(field, 'utf8') : '';
+    let next = (prev.endsWith('\n') ? prev : prev + '\n')
+      + '\n\n---\n\n## ' + title + '\n\n' + t + '\n';
+    if (next.length > MEMORY_FILE_MAX) next = next.slice(-MEMORY_FILE_MAX);
+    fs.writeFileSync(field, next, 'utf8');
+
+    // 增量写索引：只插这一条，不再全量重建（批量编辑走 memoryWriteSegments 的全量重建）
     try {
-      let fileKey = 'memory.md';
-      if (toLong) {
-        ensureDir(DATA_DIR);
-        const prev = fs.existsSync(MEMORY_FILE) ? fs.readFileSync(MEMORY_FILE, 'utf8') : '';
-        let next = (prev.endsWith('\n') ? prev : prev + '\n') + block;
-        if (next.length > MEMORY_FILE_MAX) next = next.slice(-MEMORY_FILE_MAX);
-        fs.writeFileSync(MEMORY_FILE, next, 'utf8');
-      } else {
-        ensureDir(MEMORY_DIR);
-        const fp = dailyFileFor();
-        fileKey = fp.split(/[\\/]/).pop().replace(/\.md$/, '');
-        const prev = fs.existsSync(fp) ? fs.readFileSync(fp, 'utf8') : '';
-        let next = (prev.endsWith('\n') ? prev : prev + '\n') + block;
-        if (next.length > MEMORY_FILE_MAX) next = next.slice(-MEMORY_FILE_MAX);
-        fs.writeFileSync(fp, next, 'utf8');
-      }
-      // 增量写索引：只插这一条，不再全量重建（批量编辑走 memoryWriteSegments 的全量重建）
-      try {
-        memoryIndexAppend({ scope: toLong ? 'long' : 'daily', file: fileKey, time: iso, title, body: t });
-      } catch (_) {}
-      return t.length;
-    } catch (_) { return 0; }
+      memoryIndexAppend({ scope: 'daily', file: fileKey, time: iso, title, body: t });
+    } catch (_) {}
+    return t.length;
+  } catch (_) { return 0; }
 }
 
 /* ---- 把记忆 markdown 拆成条目数组（每个 ## 标题+内容 一条） ---- */
@@ -717,18 +854,28 @@ function memoryExtractKeywords(text) {
 
 /* ---- 主动召回：对用户消息做全文检索，带上相关历史记忆片段。
    语料 = 长期记忆 + 全部流水（QClaw 启发：混合评分 = FTS 相关度 + 新近度）。
-   最近 2 天流水已在上下文里全量注入，召回时跳过，避免重复占上下文。 ---- */
-function memoryKeywordRecall(text, history) {
+   最近 2 天流水已在上下文里全量注入，召回时跳过，避免重复占上下文。
+   excludeFps：本轮已注入的条目指纹 —— 同一段内容不再二次注入。 ---- */
+function memoryScopeLabel(scope, file) {
+  if (scope === 'long') return '长期记忆';
+  if (scope === 'archive') return '归档 ' + String(file || '').replace(/\.md$/, '');
+  return '流水 ' + file;
+}
+
+function memoryKeywordRecall(text, history, excludeFps) {
   try {
     const srcText = String(text || '') + ' ' + (Array.isArray(history) && history.length ? String(history[history.length - 1].text || '') : '');
     if (!srcText.trim()) return [];
     const hits = memorySearch(srcText, 6, { skipRecentDays: 2 });
-    return hits.map((h) => {
-      const from = h.scope === 'long' ? '长期记忆' : '流水 ' + h.file;
-      const head = '（来自 ' + from + (h.time ? ' · ' + h.time.slice(0, 16) : '') + '）';
+    const out = [];
+    for (const h of hits) {
+      if (excludeFps && excludeFps.has(memFingerprint(h.body))) continue;
+      const head = '（来自 ' + memoryScopeLabel(h.scope, h.file)
+        + (h.time ? ' · ' + h.time.slice(0, 16) : '') + '）';
       const title = h.title && !/^##\s*\d{4}/.test(h.title) ? '【' + h.title.replace(/^#+\s*/, '') + '】' : '';
-      return head + (title ? '\n' + title : '') + '\n' + String(h.body || '').slice(0, 400);
-    });
+      out.push(head + (title ? '\n' + title : '') + '\n' + String(h.body || '').slice(0, 400));
+    }
+    return out;
   } catch (_) { return []; }
 }
 
@@ -737,10 +884,18 @@ function memoryKeywordRecall(text, history) {
    memory/archive-YYYY-MM.md（月度消化摘要），再删除原文件——不丢任何内容。 ---- */
 const MEM_KEEP_DAYS = 14;      // 流水保留天数（供召回）
 const MEM_PROMOTE_BEFORE = 2;  // 早于 N 天的流水开始尝试蒸馏晋升
+/* 收紧后的晋升词：只保留「可跨场次复用的事实/约定」信号词。
+   原表含 辩题/备赛/复盘/质询/结论/方法/思路 等高频词，在这类 App 里几乎每段都命中
+   —— 实测 24/24 段全部晋升，长期记忆退化成流水的副本，必然撞上注入上限。
+   收紧只靠「词表 + 过程性叙述排除」两件事：
+   长度门槛沿用原来的 12 字（实测过，真实流水里被挡下的段落没有一段是因为长度，
+   最短的也有 52 字；把门槛抬到 40 只会误伤「用户要求记住判准要一句话」这类短小事实）。 */
+const MEM_PROMOTE_KWS = ['判准', '基准', '记住', '始终', '下次', '偏好', '惯例', '阈值', '口径', '默认', '准则', '禁忌', '约定', '规范', '一律', '固定'];
+const MEM_PROMOTE_MIN_CHARS = 12;
+const MEM_PROMOTE_DENY = /连通性测试|链路自检|第\s*\d+\s*轮|待命|空转|本次测试|测试消息|联调/;
 function distillRecentNotes() {
   try {
     ensureDir(MEMORY_DIR);
-    const promoteKws = ['判准', '偏好', '基准', '记住', '始终', '下次', '用户', '备赛', '复盘', '质询', '辩题', '结论', '决定', '偏好', '希望', '要求', '风格', '喜欢', '惯例', '要点', '标准', '阈值', '思路', '方法'];
     const now = Date.now();
     const ents = fs.existsSync(MEMORY_DIR) ? fs.readdirSync(MEMORY_DIR, { withFileTypes: true }) : [];
     for (const e of ents) {
@@ -754,12 +909,19 @@ function distillRecentNotes() {
         let promoted = 0;
         const leftovers = [];
         // 只读一次长期记忆（原先每段读一次，O(段落数 × 文件大小)）
-        let longText = fs.existsSync(MEMORY_FILE) ? fs.readFileSync(MEMORY_FILE, 'utf8') : '';
+        const longText = fs.existsSync(MEMORY_FILE) ? fs.readFileSync(MEMORY_FILE, 'utf8') : '';
+        const longFps = new Set(parseMemoryEntries(longText).map((x) => memFingerprint(x.body)));
         for (const s2 of segs) {
-          if (s2.length < 12) continue;
-          if (promoteKws.some((k) => s2.includes(k)) && !longText.includes(s2.slice(0, 40))) {
-            if (appendMemory(s2, { long: true })) longText += '\n' + s2;
-            promoted++;
+          // 去掉段首自带的小标题：归档会另加时间戳标题，留着会变成嵌套标题噪音
+          const body = s2.replace(/^#{1,6}[^\n]*\n?/, '').trim() || s2;
+          if (body.length < MEM_PROMOTE_MIN_CHARS) {
+            if (ageDays > MEM_KEEP_DAYS) leftovers.push(s2);
+            continue;
+          }
+          const bfp = memFingerprint(body);
+          const worth = MEM_PROMOTE_KWS.some((k) => body.includes(k)) && !MEM_PROMOTE_DENY.test(body);
+          if (worth && !longFps.has(bfp)) {
+            if (appendMemory(body, { long: true })) { longFps.add(bfp); promoted++; }
           } else if (ageDays > MEM_KEEP_DAYS) {
             // 到期删除前，没晋升的段落进月度归档，不丢内容
             leftovers.push(s2);
@@ -847,7 +1009,9 @@ function dirSig(dir, filter) {
     return n + ':' + bytes + ':' + Math.round(maxM);
   } catch (_) { return '-'; }
 }
-function fpMemory() { return fileSig(MEMORY_FILE) + '|' + dirSig(MEMORY_DIR, (n) => /^\d{4}-\d{2}-\d{2}\.md$/.test(n)); }
+function fpMemory() {
+  return fileSig(MEMORY_FILE) + '|' + dirSig(MEMORY_DIR, (n) => /^\d{4}-\d{2}-\d{2}\.md$/.test(n) || /^archive-.*\.md$/.test(n));
+}
 function fpChats() { return dirSig(CHATS_DIR, (n) => n.endsWith('.json') && n[0] !== '_'); }
 /* 指纹要同时覆盖「资料库自己存的文本」和「产物空间」——
    引用式条目（kind=deliverable）的正文在 data/deliverables/，只监控 LIB_TEXT_DIR 的话，
@@ -898,12 +1062,30 @@ function collectMemoryEntries() {
   try {
     ensureDir(MEMORY_DIR);
     const ents = fs.readdirSync(MEMORY_DIR, { withFileTypes: true });
-    const files = ents.filter((x) => x.isFile() && /^\d{4}-\d{2}-\d{2}\.md$/.test(x.name)).map((x) => x.name).sort();
-    for (const name of files) {
-      let c = '';
-      try { c = fs.readFileSync(path.join(MEMORY_DIR, name), 'utf8'); } catch (_) { continue; }
-      for (const e of parseMemoryEntries(c)) {
-        out.push({ scope: 'daily', file: name.replace('.md', ''), seg_idx: e.idx, time: e.time || name.replace('.md', ''), title: e.title, body: e.body });
+    const daily = [];
+    const archives = [];
+    for (const x of ents) {
+      if (!x.isFile()) continue;
+      if (/^\d{4}-\d{2}-\d{2}\.md$/.test(x.name)) daily.push(x.name);
+      else if (/^archive-.*\.md$/.test(x.name)) archives.push(x.name);
+    }
+    daily.sort();
+    archives.sort();
+    // 归档也进索引：长期记忆溢出条目移出常驻后仍可被召回（内容不丢）
+    for (const group of [{ names: daily, scope: 'daily' }, { names: archives, scope: 'archive' }]) {
+      for (const name of group.names) {
+        let c = '';
+        try { c = fs.readFileSync(path.join(MEMORY_DIR, name), 'utf8'); } catch (_) { continue; }
+        for (const e of parseMemoryEntries(c)) {
+          out.push({
+            scope: group.scope,
+            file: name.replace('.md', ''),
+            seg_idx: e.idx,
+            time: e.time || name.replace('.md', ''),
+            title: e.title,
+            body: e.body,
+          });
+        }
       }
     }
   } catch (_) {}
@@ -952,12 +1134,14 @@ function memoryIndexAppend(entry) {
 }
 
 /* 记忆检索：FTS5 bm25 相关度 + 新近度加成。
-   opts.skipRecentDays：跳过最近 N 天的流水条目（它们已全量注入上下文，召回重复无益）。 */
+   opts.skipRecentDays：跳过最近 N 天的流水条目（它们已全量注入上下文，召回重复无益）。
+   opts.onlyLong：只要长期记忆条目（任务单挑「常驻核心 + 相关条目」时用）。 */
 function memorySearch(query, limit, opts) {
   const kws = memoryExtractKeywords(query);
   const need = Math.max(1, Math.min(Number(limit) || 5, 30));
   if (!kws.length) return [];
   const skipRecentDays = (opts && opts.skipRecentDays) || 0;
+  const onlyLong = !!(opts && opts.onlyLong);
   const cutoff = skipRecentDays > 0 ? Date.now() - skipRecentDays * 86400000 : 0;
 
   const recencyBonus = (timeStr) => {
@@ -988,6 +1172,7 @@ function memorySearch(query, limit, opts) {
   }
   const scored = [];
   for (const r of rows) {
+    if (onlyLong && r.scope !== 'long') continue;
     if (cutoff && r.scope === 'daily') {
       const t = Date.parse(String(r.file || '') + 'T00:00:00');
       if (isFinite(t) && t >= cutoff) continue;
@@ -2085,14 +2270,26 @@ function buildTaskInBudget(runId, mode, text, history, opts = {}) {
     { historyRounds: 0, historyItemLimit: 0, skipDaily: true, libraryKeep: 2, snippetChars: 200, deliverablesKeep: 3 },
   ];
   // 这些输入与裁剪档位无关，只算一次（原先每档都要重读记忆/流水/召回/技能，最多 5 遍）
+  const longSel = selectLongMemory(text);
+  const dailySel = selectRecentDaily(2, longSel.fps, MEM_DAILY_MAX);
   const pre = {
-    memory: readLongMemory(),
-    recentDaily: readDaily(2),
-    recalled: memoryKeywordRecall(text, history),
+    memory: longSel.text,
+    memoryTotal: longSel.total,
+    memoryShown: longSel.shown,
+    recentDaily: dailySel.text,
+    dailySkipped: dailySel.skipped,
+    // 召回排除本轮已注入的长期条目：同一段内容不再二次占上下文
+    recalled: memoryKeywordRecall(text, history, longSel.fps),
     userSkills: (() => {
       try { return skillScanUser().filter((s) => s.enabled && s.valid); } catch (_) { return []; }
     })(),
   };
+  // 记忆注入量可观测：一眼看出本轮为记忆付了多少上下文成本
+  try {
+    console.log('[memory] 注入 长程 ' + pre.memoryShown + '/' + pre.memoryTotal + ' 条（' + pre.memory.length
+      + ' 字）· 流水 ' + pre.recentDaily.length + ' 字（跳过重复 ' + pre.dailySkipped + ' 条）· 召回 '
+      + pre.recalled.length + ' 条');
+  } catch (_) {}
   let md = '';
   for (const a of attempts) {
     let lib = opts.library;
@@ -2123,22 +2320,40 @@ function buildTaskFile(runId, mode, text, history, opts = {}) {
   lines.push(meta.extra);
   lines.push('');
 
-  // 多级记忆：长期记忆全量 + 最近 2 天流水 + 与当前问题相关的主动召回片段
-  const memory = opts.pre ? opts.pre.memory : readLongMemory();
-  if (memory) {
+  // 多级记忆：长期记忆（常驻核心 + 相关性召回）+ 最近流水（未晋升部分）+ 主动召回。
+  // 三段各有字符预算、彼此按内容指纹判重 —— 同一段记忆不会在任务单里出现两次。
+  const pre = opts.pre || (() => {
+    const longSel = selectLongMemory(text);
+    const dailySel = selectRecentDaily(2, longSel.fps, MEM_DAILY_MAX);
+    return {
+      memory: longSel.text,
+      memoryTotal: longSel.total,
+      memoryShown: longSel.shown,
+      recentDaily: dailySel.text,
+      dailySkipped: dailySel.skipped,
+      recalled: memoryKeywordRecall(text, history, longSel.fps),
+    };
+  })();
+  if (pre.memory) {
     lines.push('## 长程记忆（长期归档，重要）');
     lines.push('');
-    lines.push(memory);
+    lines.push(pre.memory);
     lines.push('');
+    if (pre.memoryShown < pre.memoryTotal) {
+      lines.push('> 长期记忆共 ' + pre.memoryTotal + ' 条，此处只列出「最近 ' + MEM_CORE_ENTRIES
+        + ' 条 + 与本问题最相关的若干条」，共 ' + pre.memoryShown + ' 条。'
+        + '需要其余条目时，用文件工具读取 `data/memory.md`（历史归档在 `data/memory/archive-long.md`）。');
+      lines.push('');
+    }
   }
-  const recentDaily = opts.skipDaily ? '' : (opts.pre ? opts.pre.recentDaily : readDaily(2));
+  const recentDaily = opts.skipDaily ? '' : pre.recentDaily;
   if (recentDaily) {
     lines.push('## 最近流水（memory/ 近期观察，供参考）');
     lines.push('');
     lines.push(recentDaily);
     lines.push('');
   }
-  const recalled = opts.pre ? opts.pre.recalled : memoryKeywordRecall(text, history);
+  const recalled = pre.recalled || [];
   if (recalled.length) {
     lines.push('## 相关记忆召回（与当前问题匹配的历史记录）');
     lines.push('');
@@ -2537,6 +2752,8 @@ function runDsh(runId, taskText, cfg, stream) {
     const node = bundledNode();
     migrateZstdSessions();
     ensureStreamPlugin();
+    // 补丁必须用「实例化到 data/ 的本机版本」——模板里是相对占位，内核加载不了
+    const patchPath = materializePatch();
     const extended = cfg.extendedTools === true;
     const env = Object.assign({}, process.env, {
       DSH_HOME: DSH_HOME,
@@ -2548,7 +2765,7 @@ function runDsh(runId, taskText, cfg, stream) {
     });
     if (env.DSH_TOOLS_MODE === undefined) delete env.DSH_TOOLS_MODE;
     delete env.DEEPSEEK_KEY;
-    const args = ['--profile', 'headless', '--patch', PERSONA_PATCH, taskText];
+    const args = ['--profile', 'headless', '--patch', patchPath, taskText];
     let child;
     try {
       child = spawn(node, [bin].concat(args), {
@@ -4829,12 +5046,91 @@ function handleRequest(req, res) {
   return sendJson(res, 404, { ok: false, error: 'not found' });
 }
 
-/* 启动维护（后台跑，不挡窗口）：会话迁移 + 记忆蒸馏 + 三个索引刷新 + 启动快照。
+/* ---------------- 中间产物清理（磁盘保留策略） ----------------
+   只清「中间产物」，不碰任何用户内容：
+   - data/tasks/          每次发送时临时拼出的任务单快照 + 结果 JSON
+                          （内容全部来自 chats/memory/library/用户输入，且没有任何代码读回它）
+   - data/.dsh/sessions/  内核逐帧运行日志（UI 不读；内核每次都是全新会话，从不 resume 旧会话）
+   - storages/session_projcache/  与上面配对的会话投影缓存（会话删了就成孤儿）
+   明确不动：chats/、memory.md 与 memory/、deliverables/、library/、config/profiles。
+   _auto_backup 也不动 —— 它自己已有 10 份滚动上限。 */
+const TASK_KEEP_DAYS = 14;      // 任务单快照保留天数
+const TASK_KEEP_MIN = 80;       // 无论如何保留最近 N 个任务文件
+const SESSION_KEEP_DAYS = 14;   // 内核会话日志保留天数
+const SESSION_KEEP_MIN = 20;    // 无论如何保留最近 N 个会话
+const CLEAN_GUARD_MS = 3600 * 1000; // 一小时内动过的文件不删（可能正在跑）
+
+/** 从「按 mtime 降序」的列表里挑出可删项：超出保留期，且不在最近 keepMin 个之内 */
+function pickExpired(items, keepDays, keepMin, now) {
+  const cutoff = now - keepDays * 86400000;
+  return items.filter((it, i) => i >= keepMin && it.mtime < cutoff && (now - it.mtime) > CLEAN_GUARD_MS);
+}
+
+/** 清理中间产物，返回 { files, bytes, skipped } */
+function cleanIntermediateArtifacts() {
+  if (currentRun) return { files: 0, bytes: 0, skipped: 'busy' };
+  const now = Date.now();
+  let files = 0;
+  let bytes = 0;
+
+  // 1) 任务单快照
+  try {
+    const list = fs.readdirSync(TASK_DIR)
+      .filter((n) => /\.(md|json)$/.test(n))
+      .map((n) => {
+        const p = path.join(TASK_DIR, n);
+        try { const st = fs.statSync(p); return { p, mtime: st.mtimeMs, size: st.size }; } catch (_) { return null; }
+      })
+      .filter(Boolean)
+      .sort((a, b) => b.mtime - a.mtime);
+    for (const it of pickExpired(list, TASK_KEEP_DAYS, TASK_KEEP_MIN, now)) {
+      try { fs.rmSync(it.p, { force: true }); files++; bytes += it.size; } catch (_) {}
+    }
+  } catch (_) {}
+
+  // 2) 内核会话日志：按「会话目录」整目录删，避免留下半截会话
+  try {
+    const root = path.join(DSH_HOME, 'sessions');
+    const sessions = [];
+    const walk = (dir) => {
+      let ents;
+      try { ents = fs.readdirSync(dir, { withFileTypes: true }); } catch (_) { return; }
+      let newest = 0;
+      let size = 0;
+      let hasFile = false;
+      for (const ent of ents) {
+        const p = path.join(dir, ent.name);
+        if (ent.isDirectory()) { walk(p); continue; }
+        if (!ent.isFile()) continue;
+        hasFile = true;
+        try { const st = fs.statSync(p); size += st.size; if (st.mtimeMs > newest) newest = st.mtimeMs; } catch (_) {}
+      }
+      // 只把「叶子会话目录」当清理单元（会话目录 = 直接存日志的那层）
+      if (hasFile) sessions.push({ p: dir, mtime: newest, size });
+    };
+    walk(root);
+    sessions.sort((a, b) => b.mtime - a.mtime);
+    for (const it of pickExpired(sessions, SESSION_KEEP_DAYS, SESSION_KEEP_MIN, now)) {
+      const sid = path.basename(it.p);
+      try { fs.rmSync(it.p, { recursive: true, force: true }); files++; bytes += it.size; } catch (_) { continue; }
+      try {
+        // 顺带删掉配对的投影缓存（会话已删，缓存成孤儿）
+        const pc = path.join(DSH_HOME, 'storages', 'session_projcache', 'sessions', sid + '.json');
+        if (fs.existsSync(pc)) { bytes += fs.statSync(pc).size; fs.rmSync(pc, { force: true }); files++; }
+      } catch (_) {}
+    }
+  } catch (_) {}
+
+  return { files, bytes };
+}
+
+/* 启动维护（后台跑，不挡窗口）：会话迁移 + 记忆蒸馏 + 三个索引刷新 + 中间产物清理 + 启动快照。
    索引是持久化镜像，重启时已是上次的状态，所以这里只是「刷新」；源没变的直接跳过。 */
 async function runStartupMaintenance() {
   const yieldLoop = () => new Promise((r) => setImmediate(r));
   const t0 = Date.now();
   let mm = 'skip', ll = 'skip', cc = 'skip';
+  let cl = { files: 0, bytes: 0 };
   try { migrateZstdSessions(); } catch (_) {}
   await yieldLoop();
   try { distillRecentNotes(); } catch (_) {}
@@ -4845,8 +5141,14 @@ async function runStartupMaintenance() {
   await yieldLoop();
   try { cc = chatIndexRebuildIfStale(); } catch (_) {}
   await yieldLoop();
+  try { cl = cleanIntermediateArtifacts(); } catch (_) {}
+  await yieldLoop();
   try { autoBackupData('startup', { oncePerDay: true }); } catch (_) {}
-  try { console.log('[startup] 维护完成 ' + (Date.now() - t0) + 'ms · memory=' + mm + ' lib=' + ll + ' chats=' + cc); } catch (_) {}
+  try {
+    console.log('[startup] 维护完成 ' + (Date.now() - t0) + 'ms · memory=' + mm + ' lib=' + ll
+      + ' chats=' + cc + ' · 清理中间产物 ' + cl.files + ' 个/' + Math.round(cl.bytes / 1024) + 'KB'
+      + (cl.skipped ? '（跳过：' + cl.skipped + '）' : ''));
+  } catch (_) {}
 }
 
 function startServer() {

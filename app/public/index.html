@@ -4,7 +4,7 @@
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>逻敏 · Academy 辩论教练</title>
-  <link rel="stylesheet" href="/style.css?v=3.24.0" />
+  <link rel="stylesheet" href="/style.css?v=3.25.0" />
   <link rel="icon" href="data:image/svg+xml,<svg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 100 100%22><text y=%22.9em%22 font-size=%2290%22>🎓</text></svg>" />
 </head>
 <body>
@@ -82,6 +82,9 @@
         <div id="messages" class="messages"></div>
 
         <div class="composer-wrap">
+          <div class="to-bottom-layer">
+            <button id="btnToBottom" class="to-bottom hidden" type="button" title="回到最新内容">↓ 回到底部</button>
+          </div>
           <div id="keyBanner" class="key-banner hidden">
             ⚠️ 还没配置 DeepSeek API Key，<button id="bannerToSettings" class="link-btn">点此配置</button>
           </div>
@@ -180,6 +183,33 @@
                   </div>
                   <small class="field-hint">Key 只保存在本机 <code>data/profiles.json</code>，只发给你选的地址，不上传任何服务器。
                     <button id="btnClearKey" class="link-btn danger-inline">清除 Key</button></small>
+
+                  <details class="apikey-help" id="apikeyHelp">
+                    <summary>还没有 Key？点这里 → 手把手教你从 DeepSeek 拿到（不会电脑也能照着做）</summary>
+                    <div class="ak-body">
+                      <p class="ak-lead">这串 Key 就像一张「充值卡号」——<b>没有它，软件连不上 AI，就用不了</b>。
+                        跟着下面一步步做，大约 1 分钟：</p>
+                      <ol class="ak-steps">
+                        <li><b>打开官网注册。</b>
+                          点右边的链接即可：
+                          <a class="ak-link" href="https://platform.deepseek.com/api_keys" target="_blank" rel="noopener">platform.deepseek.com ↗</a>
+                          <span class="ak-dim">（国内能直接打开；用<b>手机号</b>注册并登录，收个验证码就行）</span></li>
+                        <li><b>创建 Key。</b>登录后看<b>左边那一列菜单</b>，点 <b>「API Keys」</b>，
+                          再点 <b>「创建 API Key」</b>。名字随便填（比如 <code>academy</code>），点确定。</li>
+                        <li><b>复制这串 Key。</b>屏幕上会出现<b>一串 <code>sk-</code> 开头的字符</b>，这就是 Key。
+                          点它旁边的<b>「复制」</b>。</li>
+                        <li><b>存好它（很重要）。</b>⚠️ 这串 Key <b>只显示这一次</b>，关掉页面就再也看不到了。
+                          请马上粘贴到<b>电脑自带的「记事本」</b>里，保存起来备用。</li>
+                        <li><b>填回本页。</b>把 Key 粘贴到上面的 <b>「API Key」</b>框 →
+                          点最下面的 <b>「保存配置」</b>。想确认能不能用，再点一下 <b>「🔌 测试连接」</b>。</li>
+                      </ol>
+                      <p class="ak-note">💡 用之前一般要给账户<b>充一点钱</b>（按用量扣费，很便宜，先充几块钱能用很久）。
+                        充值入口也是登录后左边的菜单。</p>
+                      <p class="ak-note">💡 已经有别家的 Key（硅基流动 / Kimi / 智谱 / OpenAI 等）？
+                        不用再注册 DeepSeek —— 直接点上面那张对应的<b>服务商卡片</b>，把 Key 填进去就行。</p>
+                      <p class="ak-note">🔒 放心：这串 Key <b>只存在你自己的电脑里</b>，不会上传到任何别的地方。</p>
+                    </div>
+                  </details>
                 </div>
                 <div class="set-step">
                   <div class="set-step-title">模型</div>
@@ -466,9 +496,13 @@ whenToUse: 可选：触发条件描述。
                 <li><b>非商业性使用（NC）</b>：允许非商业性使用，但不得用于商业目的。</li>
                 <li><b>相同方式共享（SA）</b>：允许演绎，但演绎作品必须采用相同许可协议发布。</li>
               </ul>
-              <p class="about-p">
-                整理发布：<b>QFUD（驻青四校联合辩论培训计划）</b>　作品名：logisme-debate-coach
-              </p>
+              <div class="about-pub">
+                <span class="about-pub-logo"><img src="/qfud-logo.png" alt="QFUD" /></span>
+                <div class="about-pub-text">
+                  <b>QFUD</b>（驻青四校联合辩论培训计划）
+                  <span class="about-pub-sub">整理发布 · 作品名 logisme-debate-coach</span>
+                </div>
+              </div>
               <p class="about-p">
                 <button type="button" class="link-btn" id="aboutOpenLicense">查看完整许可声明（LICENSE.md）</button>
                 <button type="button" class="link-btn" id="aboutOpenCC">访问 CC 官方协议文本</button>
@@ -844,6 +878,6 @@ whenToUse: 可选：触发条件描述。
     </div>
   </div>
   <script src="/locale.js?v=1.0.0"></script>
-  <script src="/app.js?v=3.26.0"></script>
+  <script src="/app.js?v=3.31.0"></script>
 </body>
 </html>
