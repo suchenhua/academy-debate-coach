@@ -70,9 +70,10 @@ async function patrolGroup(win, name, sel, enter) {
   const results = [];
   for (const it of list) {
     if (!it.visible) { results.push({ id: it.id, text: it.text, verdict: '不可见', why: '跳过' }); continue; }
-    if (SKIP_IDS.indexOf(it.id) !== -1 || (it.ds && SKIP_DS.indexOf(it.ds) !== -1)) {
+    if (SKIP_IDS.indexOf(it.id) !== -1 || (it.ds && SKIP_DS.indexOf(it.ds) !== -1)
+      || SKIP_TEXTS.some(function (t) { return (it.text || '').indexOf(t) !== -1; })) {
       results.push({ id: it.id, text: it.text, verdict: '跳过', why: '有副作用，巡检不点' });
-      LOG('    ~ ' + (it.id || it.ds) + ' 跳过（有副作用）');
+      LOG('    ~ ' + (it.id || it.ds || it.text) + ' 跳过（有副作用）');
       continue;
     }
     await exec(win, 'window.__patrol.closeAllModals();');
@@ -117,6 +118,8 @@ const SKIP_IDS = [
   'fileInput'
 ];
 const SKIP_DS = ['word', 'pdf', 'markdown']; // 导出当前会话的三个格式项
+/* 按文本跳过：工具箱里的独立窗启动按钮点了会 spawn 真实窗口（弹到用户桌面） */
+const SKIP_TEXTS = ['研究台', '证据检证', '资料溯源'];
 
 /* enter 里 openExportMenu 只在导出组用（点开下拉菜单才看得到导出项） */
 const GROUPS = [

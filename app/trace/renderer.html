@@ -1,0 +1,39 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>📚 资料溯源 · Academy 辩论教练</title>
+<link rel="stylesheet" href="../tool.css" />
+</head>
+<body>
+  <header class="topbar">
+    <span class="logo">📚 资料溯源</span>
+    <span class="grow"></span>
+    <span id="connState" class="conn">连接中…</span>
+  </header>
+
+  <div id="boot" class="boot"><p class="hint">正在连接主 App…</p></div>
+
+  <main id="app" class="hidden">
+    <div id="workPanel" class="work-panel">
+      <div class="panel-title">📚 资料溯源</div>
+      <p class="panel-hint">贴一段要用的资料（名人引言 / 数据 / 文献说法 / 案例 / 名言）。会<b>真联网</b>追它的最早出处、取原文逐句核对、梳理流传链——「网上都这么说」不算出处，转述不算溯源。检证问「这条论据是真的吗」；本工具问「它最早从哪来、有没有走样」。</p>
+      <div class="depth-row">
+        <button type="button" class="depth-chip active" data-depth="quick" title="单轮检索直接判定，赛场上用">⚡ 快速溯源（约 20~40 秒）</button>
+        <button type="button" class="depth-chip" data-depth="deep" title="内核多轮检索+流传链梳理，赛后复核用">🛡 深度溯源（1~5 分钟）</button>
+        <button type="button" class="btn ghost cross-link" id="btnGoVerify" title="只关心论据真不真？用证据检证">🛡 证据检证</button>
+      </div>
+      <textarea id="workInput" rows="8" placeholder="贴一段资料，如：「爱因斯坦说过，疯子就是重复做同一件事却期待不同结果。」（快速溯源一次只查一条，任何服务商都能用）"></textarea>
+      <div class="panel-actions">
+        <button type="button" class="btn primary" id="btnRun">开始溯源</button>
+      </div>
+      <div id="workResult" class="panel-result hidden"></div>
+    </div>
+  </main>
+
+  <div id="toast" class="toast">…</div>
+  <script src="../research/md-view.js"></script>
+  <script src="trace.js"></script>
+</body>
+</html>

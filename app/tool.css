@@ -1,0 +1,57 @@
+/* 独立工具窗共享样式（证据检证 / 资料溯源）。
+   从研究台 research.css 抽出来的公共骨架 + 报告面板样式，
+   研究台仍是独立文件；若哪天研究台迁到 tool-window 壳上，可合并。 */
+:root{ --bg:#f4f6fb; --panel:#fff; --border:#e4e8f1; --text:#1c2434; --muted:#6b7688; --primary:#1f5eff; --primary-soft:#e8efff; --green:#0d9f6e; --amber:#b26a00; --amber-soft:#fff4df; --red:#d23f3f; }
+@media (prefers-color-scheme: dark){ :root:not([data-theme=light]){ --bg:#12161f; --panel:#171d29; --border:#272e3b; --text:#e7ecf3; --muted:#8a94a8; --primary:#6b93ff; --primary-soft:#1c2740; --amber-soft:#3a2c10; } }
+*{ box-sizing:border-box; }
+html,body{ margin:0; height:100%; }
+body{ background:var(--bg); color:var(--text); font-family:"Segoe UI","Microsoft YaHei",system-ui,sans-serif; font-size:14px; display:flex; flex-direction:column; overflow:hidden; }
+.hidden{ display:none !important; }
+.grow{ flex:1; }
+.topbar{ display:flex; align-items:center; gap:10px; padding:8px 14px; border-bottom:1px solid var(--border); background:var(--panel); flex:0 0 auto; user-select:none; }
+.logo{ font-weight:800; font-size:14px; }
+.conn{ font-size:11.5px; color:var(--muted); border:1px solid var(--border); border-radius:999px; padding:2px 10px; }
+.conn.ok{ color:var(--green); border-color:var(--green); }
+.conn.bad{ color:var(--red); border-color:var(--red); }
+.boot{ padding:60px 20px; text-align:center; }
+.hint{ color:var(--muted); }
+main{ flex:1; display:flex; flex-direction:column; min-height:0; padding:14px 16px 16px; overflow-y:auto; }
+.btn{ font-family:inherit; cursor:pointer; border-radius:9px; border:1px solid var(--border); background:var(--panel); color:var(--text); padding:8px 14px; font-size:13px; }
+.btn.primary{ background:var(--primary); border-color:var(--primary); color:#fff; font-weight:600; }
+.btn.primary:disabled{ opacity:.55; cursor:default; }
+.btn.ghost:hover{ border-color:var(--primary); color:var(--primary); }
+.tbtn{ border:0; background:transparent; color:var(--muted); cursor:pointer; font-size:13px; padding:2px 6px; border-radius:6px; font-family:inherit; }
+.tbtn:hover{ color:var(--primary); background:var(--primary-soft); }
+/* ── 报告面板 ── */
+.work-panel{ border:1px solid var(--primary); border-radius:12px; padding:12px 14px; background:var(--panel); }
+.panel-title{ font-size:13px; font-weight:800; display:flex; align-items:center; justify-content:space-between; margin-bottom:6px; }
+.panel-hint{ font-size:11.5px; color:var(--muted); line-height:1.65; margin:0 0 8px; }
+.work-panel textarea{
+  width:100%; box-sizing:border-box; min-height:120px; resize:vertical;
+  font-family:inherit; font-size:12.5px; line-height:1.65;
+  padding:8px 10px; border:1px solid var(--border); border-radius:9px;
+  background:var(--bg); color:var(--text); outline:none;
+}
+.work-panel textarea:focus{ border-color:var(--primary); box-shadow:0 0 0 3px var(--primary-soft); }
+.depth-row{ display:flex; gap:6px; margin-bottom:6px; flex-wrap:wrap; }
+.depth-chip{ font-family:inherit; cursor:pointer; font-size:12px; padding:4px 12px; border-radius:999px; border:1px solid var(--border); background:var(--bg); color:var(--muted); }
+.depth-chip.active{ background:var(--primary); color:#fff; border-color:var(--primary); font-weight:600; }
+.depth-chip:hover{ border-color:var(--primary); }
+/* 运行按钮：固定宽度居中——「开始 / 快速中 / 深度中」文案长短不同，
+   随内容伸缩会让按钮跳位（研究台踩过的坑）。 */
+#btnRun{ min-width:128px; text-align:center; white-space:nowrap; font-variant-numeric:tabular-nums; }
+.panel-actions{ display:flex; align-items:center; gap:10px; margin-top:8px; flex-wrap:wrap; }
+.panel-result{ margin-top:10px; border-top:1px dashed var(--border); padding-top:10px; }
+.panel-result .md{ font-size:12.5px; line-height:1.75; }
+.panel-result .md h3{ font-size:13.5px; }
+.panel-result .md h1,.panel-result .md h2{ font-size:1.1em; }
+.panel-result .md a{ color:var(--primary); word-break:break-all; }
+.panel-result .loading-bar{ height:4px; border-radius:2px; background:var(--primary-soft); overflow:hidden; margin-bottom:8px; }
+.panel-result .loading-bar::after{ content:''; display:block; height:100%; width:38%; background:var(--primary); animation:slide 1.1s ease-in-out infinite; }
+@keyframes slide{ 0%{transform:translateX(-110%)} 100%{transform:translateX(290%)} }
+/* 来源清单（快速模式返回的链接列表） */
+.src-list{ margin-top:8px; display:flex; flex-direction:column; gap:5px; }
+.src-list a{ font-size:11.5px; color:var(--primary); word-break:break-all; }
+.cross-link{ margin-left:auto; font-size:12px; }
+.toast{ position:fixed; left:50%; bottom:16px; transform:translateX(-50%) translateY(8px); background:#111; color:#fff; padding:6px 14px; border-radius:20px; font-size:12px; opacity:0; pointer-events:none; transition:.15s; z-index:50; }
+.toast.show{ opacity:1; transform:translateX(-50%); }

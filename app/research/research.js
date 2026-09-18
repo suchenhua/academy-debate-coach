@@ -138,79 +138,16 @@
   $('btnSearch').onclick = function () { doSearch(); };
   $('btnSuggest').onclick = doSuggest;
 
-  /* ---- 证据检证：论据是否被编造 / 曲解（真联网核查） ---- */
-  var verifying = false;
-  var verifyDepth = 'quick';   // quick=赛场几十秒 | deep=赛后1~5分钟
-  function setDepth(d) {
-    verifyDepth = d;
-    document.querySelectorAll('.depth-chip').forEach(function (b) { b.classList.toggle('active', b.dataset.depth === d); });
-    // 说明写在 placeholder 里：右侧单独放一行会因宽度不足看不全（单行省略号也救不了长文案）
-    $('verifyInput').placeholder = (d === 'quick')
-      ? '贴一条论据，如：据《柳叶刀》2019 年研究，中国有 9500 万抑郁症患者。（快速检证一次只查一条，任何服务商都能用）'
-      : '可一次贴多条论据，逐条核查。如：\n据《柳叶刀》2019 年研究，中国有 9500 万抑郁症患者。\n「青岛 2023 年 GDP 1.5 万亿，超过济南」。';
-  }
-  function runVerify() {
-    if (verifying) { toast('检证正在进行中…'); return; }
-    var claim = ($('verifyInput').value || '').trim();
-    if (!claim) { toast('先把要核查的论据贴进来'); return; }
-    var quick = verifyDepth === 'quick';
-    if (quick && claim.split('\n').filter(function(x){return x.trim()}).length > 1) {
-      // 快速模式多条：自动拆成单条只查第一条？不——提示用户
-      var lines = claim.split('\n').map(function(x){return x.trim();}).filter(function(x){return x;});
-      if (lines.length > 1) { toast('快速检证一次只查一条（' + lines.length + ' 条待检）。请删到只剩一条，或切「完整检证」。'); return; }
-    }
-    verifying = true;
-    $('btnVerifyRun').disabled = true;
-    // 文案统一 5 个汉字 + 「中…」，宽度一致避免按钮伸缩；emoji 显示宽不稳定不用在按钮里
-    $('btnVerifyRun').textContent = quick ? '快速检证中…' : '完整检证中…';
-    var box = $('verifyResult');
-    box.classList.remove('hidden');
-    box.innerHTML = quick
-      ? '<div class="loading-bar"></div><p class="hint">⚡ 快速检证中：联网检索原始出处并核对…（约 20~40 秒）</p>'
-      : '<div class="loading-bar"></div><p class="hint">🛡 完整检证中：多轮检索 + 交叉验证…（约 1~5 分钟，取决于论据数量）</p>';
-    var req = quick
-      ? api('/api/research/verify-quick', 'POST', { claim: claim })
-      : api('/api/research/verify', 'POST', { claim: claim, context: ($('topic').value || '').trim() });
-    req.then(function (r) {
-      var j = r.json || {};
-      if (r.status !== 200 || !j.ok) {
-        throw new Error(j.error || ('HTTP ' + r.status));
-      }
-      var report = j.report || '（空报告）';
-      if (quick && j.disclaimer) report += '\n\n> ' + j.disclaimer;
-      if (quick && (j.sources || []).length) {
-        report += '\n\n**本轮检索到的来源：**\n' + j.sources.map(function (s) { return '- [' + (s.title || s.url) + '](' + s.url + ')'; }).join('\n');
-      }
-      box.innerHTML = '<div class="verify-title">🛡 检证报告' + (quick ? '（快速）' : '') + '<button type="button" class="tbtn" id="verifyCopy" title="复制报告">📋</button><button type="button" class="tbtn" id="verifyToChat" title="发给研究助手讨论">💬</button></div><div class="md" id="verifyMd"></div>';
-      renderMd(document.getElementById('verifyMd'), report);
-      document.getElementById('verifyCopy').onclick = function () {
-        A.copyText(report).then(function () { toast('报告已复制'); });
-      };
-      document.getElementById('verifyToChat').onclick = function () {
-        sendChat((quick ? '关于快速检证报告' : '关于证据检证报告') + '，有几个点想再讨论：\n\n' + report.slice(0, 1200));
-      };
-    }).catch(function (e) {
-      box.innerHTML = '<p class="hint">检证失败：' + esc(e.message) + '</p>';
-    }).then(function () {
-      // 收尾（无论成败）：恢复按钮状态
-      verifying = false;
-      $('btnVerifyRun').disabled = false;
-      $('btnVerifyRun').textContent = '开始检证';
-    });
-  }
+  /* ---- 证据检证：已独立成工具窗（app/verify/），这里只留跳转入口 ---- */
   $('btnVerify').onclick = function () {
-    var box = $('verifyBox');
-    box.classList.toggle('hidden');
-    if (!box.classList.contains('hidden')) {
-      $('verifyBox').scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+    if (A.openVerify) {
+      A.openVerify().then(function (r) {
+        if (!(r && r.ok)) toast('打开失败：' + ((r && r.error) || ''));
+      });
+    } else {
+      toast('证据检证是独立小窗，需要桌面版（Electron）环境');
     }
   };
-  $('verifyClose').onclick = function () { $('verifyBox').classList.add('hidden'); };
-  $('btnVerifyRun').onclick = runVerify;
-  document.querySelectorAll('.depth-chip').forEach(function (b) {
-    b.onclick = function () { setDepth(b.dataset.depth); };
-  });
-  setDepth('quick');   // 默认快速检证（赛场场景优先）
   $('topic').addEventListener('keydown', function (e) { if (e.key === 'Enter') doSearch(); });
 
   /* ---- 独立对话（research 模式，走主 App /api/chat/stream）---- */

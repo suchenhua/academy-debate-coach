@@ -2749,30 +2749,41 @@ function attachmentsPrefix() {
 /* ================= 工具列表 ================= *//* ================= 工具列表 ================= */
 const TOOL_INFO = [
   ['__research__', '🔍 研究台', '边查资料边和教练聊：搜索 + 7 触发条件建议 + 独立研究对话（独立小窗）'],
+  ['__verify__', '🛡 证据检证', '核查论据是否被编造 / 曲解 / 断章取义，真联网查原始出处（独立小窗）'],
+  ['__trace__', '📚 资料溯源', '追一段资料的最早出处与原文，梳理流传链、查讹传（独立小窗）'],
   ['__mdReader__', '📖 MD 阅读器', '打开本地 Markdown / 文本文件阅读'],
   ['辩案工作台-Case-Workbench.html', '辩案工作台', '九步法构建完整辩案'],
   ['简易流水单-Flowing-Tool.html', '简易流水单', '比赛攻防流水记录'],
 ];
 
+/* 独立工具窗（Electron 单独进程）的统一入口：
+   __research__ 走老通道；检证 / 溯源走 tool-window.js 通用壳。 */
+const TOOL_WINDOWS = {
+  '__research__': { icon: '🔍', call: (ae) => ae.openResearch(), fail: '研究台是独立小窗，需要桌面版（Electron）环境；浏览器模式下请用双击文件的方式打开' },
+  '__verify__': { icon: '🛡', call: (ae) => ae.openVerifyTool(), fail: '证据检证是独立小窗，需要桌面版（Electron）环境' },
+  '__trace__': { icon: '📚', call: (ae) => ae.openTraceTool(), fail: '资料溯源是独立小窗，需要桌面版（Electron）环境' },
+};
+
 function renderTools() {
   const box = $('#toolsList');
   box.innerHTML = '';
   for (const [file, name, desc] of TOOL_INFO) {
-    if (file === '__research__') {
-      // 独立轻量窗：研究台（搜索 + 独立研究对话）
+    if (TOOL_WINDOWS[file]) {
+      // 独立轻量窗：研究台 / 证据检证 / 资料溯源（各自独立 Electron 进程）
+      const tw = TOOL_WINDOWS[file];
       const b = document.createElement('button');
       b.type = 'button';
       b.className = 'tool-link';
-      b.innerHTML = '<span><b>' + esc(name) + '</b><br><small>' + esc(desc) + '</small></span><span>🔍</span>';
+      b.innerHTML = '<span><b>' + esc(name) + '</b><br><small>' + esc(desc) + '</small></span><span>' + tw.icon + '</span>';
       b.onclick = async () => {
         try {
           const ae = window.academyElectron;
-          if (ae && ae.openResearch) {
-            const r = await ae.openResearch();
+          if (ae) {
+            const r = await tw.call(ae);
             if (r && r.ok) { $('#toolsModal').classList.add('hidden'); return; }
-            toast('打开研究台失败：' + ((r && r.error) || ''));
+            toast('打开失败：' + ((r && r.error) || ''));
           } else {
-            toast('研究台是独立小窗，需要桌面版（Electron）环境；浏览器模式下请用双击文件的方式打开');
+            toast(tw.fail);
           }
         } catch (e) { toast('打开失败：' + (e.message || e)); }
       };

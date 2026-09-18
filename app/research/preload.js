@@ -7,4 +7,6 @@ contextBridge.exposeInMainWorld('academyResearch', {
   proxy: (payload) => ipcRenderer.invoke('research:proxy', payload),
   copyText: (text) => ipcRenderer.invoke('research:copyText', text),
   setTitle: (t) => ipcRenderer.invoke('research:setTitle', t),
+  /* 打开独立的「证据检证」工具窗 */
+  openVerify: () => ipcRenderer.invoke('research:openVerify'),
 });

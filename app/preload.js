@@ -23,6 +23,9 @@ contextBridge.exposeInMainWorld('academyElectron', {
   showInFolder: (filePath) => ipcRenderer.invoke('shell:showItem', filePath),
   /* 打开「研究台」独立轻量窗 */
   openResearch: () => ipcRenderer.invoke('app:openResearch'),
+  /* 打开独立工具窗（tool-window.js 按 --tool 加载）：证据检证 / 资料溯源 */
+  openVerifyTool: () => ipcRenderer.invoke('app:openTool', { name: 'verify' }),
+  openTraceTool: () => ipcRenderer.invoke('app:openTool', { name: 'trace' }),
   /* 选择备份文件并读取内容 */
   openBackupFile: () => ipcRenderer.invoke('backup:open'),
   /* 收到"用此 App 打开某文件"（文件关联双击）时触发 */

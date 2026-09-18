@@ -472,6 +472,20 @@ ipcMain.handle('app:openResearch', async () => {
     return { ok: true };
   } catch (e) { return { ok: false, error: e.message }; }
 });
+/* 独立工具窗（证据检证 / 资料溯源……）：通用壳 tool-window.js 按 --tool 加载对应渲染目录 */
+ipcMain.handle('app:openTool', async (_evt, payload) => {
+  try {
+    const name = String((payload || {}).name || '');
+    if (!['verify', 'trace'].includes(name)) return { ok: false, error: '未知工具：' + name };
+    const exePath = process.execPath;
+    const script = path.join(__dirname, 'tool-window.js');
+    if (!fs.existsSync(script)) return { ok: false, error: '找不到工具窗程序（app/tool-window.js）' };
+    const { spawn } = require('child_process');
+    spawn(exePath, [script, '--tool=' + name], { cwd: ROOT, windowsHide: false, stdio: 'ignore', detached: true }).unref();
+    log('打开工具窗: ' + name);
+    return { ok: true };
+  } catch (e) { return { ok: false, error: e.message }; }
+});
 ipcMain.handle('shell:showItem', async (_evt, filePath) => {
   try {
     const { shell } = require('electron');

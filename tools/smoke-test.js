@@ -657,6 +657,24 @@ async function main() {
         fsMod.existsSync(path.join(ROOT, 'tools', 'ui-patrol.js')) &&
         fsMod.existsSync(path.join(ROOT, 'tools', 'patrol-inject.js')));
 
+      /* 独立工具窗（2026-09-19）：证据检证独立 + 资料溯源新增，共用 tool-window 通用壳 */
+      check('工具窗通用壳存在 · app/tool-window.js', fsMod.existsSync(path.join(ROOT, 'app', 'tool-window.js')));
+      check('证据检证独立窗渲染层存在 · app/verify/',
+        fsMod.existsSync(path.join(ROOT, 'app', 'verify', 'renderer.html')) &&
+        fsMod.existsSync(path.join(ROOT, 'app', 'verify', 'verify.js')));
+      check('资料溯源工具渲染层存在 · app/trace/',
+        fsMod.existsSync(path.join(ROOT, 'app', 'trace', 'renderer.html')) &&
+        fsMod.existsSync(path.join(ROOT, 'app', 'trace', 'trace.js')));
+      check('★ 溯源接口已注册（trace-quick / trace）',
+        serverSrc.indexOf("/api/research/trace-quick") !== -1 && serverSrc.indexOf("'POST' && p === '/api/research/trace'") !== -1);
+      check('★ 主窗口 preload 暴露工具窗入口',
+        fsMod.readFileSync(path.join(ROOT, 'app', 'preload.js'), 'utf8').indexOf('openVerifyTool') !== -1);
+      check('★ electron-main 注册 app:openTool',
+        fsMod.readFileSync(path.join(ROOT, 'app', 'electron-main.js'), 'utf8').indexOf("app:openTool") !== -1);
+      const researchJsSrc = fsMod.readFileSync(path.join(ROOT, 'app', 'research', 'research.js'), 'utf8');
+      check('★ 研究台已移除检证面板（不再调 verify-quick）', researchJsSrc.indexOf('verify-quick') === -1 && researchJsSrc.indexOf('verifyBox') === -1);
+      check('★ 研究台保留检证跳转入口', researchJsSrc.indexOf('openVerify') !== -1);
+
       /* 10c. ★ 打包链路：build-installer 必须按**当前型号**去找 pack.js 产出的 zip。
          9/13 型号架构落地时，pack.js 的 zip 名加了型号后缀，而 build-installer 还写死
          旧名字 —— 结果「安装版再也打不出来」，pack.js 刚打完 zip 就报「缺少便携版 zip」。

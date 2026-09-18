@@ -3262,6 +3262,85 @@ function buildVerifySeeds(claim) {
   return out.slice(0, 3);
 }
 
+/* 溯源检索词：在检证词的基础上加「原文 / 出处」后缀变体——
+   溯源要找的是最早出处与原文，而不是转述报道。 */
+function buildTraceSeeds(text) {
+  const base = buildVerifySeeds(text);
+  const out = base.slice();
+  if (base.length) {
+    const q0 = base[0];
+    for (const suffix of [' 原文', ' 出处']) {
+      const t = (q0 + suffix).trim();
+      if (out.indexOf(t) === -1) out.push(t);
+    }
+  }
+  return out.slice(0, 4);
+}
+
+/* 快速检证 / 快速溯源共用的来源收集管线（两条通道按可用性自动叠加）：
+ *   ① 模型商原生 web_search（DeepSeek 官方）——召回质量高，能挖到论文 DOI/PubMed；
+ *   ② 端侧免费搜索（Bing/DuckDuckGo）——任何服务商通用，但学术原文召回弱。
+ * 原来这段内联在 verify-quick 里，溯源（trace-quick）要同一套管线，抽成共用。
+ * 返回 { sources: [{url,title,snippet}], via }。 */
+async function gatherSearchSources(cfg, nativeQuery, seedQueries) {
+  const key = String(cfg.apiKey || '').trim();
+  const seenUrl = new Set();
+  const sources = [];
+  let via = 'free';
+
+  // ① 优先：模型商原生 web_search（DeepSeek 官方，质量高）
+  const nativeBase = searchServerBase(cfg);
+  if (nativeBase && key) {
+    try {
+      const r2 = await postJsonTimeout(nativeBase + '/messages', {
+        'x-api-key': key,
+        'authorization': 'Bearer ' + key,
+        'anthropic-version': '2023-06-01',
+        'accept': 'application/json',
+      }, {
+        model: cfg.model || DEFAULT_MODEL,
+        max_tokens: 4096,
+        messages: [{ role: 'user', content: [{ type: 'text', text: 'Perform a web search for the query: ' + String(nativeQuery || '').slice(0, 200) }] }],
+        tools: [{ type: 'web_search_20250305', name: 'web_search', max_uses: 5 }],
+      }, 60000);
+      const blocks = (r2 && Array.isArray(r2.content)) ? r2.content : [];
+      for (const b of blocks) {
+        if (!b || b.type !== 'web_search_tool_result') continue;
+        for (const item of (b.content || [])) {
+          if (!item || item.type !== 'web_search_result' || !item.url || seenUrl.has(item.url)) continue;
+          seenUrl.add(item.url);
+          sources.push({ url: item.url, title: String(item.title || '').slice(0, 120), snippet: '' });
+          if (sources.length >= 12) break;
+        }
+        if (sources.length >= 12) break;
+      }
+      if (sources.length) via = 'native';
+    } catch (_) { /* 原生搜索不可用 → 静默走端侧 */ }
+  }
+
+  // ② 回退/补充：端侧免费搜索（任何服务商通用）
+  if (sources.length < 5) {
+    const before = sources.length;
+    for (const q of seedQueries) {
+      try {
+        const r3 = await searchResults(q);
+        const list = (r3 && r3.sources) || [];
+        for (const s of list) {
+          if (!s || !s.url || seenUrl.has(s.url)) continue;
+          seenUrl.add(s.url);
+          sources.push({ url: s.url, title: String(s.title || '').slice(0, 120), snippet: String(s.snippet || '').slice(0, 300) });
+          if (sources.length >= 12) break;
+        }
+      } catch (_) {}
+      if (sources.length >= 12) break;
+    }
+    if (sources.length > before && via === 'native') via = 'native+free';
+    else if (sources.length > before) via = 'free';
+  }
+
+  return { sources, via };
+}
+
 /* 端侧检索统一入口：优先用用户配置的自定义搜索服务（可靠），
    没有配置才退回内置免费抓取（可能被反爬挡住，返回结果会带 lowQuality 标记）。 */
 async function searchResults(query) {
@@ -3872,59 +3951,7 @@ function handleRequest(req, res) {
       const t0 = Date.now();
       try {
         const seeds = buildVerifySeeds(claim);
-        const seenUrl = new Set();
-        const sources = [];
-        let via = 'free';
-
-        // ① 优先：模型商原生 web_search（DeepSeek 官方，质量高）
-        const nativeBase = searchServerBase(cfg);
-        if (nativeBase) {
-          try {
-            const r2 = await postJsonTimeout(nativeBase + '/messages', {
-              'x-api-key': key,
-              'authorization': 'Bearer ' + key,
-              'anthropic-version': '2023-06-01',
-              'accept': 'application/json',
-            }, {
-              model: cfg.model || DEFAULT_MODEL,
-              max_tokens: 4096,
-              messages: [{ role: 'user', content: [{ type: 'text', text: 'Perform a web search for the query: ' + String(claim).slice(0, 200) }] }],
-              tools: [{ type: 'web_search_20250305', name: 'web_search', max_uses: 5 }],
-            }, 60000);
-            const blocks = (r2 && Array.isArray(r2.content)) ? r2.content : [];
-            for (const b of blocks) {
-              if (!b || b.type !== 'web_search_tool_result') continue;
-              for (const item of (b.content || [])) {
-                if (!item || item.type !== 'web_search_result' || !item.url || seenUrl.has(item.url)) continue;
-                seenUrl.add(item.url);
-                sources.push({ url: item.url, title: String(item.title || '').slice(0, 120), snippet: '' });
-                if (sources.length >= 12) break;
-              }
-              if (sources.length >= 12) break;
-            }
-            if (sources.length) via = 'native';
-          } catch (_) { /* 原生搜索不可用 → 静默走端侧 */ }
-        }
-
-        // ② 回退/补充：端侧免费搜索（任何服务商通用）
-        if (sources.length < 5) {
-          const before = sources.length;
-          for (const q of seeds) {
-            try {
-              const r3 = await searchResults(q);
-              const list = (r3 && r3.sources) || [];
-              for (const s of list) {
-                if (!s || !s.url || seenUrl.has(s.url)) continue;
-                seenUrl.add(s.url);
-                sources.push({ url: s.url, title: String(s.title || '').slice(0, 120), snippet: String(s.snippet || '').slice(0, 300) });
-                if (sources.length >= 12) break;
-              }
-            } catch (_) {}
-            if (sources.length >= 12) break;
-          }
-          if (sources.length > before && via === 'native') via = 'native+free';
-          else if (sources.length > before) via = 'free';
-        }
+        const { sources, via } = await gatherSearchSources(cfg, claim, seeds);
 
         // ② 把来源交给模型做单次判定（标准 OpenAI 兼容接口，任何服务商都能用）
         const srcText = sources.length
@@ -3991,6 +4018,159 @@ function handleRequest(req, res) {
         return sendJson(res, 502, { ok: false, error: '快速检证失败：' + e.message });
       }
     });
+  }
+
+  // 工具箱：资料溯源 · 快速版（几十秒出结果）。
+  // 与快速检证共用 gatherSearchSources 管线，但判定目标不同：
+  // 检证问「这条论据是真的吗」，溯源问「这段资料最早从哪来、原文是什么、
+  // 传到今天有没有走样」。来源收集一致，判定提示词完全独立。
+  if (req.method === 'POST' && p === '/api/research/trace-quick') {
+    if (currentRun) return sendJson(res, 409, { ok: false, error: 'BUSY', message: '内核任务正在运行（不影响快速溯源），但为避免抢资源请稍后再试。' });
+    return readBody(req, 128 * 1024).then(async (raw) => {
+      let body;
+      try { body = JSON.parse(raw || '{}'); } catch (_) { return sendJson(res, 400, { ok: false, error: 'JSON 解析失败' }); }
+      const claim = String(body.claim || '').trim();
+      if (!claim) return sendJson(res, 400, { ok: false, error: '缺少要溯源的资料' });
+      if (claim.length > 4000) return sendJson(res, 400, { ok: false, error: '快速溯源单次只处理一条资料（限 4000 字符）。多条请逐条来。' });
+
+      const cfg = loadConfig();
+      const key = String(cfg.apiKey || '').trim();
+      if (!key) return sendJson(res, 400, { ok: false, error: '未配置 API Key，无法调用模型做判定。' });
+
+      const t0 = Date.now();
+      try {
+        const seeds = buildTraceSeeds(claim);
+        const { sources, via } = await gatherSearchSources(cfg, claim, seeds);
+
+        const srcText = sources.length
+          ? sources.map((s, i) => '[' + (i + 1) + '] ' + (s.title || s.url) + '\n    ' + s.url + (s.snippet ? '\n    摘要：' + s.snippet : '')).join('\n')
+          : '（本次没有检索到任何来源，请据此判定为「未能溯源」，不要臆造出处）';
+
+        const prompt = [
+          '你是辩论赛场边的资料溯源员。下面是待溯源的资料（引言 / 数据 / 文献 / 案例 / 名言），以及系统检索到的来源材料。',
+          '请只依据这些材料（以及可靠的常识）判断，并输出报告。',
+          '',
+          '【待溯源资料】',
+          claim,
+          '',
+          '【检索到的来源】',
+          srcText,
+          '',
+          '【输出格式】',
+          '**最早出处**：<能查到的最早 / 最权威来源 + 链接；材料不足就写「未能溯源」，不要硬凑>',
+          '**原文核对**：<原文关键句与用户给的版本是否一致；属于直接引用、转述还是改写，差异逐项列>',
+          '**流传情况**：<这段资料常见的转引形式；是否存在讹传、张冠李戴、断章取义>',
+          '**可靠引用写法**：<一句可以直接上场念的严谨引用（含出处）>',
+          '',
+          '【铁律】',
+          '- 来源材料不足以确认时，写「未能溯源」，绝不编造出处、作者或年份；',
+          '- 「网上很多人这么说」不等于有出处——转述不算溯源，要追到最早 / 最一手来源；',
+          '- 出处存疑时宁可保守，明确告知哪一环没查实。',
+        ].join('\n');
+
+        const target = chatCompletionsUrl(cfg.baseUrl);
+        const result = await postJsonTimeout(target, {
+          'authorization': 'Bearer ' + key,
+          'accept': 'application/json',
+        }, {
+          model: cfg.model || DEFAULT_MODEL,
+          max_tokens: 6000,
+          temperature: 0.2,
+          messages: [
+            { role: 'system', content: '你是严谨的辩论资料溯源员，只依据给定材料判断，绝不编造出处。直接输出报告，不要复述思考过程。' },
+            { role: 'user', content: prompt },
+          ],
+        }, 90000);
+
+        const msg0 = (((result || {}).choices || [])[0] || {}).message || {};
+        let report = String(msg0.content || '').trim();
+        if (!report) report = String(msg0.reasoning_content || '').trim();
+        if (!report) {
+          console.log('[research] 快速溯源: 模型响应为空 raw=' + JSON.stringify(result).slice(0, 300));
+          return sendJson(res, 500, { ok: false, error: '模型没有返回溯源报告（响应为空），请重试。' });
+        }
+        console.log('[research] 快速溯源完成: ' + claim.slice(0, 40) + ' 用时 ' + Math.round((Date.now() - t0) / 1000) + 's, 来源 ' + sources.length + ' 条, 通道 ' + via);
+        return sendJson(res, 200, {
+          ok: true, claim, report,
+          sources: sources.map((s) => ({ url: s.url, title: s.title })),
+          elapsedMs: Date.now() - t0,
+          quick: true,
+          via,
+          disclaimer: via === 'free'
+            ? '快速溯源只做一轮端侧检索（当前服务商无原生搜索，已自动降级为免费端侧搜索，学术原文召回较弱），结论供快速参考；重要资料建议用「深度溯源」复核。'
+            : '快速溯源只做一轮检索，结论供快速参考；重要资料建议用「深度溯源」复核。',
+        });
+      } catch (e) {
+        return sendJson(res, 502, { ok: false, error: '快速溯源失败：' + e.message });
+      }
+    });
+  }
+
+  // 工具箱：资料溯源 · 深度版（内核多轮检索，1~5 分钟）。
+  // 结构同 /api/research/verify：走内核 Agent 循环，可边推理边多轮联网检索。
+  if (req.method === 'POST' && p === '/api/research/trace') {
+    if (currentRun) return sendJson(res, 409, { ok: false, error: 'BUSY', message: '有一个任务正在运行，请等待完成后再试。' });
+    return readBody(req, 256 * 1024).then((raw) => {
+      let body;
+      try { body = JSON.parse(raw || '{}'); } catch (_) { return sendJson(res, 400, { ok: false, error: 'JSON 解析失败' }); }
+      const claim = String(body.claim || '').trim();
+      if (!claim) return sendJson(res, 400, { ok: false, error: '缺少要溯源的资料' });
+      if (claim.length > 20000) return sendJson(res, 400, { ok: false, error: '资料过长（超过 20000 字符），请拆分后逐条溯源。' });
+      const context = String(body.context || '').trim().slice(0, 2000);
+      if (!engineReady()) return sendJson(res, 500, { ok: false, error: 'NO_ENGINE', message: 'Agent 内核缺失，无法进行资料溯源。' });
+      const cfg = loadConfig();
+      const runId = 'trc-' + Date.now().toString(36) + '-' + crypto.randomBytes(3).toString('hex');
+      const prompt = [
+        '你是辩论资料研究助手，正在做【资料溯源】。用户会给出一段（或一组）准备在赛场上使用的资料，',
+        '（引言 / 数据 / 文献 / 案例 / 名言），你要追出它最早从哪来、原文是什么、传到今天有没有走样。',
+        '',
+        '## 待溯源资料',
+        '',
+        claim,
+        '',
+        context ? ('## 使用语境（供参考，不必溯源这部分）\n\n' + context) : '',
+        '',
+        '## 溯源流程（逐条执行，必须真联网搜索）',
+        '',
+        '1. **找最早出处**：用 web_search 搜这段资料的最早来源（一手文献 / 官方发布 / 当事人原始表述），',
+        '   优先找政府网站、学术期刊、机构报告、原始讲话/著作的原文；转述文章不算出处，只能当线索。',
+        '2. **取原文核对**：找到原文后逐句比对——是直接引用、转述还是改写？',
+        '   任何添油加醋、数字变动、语境挪移都要指出来。',
+        '3. **梳理流传链**：这段资料从哪来、经过哪些环节传开（媒体报道 → 自媒体 → 教辅材料…），',
+        '   指出链条上哪一环开始走样；「网上都这么说」的流行版本和原始版本差异往往是攻击点。',
+        '4. **查讹传与张冠李戴**：名言查是不是真说过（很多名人名言是托名），',
+        '   数据查是不是这个机构、这一年、这个口径；案例查细节有没有被夸大。',
+        '5. **给权威引用写法**：给出最严谨的引用表述（谁、在哪、哪年、原话是什么），',
+        '   并给一句可以直接上场念的话。',
+        '',
+        '## 输出格式（严格遵守）',
+        '',
+        '对每一条资料输出：',
+        '',
+        '### 第 N 条：<资料摘要>',
+        '**溯源结果**：✅ 已溯源到原始出处 / ⚠️ 溯源到近似来源（有走样）/ ❌ 查无出处或系讹传 / 🔍 未能溯源',
+        '**最早出处**：<找到的最早 / 最权威来源，附链接；未能溯源就明确写「未能溯源」>',
+        '**原文核对**：<原文 vs 用户版本，逐项差异>',
+        '**流传链**：<从源头到流行版本的传播路径，哪一环开始走样>',
+        '**可靠引用写法**：<一句可以直接上场念的严谨引用（含出处）>',
+        '',
+        '## 铁律',
+        '',
+        '- 必须真联网搜索核实，禁止凭记忆断言「这句话是某某说的」；',
+        '- 查不到就明说「未能溯源」，绝对不能为了显得专业而编造出处、作者或年份；',
+        '- 转述不算溯源：只有追到一手来源才算「已溯源」；',
+        '- 结论宁可保守：存疑就降级为「未能溯源」，不要硬给结论。',
+      ].filter(Boolean).join('\n');
+      ensureDir(TASK_DIR);
+      const taskFile = path.join(TASK_DIR, runId + '.md');
+      fs.writeFileSync(taskFile, prompt, 'utf8');
+      writeDshSettings(cfg.model, cfg.baseUrl, effectiveSearchKey(cfg), resolveSearchProvider(cfg));
+      return runDsh(runId, prompt, cfg, () => {}).then((info) => {
+        const out = String(info.stdout || '').trim();
+        if (!out) return sendJson(res, 500, { ok: false, error: '内核没有返回内容，请重试。' });
+        return sendJson(res, 200, { ok: true, claim, report: out, elapsedMs: info.timedOut ? -1 : 0 });
+      }).catch((e) => sendJson(res, 500, { ok: false, error: e.message }));
+    }).catch((e) => sendJson(res, 500, { ok: false, error: e.message }));
   }
 
   // 供 DSH 内置 web_search 调用的本地搜索代理（Anthropic Messages 兼容）

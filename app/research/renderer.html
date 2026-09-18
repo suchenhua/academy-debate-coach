@@ -22,7 +22,7 @@
         <input type="text" id="topic" placeholder="输入辩题或关键词，如：人工智能应该有版权吗…" autocomplete="off" />
         <button id="btnSearch" class="btn primary">🔍 搜索</button>
         <button id="btnSuggest" class="btn ghost" title="按 7 种触发条件分析该搜什么">📋 建议该搜什么</button>
-        <button id="btnVerify" class="btn verify" title="核查论据是否被编造或曲解">🛡 证据检证</button>
+        <button id="btnVerify" class="btn verify" title="核查论据是否被编造或曲解（独立工具窗）">🛡 证据检证</button>
       </div>
       <div class="mode-row">
         <span class="lbl">检索方式：</span>
@@ -37,23 +37,7 @@
       <section class="left">
         <div id="suggestBox" class="suggest hidden"></div>
 
-        <!-- 证据检证面板 -->
-        <div id="verifyBox" class="verify hidden">
-          <div class="verify-title">
-            🛡 证据检证
-            <button type="button" class="tbtn" id="verifyClose" title="收起">✕</button>
-          </div>
-          <p class="verify-hint">把准备上场的论据贴进来（数据 / 案例 / 研究结论 / 名人引言）。研究助手会<b>真联网</b>查原始出处，核对是否被编造、曲解、断章取义。</p>
-          <div class="verify-depth">
-            <button type="button" class="depth-chip active" data-depth="quick" title="单轮检索直接判定，赛场上用">⚡ 快速检证（约 20~40 秒）</button>
-            <button type="button" class="depth-chip" data-depth="deep" title="内核多轮检索+交叉验证，赛后复核用">🛡 完整检证（1~5 分钟）</button>
-          </div>
-          <textarea id="verifyInput" rows="7" placeholder="贴一条论据，如：据《柳叶刀》2019 年研究，中国有 9500 万抑郁症患者。（快速检证一次只查一条，任何服务商都能用）"></textarea>
-          <div class="verify-actions">
-            <button type="button" class="btn primary" id="btnVerifyRun">开始检证</button>
-          </div>
-          <div id="verifyResult" class="verify-result hidden"></div>
-        </div>
+        <!-- 证据检证已独立成工具窗（2026-09-19）：点工具栏按钮打开。 -->
 
         <div id="resultsBox" class="results"><p class="hint">输入关键词后点「搜索」</p></div>
       </section>
