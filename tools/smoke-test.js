@@ -639,6 +639,24 @@ async function main() {
       check('★ 补丁：关进程脚本带 BOM 写盘', patchCs.indexOf('UTF8Encoding(true)') !== -1);
       check('★ 补丁：关进程结果会被检查', patchCs.indexOf('仍有进程占用') !== -1);
 
+      /* 10b+. UI 断链防线（2026-09-19 巡检轮）：
+         window.prompt 在 Electron 里直接抛错（点了没反应、不报错），
+         9/19 前辩题归档改名就是这么坏的。一律走 askInput 应用内弹窗。 */
+      const appJsSrc = fsMod.readFileSync(path.join(ROOT, 'app', 'public', 'app.js'), 'utf8');
+      check('★ app.js 不再调用 window.prompt', appJsSrc.indexOf('window.prompt(') === -1);
+      check('★ askInput 应用内输入弹窗存在', /function askInput\(/.test(appJsSrc));
+      check('★ inputModal 弹窗结构存在',
+        fsMod.readFileSync(path.join(ROOT, 'app', 'public', 'index.html'), 'utf8').indexOf('id="inputModal"') !== -1);
+      /* 巡检必须用隔离数据目录跑 —— server 支持 ACADEMY_DATA_DIR 是隔离的前提 */
+      const serverSrc = fsMod.readFileSync(path.join(ROOT, 'app', 'server.js'), 'utf8');
+      check('★ server 支持 ACADEMY_DATA_DIR 隔离', serverSrc.indexOf('ACADEMY_DATA_DIR') !== -1);
+      check('★ server 资料库读取走 dataAbs（隔离不漏）', serverSrc.indexOf('function dataAbs(') !== -1);
+      /* 巡检三件套在位（runner / 注入 / 巡检本体），丢一个巡检就跑不起来 */
+      check('巡检工具三件套存在',
+        fsMod.existsSync(path.join(ROOT, 'tools', 'run-ui-patrol.js')) &&
+        fsMod.existsSync(path.join(ROOT, 'tools', 'ui-patrol.js')) &&
+        fsMod.existsSync(path.join(ROOT, 'tools', 'patrol-inject.js')));
+
       /* 10c. ★ 打包链路：build-installer 必须按**当前型号**去找 pack.js 产出的 zip。
          9/13 型号架构落地时，pack.js 的 zip 名加了型号后缀，而 build-installer 还写死
          旧名字 —— 结果「安装版再也打不出来」，pack.js 刚打完 zip 就报「缺少便携版 zip」。

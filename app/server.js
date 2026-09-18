@@ -31,7 +31,9 @@ const { ocrImageBuffer, ocrStatus, IMAGE_EXT: OCR_IMAGE_EXT } = require('./ocr-w
 
 const ROOT = path.resolve(__dirname, '..');
 const PUBLIC_DIR = path.join(__dirname, 'public');
-const DATA_DIR = path.join(ROOT, 'data');
+/* ACADEMY_DATA_DIR：把用户数据整体指到别的目录（测试/巡检用）。
+   巡检会真实点击设置里的保存类按钮，绝不能落在真实 data/ 上 —— 见 tools/run-ui-patrol.js */
+const DATA_DIR = process.env.ACADEMY_DATA_DIR ? path.resolve(process.env.ACADEMY_DATA_DIR) : path.join(ROOT, 'data');
 const TASK_DIR = path.join(DATA_DIR, 'tasks');
 const DSH_HOME = path.join(DATA_DIR, '.dsh');
 const MEMORY_FILE = path.join(DATA_DIR, 'memory.md');
@@ -1465,6 +1467,17 @@ function libRel(p) {
   return String(p || '').replace(/\\/g, '/');
 }
 
+/* 库内条目存的是「相对 ROOT」路径（历史约定，形如 data/library/...）。
+   ACADEMY_DATA_DIR 生效时，data/ 前缀的相对路径必须改指到 DATA_DIR，
+   否则资料库读写仍落在真实 data/ 上，隔离就漏了。 */
+function dataAbs(rel) {
+  const r = String(rel || '').replace(/\\/g, '/');
+  if (DATA_DIR !== path.join(ROOT, 'data') && (r === 'data' || r.startsWith('data/'))) {
+    return path.join(DATA_DIR, r.slice(5));
+  }
+  return path.join(ROOT, r);
+}
+
 /* 注意：本函数自 PDF 改用 pdfjs 后是**异步**的（解析要 await）。
    纯文本分支仍是同步语义，但统一返回 Promise，避免调用方一半同步一半异步。 */
 async function libExtractText(ext, buf) {
@@ -1588,7 +1601,7 @@ function libAddFromDeliverable(name, opts = {}) {
     addedAt: Date.now(),
     enabled: true,
     file: '',                             // 引用式：资料库自己不存原件
-    // 注意：textFile 必须是「相对 ROOT」的路径（与其他条目一致，读取处统一 path.join(ROOT, textFile)）。
+    // 注意：textFile 必须是「相对 ROOT」的路径（与其他条目一致，读取处统一 dataAbs(textFile)）。
     // 这里若写成绝对路径，会和 ROOT 再拼一次导致读不到 —— 曾因此出现「入库成功但召不回」。
     textFile: libRel(path.join('data', 'deliverables', safe)),
     preview: rawText.replace(/\s+/g, ' ').slice(0, 100),
@@ -1610,7 +1623,7 @@ function libRemove(id) {
         if (!rel) continue;
         // 引用式条目（kind=deliverable）的 textFile 指向产物原件，删资料绝不能删原件
         if (target.kind === 'deliverable') continue;
-        try { fs.unlinkSync(path.join(ROOT, rel)); } catch (_) {}
+        try { fs.unlinkSync(dataAbs(rel)); } catch (_) {}
       }
     }
     return true;
@@ -1624,7 +1637,7 @@ function libPublic(it) {
   if (it.kind === 'deliverable') {
     // textFile 是相对 ROOT 的路径，与读取处保持一致
     const rel = String(it.textFile || '').split('/').join(path.sep);
-    missing = !!it.missing || !fs.existsSync(path.join(ROOT, rel));
+    missing = !!it.missing || !fs.existsSync(dataAbs(rel));
   }
   return {
     id: it.id, name: it.name, ext: it.ext, kind: it.kind,
@@ -1730,7 +1743,7 @@ function libIndexRebuild() {
       let rid = 0;
       for (const it of idx.items) {
         let text = '';
-        try { text = fs.readFileSync(path.join(ROOT, it.textFile), 'utf8'); } catch (_) {}
+        try { text = fs.readFileSync(dataAbs(it.textFile), 'utf8'); } catch (_) {}
         // 引用式条目指向的产物已被删除 → 跳过索引这次巡检会让检索出现「命中但读不到」，
         // 所以这里标记缺失，让 UI 能提示用户「原件已不存在」
         if (!text && it.kind === 'deliverable') { it.missing = true; }
@@ -1790,7 +1803,7 @@ function libScoreAndCollect(pool, keys, termsMap) {
   const scored = [];
   for (const it of pool) {
     let text = '';
-    try { text = fs.readFileSync(path.join(ROOT, it.textFile), 'utf8'); } catch (_) { continue; }
+    try { text = fs.readFileSync(dataAbs(it.textFile), 'utf8'); } catch (_) { continue; }
     if (!text) continue;
     const { score, hits } = libScoreText(text, termsMap);
     // 标题 / 标签命中加权：资料名与标签直接对应辩题时，优先级更高
@@ -4089,7 +4102,7 @@ function handleRequest(req, res) {
         const idx = libLoadIndex();
         for (const it of idx.items) {
           let text = '';
-          try { text = fs.readFileSync(path.join(ROOT, it.textFile), 'utf8'); } catch (_) { text = ''; }
+          try { text = fs.readFileSync(dataAbs(it.textFile), 'utf8'); } catch (_) { text = ''; }
           if (!text) continue;
           library.items.push(it);
           library.texts[it.id] = text;
@@ -4660,7 +4673,7 @@ function handleRequest(req, res) {
       const it = idx.items.find((x) => x.id === id);
       if (!it) return sendJson(res, 404, { ok: false, error: '资料不存在' });
       let text = '';
-      try { text = fs.readFileSync(path.join(ROOT, it.textFile), 'utf8'); } catch (_) { text = ''; }
+      try { text = fs.readFileSync(dataAbs(it.textFile), 'utf8'); } catch (_) { text = ''; }
       return sendJson(res, 200, { ok: true, id: it.id, name: it.name, text, charCount: text.length });
     } catch (e) { return sendJson(res, 500, { ok: false, error: e.message }); }
   }

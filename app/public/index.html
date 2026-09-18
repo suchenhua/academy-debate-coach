@@ -4,7 +4,7 @@
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>逻敏 · Academy 辩论教练</title>
-  <link rel="stylesheet" href="/style.css?v=3.26.0" />
+  <link rel="stylesheet" href="/style.css?v=3.27.0" />
   <link rel="icon" href="data:image/svg+xml,<svg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 100 100%22><text y=%22.9em%22 font-size=%2290%22>🎓</text></svg>" />
 </head>
 <body>
@@ -564,6 +564,24 @@ whenToUse: 可选：触发条件描述。
     </div>
   </div>
 
+  <!-- 应用内输入弹窗（替代 window.prompt —— Electron 不支持 prompt） -->
+  <div id="inputModal" class="modal hidden">
+    <div class="modal-box small">
+      <div class="modal-head">
+        <h2 id="inputModalTitle">请输入</h2>
+        <button class="modal-close" data-close="inputModal">×</button>
+      </div>
+      <div class="modal-body">
+        <div id="inputModalHint" class="input-modal-hint hidden"></div>
+        <div id="inputModalFields" class="input-modal-fields"></div>
+        <div class="modal-actions input-modal-actions">
+          <button type="button" class="btn ghost" id="inputModalCancel">取消</button>
+          <button type="button" class="btn primary" id="inputModalOk">确定</button>
+        </div>
+      </div>
+    </div>
+  </div>
+
   <!-- 工具弹窗 -->
   <div id="toolsModal" class="modal hidden">
     <div class="modal-box small">
@@ -879,6 +897,6 @@ whenToUse: 可选：触发条件描述。
     </div>
   </div>
   <script src="/locale.js?v=1.0.0"></script>
-  <script src="/app.js?v=3.32.0"></script>
+  <script src="/app.js?v=3.33.0"></script>
 </body>
 </html>

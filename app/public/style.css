@@ -1162,3 +1162,22 @@ body.sidebar-collapsed .sidebar-toggle { left: 54px; transform: translate(50%, -
 .deliver-preview-head { display: flex; align-items: center; justify-content: space-between; padding: 7px 10px; border-bottom: 1px solid var(--border); font-size: 12.5px; }
 .deliver-preview-body { max-height: 38vh; overflow: auto; padding: 8px 12px; font-size: 12.5px; line-height: 1.7; }
 .deliver-preview-body .hint { color: var(--muted); text-align:center; padding: 20px 0; margin:0; }
+
+/* ── 应用内输入弹窗（替代被 Electron 禁用的 prompt） ── */
+.input-modal-hint {
+  font-size: 12.5px; line-height: 1.7; color: var(--muted);
+  white-space: pre-wrap; margin-bottom: 12px;
+}
+.input-modal-fields { display: flex; flex-direction: column; gap: 12px; }
+.input-modal-field { display: flex; flex-direction: column; gap: 5px; }
+.input-modal-field > span { font-size: 12.5px; color: var(--muted); }
+.input-modal-field input,
+.input-modal-field textarea {
+  width: 100%; padding: 9px 11px; font: inherit; font-size: 13.5px;
+  color: var(--text); background: var(--bg);
+  border: 1px solid var(--border); border-radius: 9px;
+  resize: vertical;
+}
+.input-modal-field input:focus,
+.input-modal-field textarea:focus { border-color: var(--primary); outline: none; }
+.input-modal-actions { margin-top: 18px; }

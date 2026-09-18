@@ -148,6 +148,111 @@ function toast(msg, ms = 2600) {
   clearTimeout(t._timer);
   t._timer = setTimeout(() => t.classList.add('hidden'), ms);
 }
+
+/* ---------- 应用内输入弹窗 ----------
+   为什么不能直接用 window.prompt（原生对话框）：
+   **Electron 不再支持它** —— 调用直接抛「prompt() is and will not be supported.」，
+   依赖 prompt 的入口（如辩题归档改名）点了没反应，而且不报错、不提示，
+   从界面上完全看不出哪里坏了。所以做一个应用内的替代品：同样的调用手感，但真的能用。
+
+   askInput({ title, hint, fields, okText }) -> Promise<{values}|null>
+     fields: [{ key, label, value, placeholder, multiline, optional }]
+     返回 null 表示用户取消。 */
+function askInput(opts) {
+  return new Promise((resolve) => {
+    const modal = $('#inputModal');
+    const titleEl = $('#inputModalTitle');
+    const hintEl = $('#inputModalHint');
+    const box = $('#inputModalFields');
+    const okBtn = $('#inputModalOk');
+    const cancelBtn = $('#inputModalCancel');
+    if (!modal || !box) { resolve(null); return; }
+
+    const fields = (opts && opts.fields) || [];
+    if (titleEl) titleEl.textContent = (opts && opts.title) || '请输入';
+    if (hintEl) {
+      const h = (opts && opts.hint) || '';
+      hintEl.innerHTML = h ? esc(h) : '';
+      hintEl.classList.toggle('hidden', !h);
+    }
+    if (okBtn) okBtn.textContent = (opts && opts.okText) || '确定';
+
+    /* 渲染字段。label 用 <label> 包住，点文字也能聚焦到输入框 */
+    box.innerHTML = '';
+    const inputs = [];
+    for (const f of fields) {
+      const lab = document.createElement('label');
+      lab.className = 'input-modal-field';
+      if (f.label) {
+        const span = document.createElement('span');
+        span.textContent = f.label + (f.optional ? '（可留空）' : '');
+        lab.appendChild(span);
+      }
+      let ctl;
+      if (f.multiline) {
+        ctl = document.createElement('textarea');
+        ctl.rows = f.rows || 3;
+      } else {
+        ctl = document.createElement('input');
+        ctl.type = 'text';
+        ctl.autocomplete = 'off';
+      }
+      if (f.placeholder) ctl.placeholder = f.placeholder;
+      ctl.value = f.value == null ? '' : String(f.value);
+      lab.appendChild(ctl);
+      box.appendChild(lab);
+      inputs.push({ key: f.key, ctl, optional: !!f.optional });
+    }
+
+    let settled = false;
+    const cleanup = () => {
+      modal.classList.add('hidden');
+      okBtn && (okBtn.onclick = null);
+      cancelBtn && (cancelBtn.onclick = null);
+      if (modal._closeBtn) modal._closeBtn.onclick = null;
+      document.removeEventListener('keydown', onKey, true);
+    };
+    const finish = (val) => { if (settled) return; settled = true; cleanup(); resolve(val); };
+
+    const submit = () => {
+      const values = {};
+      for (const it of inputs) {
+        const v = String(it.ctl.value || '').trim();
+        /* 必填校验：留空就提示并聚焦，而不是静默存个空值 */
+        if (!v && !it.optional) {
+          toast('这一项不能为空');
+          it.ctl.focus();
+          return;
+        }
+        values[it.key] = v;
+      }
+      finish(values);
+    };
+
+    /* Esc 取消、Ctrl/Cmd+Enter 提交；用捕获阶段，避免被页面的其他快捷键抢走 */
+    const onKey = (e) => {
+      if (e.key === 'Escape') { e.preventDefault(); finish(null); }
+      else if (e.key === 'Enter' && (e.ctrlKey || e.metaKey)) { e.preventDefault(); submit(); }
+      else if (e.key === 'Enter' && inputs.length === 1 && !inputs[0].ctl.tagName.match(/TEXTAREA/)) {
+        e.preventDefault(); submit();
+      }
+    };
+    document.addEventListener('keydown', onKey, true);
+
+    if (okBtn) okBtn.onclick = submit;
+    if (cancelBtn) cancelBtn.onclick = () => finish(null);
+    const closeBtn = modal.querySelector('.modal-close');
+    modal._closeBtn = closeBtn;
+    if (closeBtn) closeBtn.onclick = () => finish(null);
+
+    modal.classList.remove('hidden');
+    /* 聚焦第一个字段并全选，方便直接覆盖 */
+    setTimeout(() => {
+      const first = inputs[0] && inputs[0].ctl;
+      if (first) { try { first.focus(); first.select(); } catch (_) {} }
+    }, 30);
+  });
+}
 function fmtTime(ts) {
   const d = new Date(ts || Date.now());
   const p = (n) => String(n).padStart(2, '0');
@@ -2984,15 +3089,22 @@ async function caseOpenChat(c) {
 }
 
 async function caseRename(c) {
-  const v = window.prompt('辩题名称：', c.motion || '');
-  if (v === null) return;
-  const motion = v.trim();
+  /* 不能用 window.prompt —— Electron 里直接抛错（点了没反应），见 askInput 注释 */
+  const r = await askInput({
+    title: '编辑辩题',
+    fields: [
+      { key: 'motion', label: '辩题名称', value: c.motion || '' },
+      { key: 'side', label: '持方', value: c.side || '', optional: true }
+    ]
+  });
+  if (!r) return;
+  const motion = r.motion;
+  const side = r.side; /* 可留空字段返回 '' —— 与原 prompt 语义一致，留空即清空 */
   if (!motion) { toast('辩题名称不能为空'); return; }
-  const side = window.prompt('持方（可留空）：', c.side || '');
   try {
-    const r = await libApi('/api/cases/update', { id: c.id, motion, side: side === null ? c.side : side.trim() });
-    if (r && r.ok) { toast('已更新'); loadCases(); }
-    else toast('更新失败：' + ((r && r.error) || '未知错误'));
+    const res = await libApi('/api/cases/update', { id: c.id, motion, side });
+    if (res && res.ok) { toast('已更新'); loadCases(); }
+    else toast('更新失败：' + ((res && res.error) || '未知错误'));
   } catch (e) { toast('更新失败：' + e.message); }
 }
 
@@ -4553,7 +4665,12 @@ function bindEvents() {
   const btnSaveProf = $('#btnSaveProfile');
   if (btnSaveProf) btnSaveProf.onclick = saveCurrentProfile;
   const btnNewProf = $('#btnNewProfile');
-  if (btnNewProf) btnNewProf.onclick = () => { clearProfileEditor(); renderProfilesList(); };
+  if (btnNewProf) btnNewProf.onclick = () => {
+    clearProfileEditor();
+    renderProfilesList();
+    /* 不能零反馈：点了像坏了（Pro 线 09-15 修过同一问题） */
+    toast('已新建配置，填写后记得「保存配置」');
+  };
   $('#btnClearKey').onclick = async () => {
     if (!confirm('清除当前配置保存的 API Key？（留空保存也可让 Key 不被覆盖）')) return;
     try {
