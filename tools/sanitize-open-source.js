@@ -12,14 +12,21 @@ const fs = require('fs');
 const path = require('path');
 
 const ROOT = path.resolve(__dirname, '..');
-const TEXT_EXT = new Set(['.md', '.txt', '.js', '.css', '.html', '.yml', '.yaml', '.json', '.py', '.ps1', '.bat', '.vbs']);
+/* 注意：必须含 .mjs —— runtime/academy-text-stream.mjs 是我们自己写的内核插件，
+   下面第 2 步专门把它加进扫描列表，就是因为它里面一旦写死开发机绝对路径，
+   分包在别人机器上会让**整个内核起不来**。但本集合原先没有 .mjs，扩展名过滤那一步
+   会把它直接跳过 —— 这个护栏等于失效（实测：往该文件注入本机项目路径，检查依旧
+   「✓ 通过」并 exit 0）。.cjs / .mts 同理补齐。 */
+const TEXT_EXT = new Set(['.md', '.txt', '.js', '.mjs', '.cjs', '.mts', '.css', '.html', '.yml', '.yaml', '.json', '.py', '.ps1', '.bat', '.vbs']);
 const WALK_DIRS = ['knowledge', 'modules', 'protocols', 'personas', 'prep-coach', 'review-coach', 'judge-assistant', 'scripts', 'team', '.dsh', 'app', 'tools'];
 
 function walk(dir, out = []) {
   for (const ent of fs.readdirSync(dir, { withFileTypes: true })) {
     const p = path.join(dir, ent.name);
     if (ent.isDirectory()) {
-      if (['node_modules', 'runtime', 'data', 'dist', '.git', '.build'].includes(ent.name)) continue;
+      // vendor = 原样分发的第三方库（如 pdfjs-dist），与 node_modules 同理不扫：
+      // 它们体量大、压缩过，扫了既慢又容易误报，而且我们并未修改它们。
+      if (['node_modules', 'runtime', 'data', 'dist', '.git', '.build', 'vendor'].includes(ent.name)) continue;
       walk(p, out);
     } else {
       out.push(p);

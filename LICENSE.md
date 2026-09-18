@@ -18,6 +18,19 @@
 
 ---
 
+## 第三方声明：pdf.js / pdfjs-dist（Apache License 2.0）
+
+本应用的 PDF 文字提取功能使用 **pdf.js**（npm 包名 `pdfjs-dist`），
+由 Mozilla 及 pdf.js 贡献者开发，依据 **Apache License, Version 2.0** 分发。
+
+- 项目主页：https://github.com/mozilla/pdf.js
+- 许可证全文：见 `app/vendor/pdfjs/LICENSE`（随附于本应用内）
+- 本应用对该库**未作任何修改**，仅以原样（minified 构建）随包分发，并按 Apache-2.0
+  第 4 条要求保留其许可证与版权声明文件。
+- 使用方式：仅调用其文本提取 API，不涉及 PDF 渲染；不联网。
+
+---
+
 ## 完整法律文本
 
 完整的 CC BY-NC-SA 4.0 法律文本请见：

@@ -1727,7 +1727,7 @@ function switchSettingsPane(pane) {
 /* ———— 关于应用 ———— */
 const ABOUT_LICENSE_URL = 'https://creativecommons.org/licenses/by-nc-sa/4.0/deed.zh';
 function renderAboutPane() {
-  const ver = (state.status && state.status.version) || '2.1.0';
+  const ver = (state.status && state.status.version) || '2.1.1';
   const edition = String((state.status && state.status.edition) || 'Flash').trim();
   const v = 'v' + String(ver).replace(/^v/i, '') + (edition ? ' ' + edition : '');
   const elVer = $('#aboutVersion');

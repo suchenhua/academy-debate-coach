@@ -25,7 +25,7 @@ const EDITIONS = {
   flash: {
     key: 'flash',
     name: 'Flash',
-    version: '2.1.0',
+    version: '2.1.1',
     /* Pro 独有功能的开关都写在这里；flash 下保持 false。
        例：research2: false, batchImport: false */
     features: {},
@@ -35,7 +35,7 @@ const EDITIONS = {
     name: 'Pro',
     /* 与 flash 共用同一个版本号：Flash / Pro 是「同一版本的两个型号」，
        不是两条独立演进的产品线——型号只决定功能集。 */
-    version: '2.1.0',
+    version: '2.1.1',
     features: {},
   },
 };

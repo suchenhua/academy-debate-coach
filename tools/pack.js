@@ -61,7 +61,7 @@ function checkVersionConsistency() {
   const readme = path.join(ROOT, 'README.md');
   if (fs.existsSync(readme)) {
     const text = fs.readFileSync(readme, 'utf8');
-    /* 只校验与「当前版本线」绑定的版本号（形如 "v2.1.0 Flash"）：
+    /* 只校验与「当前版本线」绑定的版本号（形如 "vX.Y.Z Flash"）：
        README 可能同时介绍两条版本线，不能要求所有版本号都等于本线的号。 */
     const bound = new RegExp('v?(\\d+\\.\\d+\\.\\d+)\\s*' + edName, 'gi');
     const found = Array.from(new Set((text.match(bound) || [])

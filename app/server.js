@@ -133,6 +133,10 @@ const LIB_FILES_DIR = path.join(LIB_DIR, 'files');
 const LIB_TEXT_DIR = path.join(LIB_DIR, 'text');
 const LIB_INDEX = path.join(LIB_DIR, 'index.json');
 const LIB_MAX_FILE = 16 * 1024 * 1024;   // 单份原件上限 16MB
+/* 附件（随消息上传）的请求体上限。客户端允许单文件 20MB，而请求体是 base64 的，
+   会膨胀 4/3 ≈ 26.7MB —— 原来这里复用了 MAX_BODY(6MB)，导致超过 4.5MB 的 PDF/Word
+   根本传不上来（一个 9MB 的资料册会直接报「请求体过大」）。 */
+const ATTACH_BODY_LIMIT = 28 * 1024 * 1024;
 const LIB_MAX_TEXT = 600000;             // 单份提取文本上限（字符）
 const LIB_RECALL_DOCS = 4;               // 每次任务最多召回几份
 const LIB_DOC_SNIPPET = 600;             // 每份最多摘多少字进任务单
@@ -1461,16 +1465,19 @@ function libRel(p) {
   return String(p || '').replace(/\\/g, '/');
 }
 
-function libExtractText(ext, buf) {
+/* 注意：本函数自 PDF 改用 pdfjs 后是**异步**的（解析要 await）。
+   纯文本分支仍是同步语义，但统一返回 Promise，避免调用方一半同步一半异步。 */
+async function libExtractText(ext, buf) {
   if (LIB_TEXT_EXT.has(ext)) {
     let s = buf.toString('utf8');
     if (s.charCodeAt(0) === 0xFEFF) s = s.slice(1);
     return { text: s };
   }
   if (ext === 'pdf') {
-    const t = extractPdfText(buf);
-    if (!t) return { error: '没能从这份 PDF 里提取到文字，多半是扫描件 / 图片版。两个办法：① 用 WPS 或 Word 打开它，另存为 .docx 再传；② 把页面截图成图片直接传，系统会自动 OCR 识别文字。' };
-    return { text: t };
+    // 上限与 LIB_MAX_TEXT 对齐：超出部分在这里就截断，不让它撑爆存储与召回
+    const r = await extractPdfText(buf, { maxChars: LIB_MAX_TEXT });
+    if (r.error) return { error: r.error };
+    return { text: r.text, pdf: { pages: r.pages, totalPages: r.totalPages, truncated: r.truncated } };
   }
   if (ext === 'docx') {
     if (buf.length < 4 || buf[0] !== 0x50 || buf[1] !== 0x4b) {
@@ -1487,19 +1494,22 @@ function libNewId() {
   return 'L' + Date.now().toString(36) + crypto.randomBytes(3).toString('hex');
 }
 
-/* 入库：{ name, tags, buf } 文件或 { name, tags, text } 纯文本 */
-function libAdd(opts = {}) {
+/* 入库：{ name, tags, buf } 文件或 { name, tags, text } 纯文本。
+   异步：PDF 要走 pdfjs 解析（见 libExtractText）。 */
+async function libAdd(opts = {}) {
   libEnsure();
   const name = libSafeName(opts.name, '未命名资料');
   let rawText;
+  let pdfInfo = null;
   if (typeof opts.text === 'string') {
     rawText = opts.text;
   } else {
     const buf = opts.buf;
     if (!Buffer.isBuffer(buf) || !buf.length) return { error: '没有收到文件内容' };
-    const r = libExtractText(libExtOf(name), buf);
+    const r = await libExtractText(libExtOf(name), buf);
     if (r.error) return { error: r.error };
     rawText = r.text;
+    pdfInfo = r.pdf || null;
   }
   rawText = String(rawText || '').replace(/\r\n?/g, '\n').trim();
   if (!rawText) return { error: '这份资料里没有提取到任何文字' };
@@ -1524,6 +1534,11 @@ function libAdd(opts = {}) {
     textFile: libRel(path.join('data', 'library', 'text', id + '.txt')),
     preview: rawText.replace(/\s+/g, ' ').slice(0, 100),
   };
+  if (pdfInfo) {
+    item.note = pdfInfo.truncated
+      ? 'PDF 共 ' + pdfInfo.totalPages + ' 页，已提取前 ' + pdfInfo.pages + ' 页（超长已截断）'
+      : 'PDF 共 ' + pdfInfo.totalPages + ' 页，已提取全部文字';
+  }
   if (Buffer.isBuffer(opts.buf)) {
     try { fs.writeFileSync(path.join(LIB_FILES_DIR, storeName), opts.buf); } catch (_) {}
   }
@@ -4475,7 +4490,7 @@ function handleRequest(req, res) {
   }
 
   if (req.method === 'POST' && p === '/api/extract-pdf') {
-    return readBody(req, MAX_BODY).then((raw) => {
+    return readBody(req, ATTACH_BODY_LIMIT).then(async (raw) => {
       let body;
       try { body = JSON.parse(raw || '{}'); } catch (_) { return sendJson(res, 400, { ok: false, error: 'JSON 解析失败' }); }
       const b64 = String(body.data || '');
@@ -4485,21 +4500,22 @@ function handleRequest(req, res) {
       if (buf.length < 4 || buf.toString('latin1', 0, 4) !== '%PDF') {
         return sendJson(res, 400, { ok: false, error: '文件不是有效的 PDF' });
       }
-      const text = extractPdfText(buf);
-      if (!text) {
-        return sendJson(res, 422, { ok: false, error: '未能从 PDF 提取到文字（可能是扫描件/图片版 PDF），请改用 OCR 或直接粘贴文字。' });
-      }
+      const r = await extractPdfText(buf, { maxChars: LIB_MAX_TEXT });
+      if (r.error) return sendJson(res, 422, { ok: false, error: r.error });
       return sendJson(res, 200, {
         ok: true,
         name: String(body.name || 'document.pdf').slice(0, 120),
-        text,
-        charCount: text.length,
+        text: r.text,
+        charCount: r.text.length,
+        pages: r.pages,
+        totalPages: r.totalPages,
+        truncated: !!r.truncated,
       });
     }).catch((e) => sendJson(res, 500, { ok: false, error: 'PDF 提取失败：' + e.message }));
   }
 
   if (req.method === 'POST' && p === '/api/extract-docx') {
-    return readBody(req, MAX_BODY).then((raw) => {
+    return readBody(req, ATTACH_BODY_LIMIT).then((raw) => {
       let body;
       try { body = JSON.parse(raw || '{}'); } catch (_) { return sendJson(res, 400, { ok: false, error: 'JSON 解析失败' }); }
       const b64 = String(body.data || '');
@@ -4581,7 +4597,7 @@ function handleRequest(req, res) {
           payload = { buf };
         }
       }
-      const r = libAdd(Object.assign({ name, tags }, payload));
+      const r = await libAdd(Object.assign({ name, tags }, payload));
       if (r.error) return sendJson(res, 422, { ok: false, error: r.error, name });
       return sendJson(res, 200, { ok: true, item: libPublic(r.item), ocr: ocrInfo });
     }).catch((e) => sendJson(res, 500, { ok: false, error: '入库失败：' + e.message }));

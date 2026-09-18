@@ -23,7 +23,7 @@ using System.Windows.Forms;
 [assembly: AssemblyDescription("Academy Debate Coach Setup (QFUD)")]
 [assembly: AssemblyProduct("Academy 辩论教练")]
 [assembly: AssemblyCompany("QFUD")]
-[assembly: AssemblyVersion("2.1.0.0")]
+[assembly: AssemblyVersion("2.1.1.0")]
 
 namespace AcademySetup
 {

@@ -28,11 +28,30 @@ function resolveShareDist() {
   return path.join(parent, 'dist');
 }
 const SHARE_DIST = resolveShareDist();
-const ZIP = path.join(DIST, 'Academy-Bianlun-Coach-portable.zip');
+
+/* 便携版 zip 的文件名由 pack.js 决定，而 pack.js 会把**型号名**写进去
+   （Academy-Bianlun-Coach-<型号>-portable.zip）。这里原来写死了不带型号的旧名字，
+   于是 9/13 型号架构落地之后，安装版就再也打不出来了 ——
+   pack.js 明明刚打出 zip，build-installer 却报「缺少便携版 zip」。
+   现在按当前型号解析，并保留旧名字作为兜底（老包仍能打）。 */
+const edition = require(path.join(ROOT, 'app', 'edition.js'));
+function resolvePortableZip() {
+  const candidates = [
+    path.join(DIST, 'Academy-Bianlun-Coach-' + edition.name + '-portable.zip'),
+    path.join(DIST, 'Academy-Bianlun-Coach-portable.zip'),
+  ];
+  for (const p of candidates) if (fs.existsSync(p)) return p;
+  // 都没有：返回首选路径，让后面报错时显示的正是「本该存在」的那个名字
+  return candidates[0];
+}
+const ZIP = resolvePortableZip();
 const STUB_OUT = path.join(ROOT, 'tools', 'sfx', 'AcademySetupStub.exe');
 const CS_SRC = path.join(ROOT, 'tools', 'sfx', 'SfxLauncher.cs');
-const EXE_NAME_CN = 'Academy辩论教练-安装版.exe';
-const EXE_NAME_EN = 'Academy-Bianlun-Coach-setup.exe';
+/* 英文名带上型号：Flash 与 Pro 的安装包都会导出到同一个「工作区 dist/」，
+   不加型号的话后打的会直接覆盖前一个，两条线互相踩。 */
+const EXE_SUFFIX = edition.key === 'flash' ? '' : '-' + edition.name;
+const EXE_NAME_CN = 'Academy辩论教练-安装版' + EXE_SUFFIX + '.exe';
+const EXE_NAME_EN = 'Academy-Bianlun-Coach' + EXE_SUFFIX + '-setup.exe';
 const EXE = path.join(DIST, EXE_NAME_CN);
 const MAGIC = Buffer.from('ACADEMY-SETUP-OVERLAY-V1-7F3A9C21B64E', 'ascii');
 

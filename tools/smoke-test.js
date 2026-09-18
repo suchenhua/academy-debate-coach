@@ -302,6 +302,95 @@ async function main() {
       await j('POST', '/api/deliverables/delete', { name: '__t_smoke_bridge_v2.md' });
     }
 
+
+    /* 5b3. ★ PDF 入库回归：中文 CID 字体（Type0 + Identity-H）必须还原成汉字。
+       旧的手写提取器把字形编号(GID)直接当 Unicode 解释，实测中文 PDF 抽出 CJK 占比 0%、
+       整篇乱码；部分大文件还会抛 RangeError 整份失败。这里用**自己构造的最小 CID PDF**
+       做断言（不依赖任何外部文件），确保「乱码」这个问题不会随重构回归。
+       另外覆盖：请求体上限（旧值 6MB 会让 base64 后 >4.5MB 的文件根本传不上来）。 */
+    {
+      const zlib = require('zlib');
+      const B = (s) => Buffer.from(s, 'latin1');
+      /* 造一份最小可解析的 CID PDF：字形编号 1..n 通过 ToUnicode 映射回真实码点 */
+      function buildCidPdf(text, opts) {
+        opts = opts || {};
+        const cps = Array.from(text).map((c) => c.codePointAt(0));
+        const hex = cps.map((_, i) => String(i + 1).padStart(4, '0')).join('');
+        let content = B('BT /F1 24 Tf 72 700 Td <' + hex + '> Tj ET');
+        if (opts.compress) content = zlib.deflateSync(content);
+        const toUni = [
+          '/CIDInit /ProcSet findresource begin', '12 dict begin', 'begincmap',
+          '/CIDSystemInfo << /Registry (Adobe) /Ordering (UCS) /Supplement 0 >> def',
+          '/CMapName /Adobe-Identity-UCS def', '/CMapType 2 def',
+          '1 begincodespacerange', '<0000> <FFFF>', 'endcodespacerange',
+          cps.length + ' beginbfchar',
+          ...cps.map((cp, i) => '<' + String(i + 1).padStart(4, '0') + '> <' + cp.toString(16).padStart(4, '0') + '>'),
+          'endbfchar', 'endcmap',
+          'CMapName currentdict /CMap defineresource pop', 'end', 'end',
+        ].join('\n');
+        const objs = [
+          B('<< /Type /Catalog /Pages 2 0 R >>'),
+          B('<< /Type /Pages /Kids [3 0 R] /Count 1 >>'),
+          B('<< /Type /Page /Parent 2 0 R /MediaBox [0 0 595 842] /Resources << /Font << /F1 4 0 R >> >> /Contents 6 0 R >>'),
+          B('<< /Type /Font /Subtype /Type0 /BaseFont /NotoSansSC /Encoding /Identity-H /DescendantFonts [5 0 R] /ToUnicode 7 0 R >>'),
+          B('<< /Type /Font /Subtype /CIDFontType2 /BaseFont /NotoSansSC /CIDSystemInfo << /Registry (Adobe) /Ordering (Identity) /Supplement 0 >> /FontDescriptor 8 0 R /DW 1000 /CIDToGIDMap /Identity >>'),
+          Buffer.concat([B('<< /Length ' + content.length + (opts.compress ? ' /Filter /FlateDecode' : '') + ' >>\nstream\n'), content, B('\nendstream')]),
+          B('<< /Length ' + Buffer.byteLength(toUni, 'latin1') + ' >>\nstream\n' + toUni + '\nendstream'),
+          B('<< /Type /FontDescriptor /FontName /NotoSansSC /Flags 4 /FontBBox [0 -200 1000 900] /ItalicAngle 0 /Ascent 880 /Descent -200 /CapHeight 700 /StemV 80 >>'),
+        ];
+        if (opts.padBytes) {
+          const pad = Buffer.alloc(opts.padBytes, 0x20);
+          objs.push(Buffer.concat([B('<< /Length ' + pad.length + ' >>\nstream\n'), pad, B('\nendstream')]));
+        }
+        let out = B('%PDF-1.4\n');
+        const off = [];
+        for (let i = 0; i < objs.length; i++) {
+          off[i + 1] = out.length;
+          out = Buffer.concat([out, B((i + 1) + ' 0 obj\n'), objs[i], B('\nendobj\n')]);
+        }
+        const xref = out.length;
+        let tail = 'xref\n0 ' + (objs.length + 1) + '\n0000000000 65535 f \n';
+        for (let i = 1; i <= objs.length; i++) tail += String(off[i]).padStart(10, '0') + ' 00000 n \n';
+        tail += 'trailer\n<< /Size ' + (objs.length + 1) + ' /Root 1 0 R >>\nstartxref\n' + xref + '\n%%EOF\n';
+        return Buffer.concat([out, B(tail)]);
+      }
+
+      const SAMPLE = '辩论教练冒烟测试';
+      for (const compress of [false, true]) {
+        const buf = buildCidPdf(SAMPLE, { compress });
+        const r = await j('POST', '/api/extract-pdf', { name: '__t_smoke_cid.pdf', data: buf.toString('base64') });
+        const label = compress ? '（压缩流）' : '（明文流）';
+        check('★ PDF 中文 CID 提取不乱码' + label,
+          r.status === 200 && r.d && r.d.ok && r.d.text === SAMPLE,
+          JSON.stringify((r.d && r.d.text) || (r.d && r.d.error)));
+        check('PDF 返回页数信息' + label, !!(r.d && r.d.totalPages >= 1), 'totalPages=' + (r.d && r.d.totalPages));
+      }
+
+      // 入库链路（走真正的 libAdd → 落 text/*.txt），而不只是提取接口
+      const cidBuf = buildCidPdf(SAMPLE, { compress: true });
+      let ur = await j('POST', '/api/library/upload', { name: '__t_smoke_cid.pdf', data: cidBuf.toString('base64') });
+      check('★ PDF 入库后正文是汉字', ur.status === 200 && ur.d && ur.d.ok, (ur.d && ur.d.error) || '');
+      const cidId = ur.d && ur.d.item && ur.d.item.id;
+      if (cidId) {
+        const doc = await j('GET', '/api/library/doc?id=' + encodeURIComponent(cidId));
+        check('资料库读回的 PDF 正文不乱码', doc.d && doc.d.text === SAMPLE, JSON.stringify(doc.d && String(doc.d.text).slice(0, 40)));
+        const sr = await j('POST', '/api/library/search', { query: '冒烟测试' });
+        check('PDF 入库后可被召回', ((sr.d && sr.d.hits) || []).some((x) => x.id === cidId));
+        await j('POST', '/api/library/delete', { id: cidId });
+      }
+
+      // 请求体上限：5MB 填充 → base64 ≈6.7MB，旧上限 6MB 会直接「请求体过大」
+      const bigBuf = buildCidPdf(SAMPLE, { compress: true, padBytes: 5 * 1024 * 1024 });
+      const b64mb = (bigBuf.toString('base64').length / 1048576).toFixed(1);
+      const br = await j('POST', '/api/extract-pdf', { name: '__t_smoke_big.pdf', data: bigBuf.toString('base64') });
+      check('★ 大于 6MB 请求体的 PDF 附件可提取', br.status === 200 && br.d && br.d.ok && br.d.text === SAMPLE,
+        'base64=' + b64mb + 'MB · ' + ((br.d && br.d.error) || br.status));
+
+      // 负例：不是 PDF 必须被干净地拒绝（而不是吐乱码或 500）
+      const bad = await j('POST', '/api/extract-pdf', { name: 'x.pdf', data: Buffer.from('not a pdf').toString('base64') });
+      check('非 PDF 内容被拒绝', bad.status === 400 || bad.status === 422);
+    }
+
     /* 5c. 辩题档案夹：识别 / 归档 / 改名 / 删除（只删索引，不删对话文件） */
     {
       // ① 辩题识别：能认出辩题句，且不吃掉尾部「我持正方」
@@ -349,15 +438,22 @@ async function main() {
       }
     }
 
-    /* 7. 清理测试产物并确认删干净 */
+    /* 7. 清理测试产物并确认删干净。
+       注意：**不能写死要删的文件名** —— 转档会按重名自动追加 _2/_3/_4，
+       写死清单一旦漏一个，这条断言就长期变红（曾经就因为漏了 __t_smoke_3/_4 挂过），
+       而且残留会一直堆在用户的产物空间里。改成「先列出所有 __t_smoke* 再逐个删」。 */
     {
-      for (const n of ['__t_smoke.md', '__t_smoke_2.md', '__t_smoke.docx']) {
-        const r = await j('POST', '/api/deliverables/delete', { name: n });
-        check('清理 ' + n, r.status === 200 && r.d.ok);
+      const before = await j('GET', '/api/deliverables');
+      const leftovers = (before.d.items || before.d.files || [])
+        .map((x) => x.name)
+        .filter((n) => String(n).startsWith('__t_smoke'));
+      for (const n of leftovers) {
+        await j('POST', '/api/deliverables/delete', { name: n });
       }
       const r = await j('GET', '/api/deliverables');
       const names = (r.d.items || r.d.files || []).map((x) => x.name);
-      check('产物空间无残留测试文件', !names.some((n) => String(n).startsWith('__t_smoke')));
+      check('清理测试产物', !names.some((n) => String(n).startsWith('__t_smoke')),
+        leftovers.length ? ('已清 ' + leftovers.length + ' 个：' + leftovers.join(', ')) : '无残留');
     }
 
     /* 7. 记忆模块：SQLite 索引 / 全文搜索 / 蒸馏归档（测试前备份真实记忆，测完恢复） */
@@ -496,9 +592,66 @@ async function main() {
       check('pack.js 已接入运行时裁剪', packSrc.indexOf('prune-runtime') !== -1);
       check('pack.js 含发版版本一致性自检', packSrc.indexOf('checkVersionConsistency') !== -1);
 
+      /* 合规检查器的扫描范围必须覆盖 .mjs：runtime/academy-text-stream.mjs 是
+         我们自己写的内核插件，一旦写死开发机路径，分包在别人机器上内核整个起不来。
+         而它曾经因为 TEXT_EXT 里没有 .mjs 被整段跳过 —— 护栏形同虚设。 */
+      const sanitizeJs = path.join(ROOT, 'tools', 'sanitize-open-source.js');
+      const sanSrc = fsMod.existsSync(sanitizeJs) ? fsMod.readFileSync(sanitizeJs, 'utf8') : '';
+      const textExtM = sanSrc.match(/const TEXT_EXT = new Set\(\[([\s\S]*?)\]\)/);
+      const textExt = textExtM ? textExtM[1] : '';
+      check('★ 合规检查覆盖 .mjs 扩展名', textExt.indexOf("'.mjs'") !== -1, textExt ? 'TEXT_EXT 未含 .mjs' : '未找到 TEXT_EXT');
+      check('合规检查把自研内核插件纳入扫描', sanSrc.indexOf('academy-text-stream.mjs') !== -1);
+      check('合规检查跳过第三方 vendor 目录', /'vendor'/.test(sanSrc));
+
       const pruneSrc = fsMod.existsSync(pruneJs) ? fsMod.readFileSync(pruneJs, 'utf8') : '';
       check('裁剪脚本保留合规文件护栏', /KEEP_RE/.test(pruneSrc) && /license/i.test(pruneSrc));
       check('裁剪脚本含 TS 兄弟文件护栏', pruneSrc.indexOf('siblings') !== -1 && pruneSrc.indexOf('hasSibling') !== -1);
+
+      /* 10b. 修复补丁链路：已装用户靠它升级，断了就只能让用户重下 175MB 安装包 */
+      const patchJs = path.join(ROOT, 'tools', 'patch.js');
+      const patchCsPath = path.join(ROOT, 'tools', 'sfx', 'PatchLauncher.cs');
+      check('补丁生成脚本存在', fsMod.existsSync(patchJs), 'tools/patch.js');
+      check('补丁外壳源码存在', fsMod.existsSync(patchCsPath), 'tools/sfx/PatchLauncher.cs');
+
+      const patchSrc = fsMod.existsSync(patchJs) ? fsMod.readFileSync(patchJs, 'utf8') : '';
+      // 补丁必须用自己那套魔术标记：与安装版共用的话，拿错文件也能解出内容、排查时分不清
+      check('补丁用独立的叠加标记', /ACADEMY-PATCH-OVERLAY/.test(patchSrc));
+      // 源码含中文界面文案，csc 不带 codepage 会按 ANSI 读、编译成乱码
+      check('补丁编译带 /codepage:65001', patchSrc.indexOf('/codepage:65001') !== -1);
+      // ★ 补丁绝不能把用户数据或开发期文件打进包
+      check('★ 补丁排除 data/ 与开发日志',
+        patchSrc.indexOf('data') !== -1 && patchSrc.indexOf('开发日志') !== -1 && /EXCLUDE_RE/.test(patchSrc));
+      check('补丁生成后会回读自检', patchSrc.indexOf('哈希') !== -1 && patchSrc.indexOf('自检') !== -1);
+
+      const patchCs = fsMod.existsSync(patchCsPath) ? fsMod.readFileSync(patchCsPath, 'utf8') : '';
+      /* ★ 三个真踩过的坑，各留一条断言，避免以后被「顺手改成更简洁的写法」而复发：
+         ① 显式给了 --dir 就不能回退自动探测 —— 否则参数被拆开时会静默打到另一个目录；
+         ② 回滚必须逐文件 —— 整目录还原会因单个被占用的文件而中断，留下半新半旧；
+         ③ 根目录文件也要纳入备份 —— 只备份子目录会让 LICENSE.md 之类无法还原。 */
+      check('★ 补丁：显式 --dir 不回退自动探测', patchCs.indexOf('不是辩论教练的安装目录') !== -1);
+      check('★ 补丁：回滚逐文件进行', patchCs.indexOf('逐文件回滚') !== -1);
+      check('★ 补丁：根目录文件也纳入备份', /backupFiles/.test(patchCs) && /ExistedBefore/.test(patchCs));
+      /* ★ 第四条：关进程的辅助 ps1 必须「正文纯 ASCII + 路径走参数 + 带 BOM 写盘」。
+         旧写法把安装路径拼进脚本正文且不带 BOM，PowerShell 5.1 按 ANSI 解码中文路径
+         → 脚本语法报错 → 静默失败。后果极隐蔽：补丁 exit 0、文件也换了，但旧进程没关，
+         用户重启前一直看着旧界面，以为补丁没生效。 */
+      check('★ 补丁：关进程脚本走参数不拼路径', patchCs.indexOf('$dest = $args[0]') !== -1);
+      check('★ 补丁：关进程脚本带 BOM 写盘', patchCs.indexOf('UTF8Encoding(true)') !== -1);
+      check('★ 补丁：关进程结果会被检查', patchCs.indexOf('仍有进程占用') !== -1);
+
+      /* 10c. ★ 打包链路：build-installer 必须按**当前型号**去找 pack.js 产出的 zip。
+         9/13 型号架构落地时，pack.js 的 zip 名加了型号后缀，而 build-installer 还写死
+         旧名字 —— 结果「安装版再也打不出来」，pack.js 刚打完 zip 就报「缺少便携版 zip」。
+         这是一个会卡死发版的断链，必须钉住。 */
+      const biJs = path.join(ROOT, 'tools', 'build-installer.js');
+      const biSrc = fsMod.existsSync(biJs) ? fsMod.readFileSync(biJs, 'utf8') : '';
+      check('安装版脚本按型号解析便携版 zip',
+        biSrc.indexOf('resolvePortableZip') !== -1 && biSrc.indexOf('edition.name') !== -1,
+        'tools/build-installer.js');
+      check('★ 安装版 zip 名不再写死（含型号+旧名兜底）',
+        /Academy-Bianlun-Coach-' \+ edition\.name \+ '-portable\.zip/.test(biSrc) || biSrc.indexOf("-portable.zip") !== -1);
+      // 两条线都会导出到同一个「工作区 dist/」，英文名不带型号会互相覆盖
+      check('★ 安装版产物名带型号后缀', biSrc.indexOf('EXE_SUFFIX') !== -1);
 
       // 真实跑一次 --dry：脚本能走完（不删任何文件），证明护栏逻辑没被打坏
       if (fsMod.existsSync(path.join(ROOT, 'runtime', 'dsh'))) {
