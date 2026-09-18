@@ -144,6 +144,10 @@ function killTree(pid) {
 let serverChild = null;
 let owned = false;
 let mainWindow = null;
+/* 本实例最终使用的 server 端口（whenReady 里确定）。
+   spawn 独立工具窗/研究台时带上确切端口 —— 不带的话它们自己探端口，
+   8787~8792 区间里可能有另一条线（Pro/Flash 双开）的服务，会连错。 */
+let serverPort = 0;
 
 // 单实例锁：双击多次只开一个窗口，重复启动时聚焦已有窗口。
 const gotLock = app.requestSingleInstanceLock();
@@ -467,7 +471,8 @@ ipcMain.handle('app:openResearch', async () => {
     const script = path.join(__dirname, 'research-window.js');
     if (!fs.existsSync(script)) return { ok: false, error: '找不到研究台程序（app/research-window.js）' };
     const { spawn } = require('child_process');
-    spawn(exePath, [script], { cwd: ROOT, windowsHide: false, stdio: 'ignore', detached: true }).unref();
+    const args = serverPort > 0 ? [script, '--port=' + serverPort] : [script];
+    spawn(exePath, args, { cwd: ROOT, windowsHide: false, stdio: 'ignore', detached: true }).unref();
     log('打开研究台');
     return { ok: true };
   } catch (e) { return { ok: false, error: e.message }; }
@@ -481,7 +486,9 @@ ipcMain.handle('app:openTool', async (_evt, payload) => {
     const script = path.join(__dirname, 'tool-window.js');
     if (!fs.existsSync(script)) return { ok: false, error: '找不到工具窗程序（app/tool-window.js）' };
     const { spawn } = require('child_process');
-    spawn(exePath, [script, '--tool=' + name], { cwd: ROOT, windowsHide: false, stdio: 'ignore', detached: true }).unref();
+    const args = [script, '--tool=' + name];
+    if (serverPort > 0) args.push('--port=' + serverPort);
+    spawn(exePath, args, { cwd: ROOT, windowsHide: false, stdio: 'ignore', detached: true }).unref();
     log('打开工具窗: ' + name);
     return { ok: true };
   } catch (e) { return { ok: false, error: e.message }; }
@@ -551,6 +558,7 @@ ipcMain.handle('md:save', async (_evt, { path: filePath, text, crlf, force } = {
 app.whenReady().then(async () => {
   fs.mkdirSync(DATA_DIR, { recursive: true });
   const effectivePort = Number.isInteger(PORT) && PORT > 0 ? PORT : DEFAULT_PORT;
+  serverPort = effectivePort;
   const url = 'http://127.0.0.1:' + effectivePort + '/';
 
   // 1. 确保 server 在跑（复用或自启）

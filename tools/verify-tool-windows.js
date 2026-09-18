@@ -17,7 +17,7 @@ const http = require('http');
 
 const ROOT = process.argv[2];
 const OUT = process.argv[3] || path.join(ROOT, '.build', 'verify-tool-windows.json');
-const PORT = Number(process.env.TOOLTEST_PORT || 8790);
+const PORT = Number(process.env.TOOLTEST_PORT || 8796); // 8787~8792 是应用/启动器端口，测试绝不占用
 
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 

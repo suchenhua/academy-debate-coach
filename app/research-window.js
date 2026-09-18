@@ -28,6 +28,8 @@ const ICON = path.join(ROOT, 'appicon.ico');
 const LOG_FILE = path.join(DATA_DIR, 'research-launch.log');
 const OPTS_FILE = path.join(DATA_DIR, 'research-options.json');
 const DEFAULT_PORT = 8787;
+/* 主窗口 spawn 时会带 --port=（它知道自己 server 的确切端口），避免探测连错线 */
+const PORT_ARG = Number((process.argv.find((a) => a.startsWith('--port=')) || '').split('=')[1]) || 0;
 
 app.setName('Academy Research');
 try { app.setPath('userData', path.join(DATA_DIR, 'electron-user-data-research')); } catch (_) {}
@@ -124,7 +126,7 @@ function createWindow() {
 
 /* ---- IPC ---- */
 ipcMain.handle('research:init', async () => {
-  const ports = [DEFAULT_PORT, 8788, 8789, 8790, 8791, 8792];
+  const ports = PORT_ARG > 0 ? [PORT_ARG] : [DEFAULT_PORT, 8788, 8789, 8790, 8791, 8792];
   const probe = await probeServer(ports);
   serverPort = probe.ok ? probe.port : 0;
   const opts = loadOpts();

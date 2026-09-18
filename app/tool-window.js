@@ -50,6 +50,9 @@ if (!T) {
 }
 
 const R_HTML = path.join(T.dir, 'renderer.html');
+/* 主窗口 spawn 时会带 --port=（它知道自己 server 的确切端口）；
+   没带才退回端口探测 —— 探测区间里有另一条线的服务时会连错。 */
+const PORT_ARG = Number((process.argv.find((a) => a.startsWith('--port=')) || '').split('=')[1]) || 0;
 const OPTS_FILE = path.join(DATA_DIR, 'tool-options-' + TOOL_ID + '.json');
 const LOG_FILE = path.join(DATA_DIR, 'tool-' + TOOL_ID + '-launch.log');
 
@@ -142,7 +145,7 @@ function createWindow() {
 
 /* ---- IPC ---- */
 ipcMain.handle('tool:init', async () => {
-  const ports = [DEFAULT_PORT, 8788, 8789, 8790, 8791, 8792];
+  const ports = PORT_ARG > 0 ? [PORT_ARG] : [DEFAULT_PORT, 8788, 8789, 8790, 8791, 8792];
   const probe = await probeServer(ports);
   serverPort = probe.ok ? probe.port : 0;
   const opts = loadOpts();
