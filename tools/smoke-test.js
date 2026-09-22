@@ -664,6 +664,10 @@ async function main() {
           const src = fsMod.readFileSync(p, 'utf8');
           return src.indexOf('finally') !== -1 && src.indexOf('8796') !== -1 && src.indexOf('ACADEMY_DATA_DIR') !== -1;
         })());
+      /* 跑批是两轮：渲染层 + 工具箱入口链。第二轮单独成文件，丢了就只剩一半覆盖 */
+      check('★ 工具箱入口链探测在位（巡检窗没 preload，那段只有它覆盖）',
+        fsMod.existsSync(path.join(ROOT, 'tools', 'verify-tool-open-ipc.js')) &&
+        fsMod.readFileSync(path.join(ROOT, 'tools', 'run-tool-window-tests.js'), 'utf8').indexOf('verify-tool-open-ipc.js') !== -1);
       /* 巡检跳过工具窗启动按钮的判据必须是 data-tool，不能是中文文案 ——
          巡检自己会点简繁切换，按文案匹配会在切繁体后静默失效（09-22 实测踩过）。 */
       check('★ 巡检窗按 data-tool 跳过工具窗按钮',

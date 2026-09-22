@@ -74,6 +74,19 @@ async function main() {
     if (r.error) { log('✗ Electron 执行失败: ' + r.error.message); process.exitCode = 1; return; }
     if (r.status !== 0) { log('✗ Electron 退出码 ' + r.status); process.exitCode = 1; return; }
     log('完整结果：' + OUT);
+
+    /* 第二轮：工具箱按钮 → preload 桥 → IPC 载荷（巡检窗没挂 preload，够不到这条链） */
+    log('探测工具箱入口链（带真实 preload 加载主页）');
+    const r2 = spawnSync(electronExe, [path.join(__dirname, 'verify-tool-open-ipc.js'), ROOT, String(PORT)], {
+      cwd: ROOT,
+      env: Object.assign({}, process.env, { ACADEMY_DATA_DIR: DATA, TOOLTEST_PORT: String(PORT) }),
+      stdio: 'inherit',
+      timeout: 180000,
+    });
+    if (r2.error || r2.status !== 0) {
+      log('✗ 工具箱入口链探测失败 ' + (r2.error ? r2.error.message : '退出码 ' + r2.status));
+      process.exitCode = 1;
+    }
   } finally {
     log('收尾：关服务');
     try { server.kill(); } catch (_) {}
