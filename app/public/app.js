@@ -2757,11 +2757,11 @@ const TOOL_INFO = [
 ];
 
 /* 独立工具窗（Electron 单独进程）的统一入口：
-   __research__ 走老通道；检证 / 溯源走 tool-window.js 通用壳。 */
+   三个窗都走 tool-window.js 通用壳，name 与 app/tool-registry.js 的注册项对应。 */
 const TOOL_WINDOWS = {
-  '__research__': { icon: '🔍', call: (ae) => ae.openResearch(), fail: '研究台是独立小窗，需要桌面版（Electron）环境；浏览器模式下请用双击文件的方式打开' },
-  '__verify__': { icon: '🛡', call: (ae) => ae.openVerifyTool(), fail: '证据检证是独立小窗，需要桌面版（Electron）环境' },
-  '__trace__': { icon: '📚', call: (ae) => ae.openTraceTool(), fail: '资料溯源是独立小窗，需要桌面版（Electron）环境' },
+  '__research__': { icon: '🔍', tool: 'research', fail: '研究台是独立小窗，需要桌面版（Electron）环境；浏览器模式下请用双击文件的方式打开' },
+  '__verify__': { icon: '🛡', tool: 'verify', fail: '证据检证是独立小窗，需要桌面版（Electron）环境' },
+  '__trace__': { icon: '📚', tool: 'trace', fail: '资料溯源是独立小窗，需要桌面版（Electron）环境' },
 };
 
 function renderTools() {
@@ -2774,12 +2774,15 @@ function renderTools() {
       const b = document.createElement('button');
       b.type = 'button';
       b.className = 'tool-link';
+      /* data-tool 是给 UI 巡检认的 stable 标识：这些按钮一点就 spawn 真实窗口，
+         巡检必须跳过；界面文案会随简繁切换变字，不能拿文案当判据。 */
+      b.dataset.tool = tw.tool;
       b.innerHTML = '<span><b>' + esc(name) + '</b><br><small>' + esc(desc) + '</small></span><span>' + tw.icon + '</span>';
       b.onclick = async () => {
         try {
           const ae = window.academyElectron;
-          if (ae) {
-            const r = await tw.call(ae);
+          if (ae && ae.openToolWindow) {
+            const r = await ae.openToolWindow(tw.tool);
             if (r && r.ok) { $('#toolsModal').classList.add('hidden'); return; }
             toast('打开失败：' + ((r && r.error) || ''));
           } else {
@@ -3396,7 +3399,7 @@ async function bindExtTools() {
 }
 
 
-/* 旧的「搜资料」弹窗已移除：搜索与独立研究对话整合进「研究台」独立轻量窗（app/research-window.js）。 */
+/* 旧的「搜资料」弹窗已移除：搜索与独立研究对话整合进「研究台」独立工具窗（tool-window.js --tool=research）。 */
 
 /* ———— 记忆中心：多级记忆前端展示（长期 / 流水 / 统计）———— */
 let memoryTab = 'long';

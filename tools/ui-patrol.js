@@ -71,7 +71,7 @@ async function patrolGroup(win, name, sel, enter) {
   for (const it of list) {
     if (!it.visible) { results.push({ id: it.id, text: it.text, verdict: '不可见', why: '跳过' }); continue; }
     if (SKIP_IDS.indexOf(it.id) !== -1 || (it.ds && SKIP_DS.indexOf(it.ds) !== -1)
-      || SKIP_TEXTS.some(function (t) { return (it.text || '').indexOf(t) !== -1; })) {
+      || (it.tool && SKIP_TOOLS.indexOf(it.tool) !== -1)) {
       results.push({ id: it.id, text: it.text, verdict: '跳过', why: '有副作用，巡检不点' });
       LOG('    ~ ' + (it.id || it.ds || it.text) + ' 跳过（有副作用）');
       continue;
@@ -118,8 +118,13 @@ const SKIP_IDS = [
   'fileInput'
 ];
 const SKIP_DS = ['word', 'pdf', 'markdown']; // 导出当前会话的三个格式项
-/* 按文本跳过：工具箱里的独立窗启动按钮点了会 spawn 真实窗口（弹到用户桌面） */
-const SKIP_TEXTS = ['研究台', '证据检证', '资料溯源'];
+/* 跳过独立工具窗的启动按钮：点了会 spawn 真实窗口，弹到用户桌面上。
+   判据用按钮的 data-tool（注入脚本读成 it.tool），不用文案 ——
+   巡检自己会点「简繁切换」，之后按钮文案变繁体。09-19 那版按简体字符串匹配，
+   09-22 实测「證據檢證 / 資料溯源」两条都没被跳过、被真点了一遍
+  （当前巡检窗没挂 preload，所以只走到「需要桌面版环境」的兜底提示，没真弹窗；
+    哪天给巡检窗补上 preload，护栏就会漏放）。 */
+const SKIP_TOOLS = ['research', 'verify', 'trace'];
 
 /* enter 里 openExportMenu 只在导出组用（点开下拉菜单才看得到导出项） */
 const GROUPS = [

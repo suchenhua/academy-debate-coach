@@ -1,6 +1,8 @@
-/* Academy Research · 研究台渲染逻辑（无 Node，经 preload 代理到主 App） */
+/* Academy Research · 研究台渲染逻辑（无 Node，经 tool-preload 代理到主 App）。
+ * 2026-09-22 从自有的 research-window.js 迁到通用工具窗壳 app/tool-window.js --tool=research，
+ * 桥接名统一为 academyTool，工具注册见 app/tool-registry.js。 */
 (function () {
-  var A = window.academyResearch;
+  var A = window.academyTool;
   var S = { port: 0, mode: 'free', history: [], busy: false };
   var $ = function (id) { return document.getElementById(id); };
   var toastTimer = null;
@@ -56,7 +58,7 @@
     q = (q || $('topic').value || '').trim();
     if (!q) { toast('先输入要搜的内容'); return; }
     A.saveOpts({ lastTopic: q });
-    A.setTitle('🔍 ' + q.slice(0, 18) + ' · 研究台');
+    A.setTitle(q.slice(0, 18));
     var box = $('resultsBox');
     box.innerHTML = '<p class="hint loading">搜索中（' + (S.mode === 'server' ? '服务侧，稍慢' : '端侧') + '）</p>';
     api('/api/search?q=' + encodeURIComponent(q) + '&mode=' + S.mode).then(function (r) {
@@ -140,13 +142,9 @@
 
   /* ---- 证据检证：已独立成工具窗（app/verify/），这里只留跳转入口 ---- */
   $('btnVerify').onclick = function () {
-    if (A.openVerify) {
-      A.openVerify().then(function (r) {
-        if (!(r && r.ok)) toast('打开失败：' + ((r && r.error) || ''));
-      });
-    } else {
-      toast('证据检证是独立小窗，需要桌面版（Electron）环境');
-    }
+    A.openTool('verify').then(function (r) {
+      if (!(r && r.ok)) toast('打开失败：' + ((r && r.error) || ''));
+    });
   };
   $('topic').addEventListener('keydown', function (e) { if (e.key === 'Enter') doSearch(); });
 

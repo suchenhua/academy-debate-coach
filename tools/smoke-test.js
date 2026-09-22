@@ -656,6 +656,20 @@ async function main() {
         fsMod.existsSync(path.join(ROOT, 'tools', 'run-ui-patrol.js')) &&
         fsMod.existsSync(path.join(ROOT, 'tools', 'ui-patrol.js')) &&
         fsMod.existsSync(path.join(ROOT, 'tools', 'patrol-inject.js')));
+      /* 测试跑批必须自带收尾：09-19 那次手工起的测试服务漏杀，占住 8790 把桌面快捷方式带偏了 */
+      check('★ 工具窗跑批带强制收尾（try/finally 关服务）',
+        (() => {
+          const p = path.join(ROOT, 'tools', 'run-tool-window-tests.js');
+          if (!fsMod.existsSync(p)) return false;
+          const src = fsMod.readFileSync(p, 'utf8');
+          return src.indexOf('finally') !== -1 && src.indexOf('8796') !== -1 && src.indexOf('ACADEMY_DATA_DIR') !== -1;
+        })());
+      /* 巡检跳过工具窗启动按钮的判据必须是 data-tool，不能是中文文案 ——
+         巡检自己会点简繁切换，按文案匹配会在切繁体后静默失效（09-22 实测踩过）。 */
+      check('★ 巡检窗按 data-tool 跳过工具窗按钮',
+        fsMod.readFileSync(path.join(ROOT, 'app', 'public', 'app.js'), 'utf8').indexOf('b.dataset.tool = tw.tool') !== -1 &&
+        fsMod.readFileSync(path.join(ROOT, 'tools', 'patrol-inject.js'), 'utf8').indexOf('dataset.tool') !== -1 &&
+        fsMod.readFileSync(path.join(ROOT, 'tools', 'ui-patrol.js'), 'utf8').indexOf('SKIP_TEXTS') === -1);
 
       /* 独立工具窗（2026-09-19）：证据检证独立 + 资料溯源新增，共用 tool-window 通用壳 */
       check('工具窗通用壳存在 · app/tool-window.js', fsMod.existsSync(path.join(ROOT, 'app', 'tool-window.js')));
@@ -667,13 +681,40 @@ async function main() {
         fsMod.existsSync(path.join(ROOT, 'app', 'trace', 'trace.js')));
       check('★ 溯源接口已注册（trace-quick / trace）',
         serverSrc.indexOf("/api/research/trace-quick") !== -1 && serverSrc.indexOf("'POST' && p === '/api/research/trace'") !== -1);
-      check('★ 主窗口 preload 暴露工具窗入口',
-        fsMod.readFileSync(path.join(ROOT, 'app', 'preload.js'), 'utf8').indexOf('openVerifyTool') !== -1);
+      check('★ 主窗口 preload 暴露工具窗统一入口',
+        fsMod.readFileSync(path.join(ROOT, 'app', 'preload.js'), 'utf8').indexOf('openToolWindow') !== -1);
       check('★ electron-main 注册 app:openTool',
         fsMod.readFileSync(path.join(ROOT, 'app', 'electron-main.js'), 'utf8').indexOf("app:openTool") !== -1);
       const researchJsSrc = fsMod.readFileSync(path.join(ROOT, 'app', 'research', 'research.js'), 'utf8');
       check('★ 研究台已移除检证面板（不再调 verify-quick）', researchJsSrc.indexOf('verify-quick') === -1 && researchJsSrc.indexOf('verifyBox') === -1);
-      check('★ 研究台保留检证跳转入口', researchJsSrc.indexOf('openVerify') !== -1);
+      check('★ 研究台保留检证跳转入口', researchJsSrc.indexOf("openTool('verify')") !== -1);
+
+      /* 研究台迁到通用壳（2026-09-22）：三个独立窗共用一套骨架，工具清单单一来源。
+         下面这几条钉的是「别再退回三份克隆」——旧文件一旦复活或注册表被绕开就该红。 */
+      check('★ 工具注册表是唯一来源 · app/tool-registry.js',
+        (() => {
+          const regPath = path.join(ROOT, 'app', 'tool-registry.js');
+          if (!fsMod.existsSync(regPath)) return false;
+          const reg = require(regPath).TOOLS;
+          return ['research', 'verify', 'trace'].every((k) => reg[k] && reg[k].dir && reg[k].title);
+        })(),
+        '三项工具均在册');
+      check('★ 壳不再自带工具清单（改 require 注册表）',
+        fsMod.readFileSync(path.join(ROOT, 'app', 'tool-window.js'), 'utf8').indexOf("require('./tool-registry')") !== -1);
+      check('★ electron-main 按注册表校验 spawn（不再写死工具名数组）',
+        fsMod.readFileSync(path.join(ROOT, 'app', 'electron-main.js'), 'utf8').indexOf("['verify', 'trace']") === -1);
+      check('★ 研究台旧骨架已下线',
+        !fsMod.existsSync(path.join(ROOT, 'app', 'research-window.js')) &&
+        !fsMod.existsSync(path.join(ROOT, 'app', 'research', 'preload.js')));
+      check('★ 研究台渲染层改用壳的 academyTool 桥',
+        researchJsSrc.indexOf('window.academyTool') !== -1 && researchJsSrc.indexOf('academyResearch') === -1);
+      check('★ 工具窗互跳带确切端口（防盲探连错线）',
+        /tool:\s*openTool[\s\S]{0,600}--port=' \+ serverPort/.test(fsMod.readFileSync(path.join(ROOT, 'app', 'tool-window.js'), 'utf8')));
+      /* 迁壳改了存档文件名，不搬家就会把用户已存的窗口尺寸/最近辩题清零 —— 实跑核过一遍，
+         这里钉住声明，防止以后加工具时漏写 legacyOptsFile。 */
+      check('★ 研究台旧存档有搬家路径',
+        require(path.join(ROOT, 'app', 'tool-registry.js')).TOOLS.research.legacyOptsFile === 'research-options.json' &&
+        fsMod.readFileSync(path.join(ROOT, 'app', 'tool-window.js'), 'utf8').indexOf('legacyOptsFile') !== -1);
 
       /* 10c. ★ 打包链路：build-installer 必须按**当前型号**去找 pack.js 产出的 zip。
          9/13 型号架构落地时，pack.js 的 zip 名加了型号后缀，而 build-installer 还写死

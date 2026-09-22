@@ -2,20 +2,19 @@
 /* -----------------------------------------------
  * Academy 辩论教练 · 独立工具窗（通用轻量壳）
  *
- * 研究台验证了「独立小窗」这条路好走之后，证据检证 / 资料溯源
- * 也各自独立成了工具。三个窗的骨架完全一样（探端口 → preload 代理
- * → 复制 / 标题 / 设置持久化），只差标题和渲染目录——
- * 所以抽成一个通用壳，按 --tool 参数加载对应目录，不再克隆三份。
- *   --tool=verify → app/verify/   🛡 证据检证
- *   --tool=trace  → app/trace/    📚 资料溯源
- * 研究台（app/research-window.js）是先出生的前辈，本轮没动它的骨架；
- * 等下次动它时应该也迁到这个壳上来。
+ * 「一边查资料，一边和教练交流」这类独立小窗，骨架都是同一套
+ *（探端口 → preload 代理 → 复制 / 标题 / 设置持久化），只差标题和渲染目录。
+ * 所以统一走这个壳，按 --tool 参数加载 tool-registry.js 里登记的目录：
+ *   --tool=research → app/research/  🔍 研究台
+ *   --tool=verify   → app/verify/    🛡 证据检证
+ *   --tool=trace    → app/trace/     📚 资料溯源
+ * 加新工具 = 在 app/tool-registry.js 登记一行 + 写渲染目录，本文件不用动。
  *
  * 通信：IPC → 主进程 http.request 转发到 http://127.0.0.1:<主App端口>
  *（不经页面 fetch：避免 file:// 的 CORS 问题，也让服务端来源校验能放行本机窗口）。
  * 主 App 未运行时给出明确提示，不影响窗口打开。
  *
- * 用法：electron.exe app/tool-window.js --tool=verify
+ * 用法：electron.exe app/tool-window.js --tool=research [--port=8787]
  * ----------------------------------------------- */
 'use strict';
 
@@ -23,25 +22,14 @@ const { app, BrowserWindow, ipcMain, clipboard } = require('electron');
 const http = require('http');
 const path = require('path');
 const fs = require('fs');
+const { TOOLS } = require('./tool-registry');
 
 const ROOT = path.resolve(__dirname, '..');
 const DATA_DIR = process.env.ACADEMY_DATA_DIR ? path.resolve(process.env.ACADEMY_DATA_DIR) : path.join(ROOT, 'data');
 const ICON = path.join(ROOT, 'appicon.ico');
 const DEFAULT_PORT = 8787;
 
-/* 工具注册表：加新工具只需要在这里登记一行 */
-const TOOLS = {
-  verify: {
-    title: '🛡 证据检证 · Academy 辩论教练',
-    dir: path.join(__dirname, 'verify'),
-    width: 860, height: 720,
-  },
-  trace: {
-    title: '📚 资料溯源 · Academy 辩论教练',
-    dir: path.join(__dirname, 'trace'),
-    width: 860, height: 720,
-  },
-};
+/* 工具清单见 app/tool-registry.js —— 那里是唯一来源 */
 const TOOL_ID = (process.argv.find((a) => a.startsWith('--tool=')) || '').split('=')[1] || '';
 const T = TOOLS[TOOL_ID];
 if (!T) {
@@ -64,11 +52,24 @@ function log(msg) {
   try { fs.mkdirSync(DATA_DIR, { recursive: true }); fs.appendFileSync(LOG_FILE, line + '\n', 'utf8'); } catch (_) {}
 }
 
-/* 共享设置：窗口尺寸 / 最近输入 */
-function defaultOpts() { return { width: T.width, height: T.height, lastInput: '' }; }
+/* 共享设置：窗口尺寸 + 各工具自己的字段（注册表 defaults 声明） */
+function defaultOpts() { return Object.assign({ width: T.width, height: T.height }, T.defaults); }
+function readJson(file) {
+  try { return JSON.parse(fs.readFileSync(file, 'utf8')); } catch (_) { return null; }
+}
 function loadOpts() {
-  try { return Object.assign(defaultOpts(), JSON.parse(fs.readFileSync(OPTS_FILE, 'utf8'))); }
-  catch (_) { return defaultOpts(); }
+  const raw = readJson(OPTS_FILE) || readLegacyOpts();
+  const opts = Object.assign(defaultOpts(), raw || {});
+  if (T.migrateOpts) T.migrateOpts(raw, opts);
+  return opts;
+}
+/* 一次性搬家：各窗独立时代的存档名与壳的 tool-options-<id>.json 不同，
+   不接上就会把用户已存的窗口尺寸、最近输入清零。读到就地落成新名，下次不用再翻旧文件。 */
+function readLegacyOpts() {
+  if (!T.legacyOptsFile) return null;
+  const raw = readJson(path.join(DATA_DIR, T.legacyOptsFile));
+  if (raw) { try { fs.writeFileSync(OPTS_FILE, JSON.stringify(Object.assign(defaultOpts(), raw), null, 2), 'utf8'); } catch (_) {} }
+  return raw;
 }
 function saveOpts(patch) {
   const next = Object.assign(loadOpts(), patch || {});
@@ -118,8 +119,8 @@ function createWindow() {
   win = new BrowserWindow({
     width: opts.width || T.width,
     height: opts.height || T.height,
-    minWidth: 640,
-    minHeight: 480,
+    minWidth: T.minWidth || 640,
+    minHeight: T.minHeight || 480,
     title: T.title,
     autoHideMenuBar: true,
     icon: fs.existsSync(ICON) ? ICON : undefined,
@@ -153,21 +154,25 @@ ipcMain.handle('tool:init', async () => {
     ok: probe.ok,
     port: serverPort,
     tool: TOOL_ID,
-    opts: { lastInput: opts.lastInput || '' },
-    error: probe.ok ? '' : '主 App 没在运行：本工具需要主 App 提供搜索与模型服务。请先启动 Academy 辩论教练。',
+    opts: T.initOpts(opts),
+    error: probe.ok ? '' : T.offlineHint,
   };
 });
 ipcMain.handle('tool:saveOpts', (_e, patch) => { saveOpts(patch || {}); return { ok: true }; });
 ipcMain.handle('tool:proxy', (_e, payload) => proxyFetch(serverPort, payload || {}));
 ipcMain.handle('tool:copyText', (_e, text) => { clipboard.writeText(String(text || '')); return { ok: true }; });
 ipcMain.handle('tool:setTitle', (_e, t) => { if (win && !win.isDestroyed()) win.setTitle((t ? t + ' · ' : '') + T.title); return { ok: true }; });
-/* 工具窗之间互相跳转（检证 ↔ 溯源）：spawn 一个新的独立进程 */
+/* 工具窗之间互相跳转（研究台 → 检证 ↔ 溯源）：spawn 一个新的独立进程。
+   本进程已经知道自己连的是哪个端口，一并带过去 ——
+   不带的目标窗会退回盲探 8787~8792，双开时可能连到另一条线的 server（09-19 事故同款）。 */
 ipcMain.handle('tool:openTool', (_e, payload) => {
   try {
     const name = String((payload || {}).name || '');
     if (!TOOLS[name]) return { ok: false, error: '未知工具：' + name };
+    const args = [__filename, '--tool=' + name];
+    if (serverPort > 0) args.push('--port=' + serverPort);
     const { spawn } = require('child_process');
-    spawn(process.execPath, [__filename, '--tool=' + name], { cwd: ROOT, windowsHide: false, stdio: 'ignore', detached: true }).unref();
+    spawn(process.execPath, args, { cwd: ROOT, windowsHide: false, stdio: 'ignore', detached: true }).unref();
     return { ok: true };
   } catch (e) { return { ok: false, error: e.message }; }
 });

@@ -22,6 +22,7 @@ const http = require('http');
 const path = require('path');
 const fs = require('fs');
 const os = require('os');
+const { TOOLS } = require('./tool-registry');
 
 const ROOT = path.resolve(__dirname, '..');
 const NODE = path.join(ROOT, 'runtime', 'node', 'node.exe');
@@ -464,24 +465,12 @@ ipcMain.handle('deliverable:folder', (_evt, fileName) => {
     return { ok: true };
   } catch (e) { return { ok: false, error: e.message }; }
 });
-/* 打开「研究台」独立轻量窗（与主窗口并行；重复调用只新开一个独立进程，窗口内部单实例） */
-ipcMain.handle('app:openResearch', async () => {
-  try {
-    const exePath = process.execPath;
-    const script = path.join(__dirname, 'research-window.js');
-    if (!fs.existsSync(script)) return { ok: false, error: '找不到研究台程序（app/research-window.js）' };
-    const { spawn } = require('child_process');
-    const args = serverPort > 0 ? [script, '--port=' + serverPort] : [script];
-    spawn(exePath, args, { cwd: ROOT, windowsHide: false, stdio: 'ignore', detached: true }).unref();
-    log('打开研究台');
-    return { ok: true };
-  } catch (e) { return { ok: false, error: e.message }; }
-});
-/* 独立工具窗（证据检证 / 资料溯源……）：通用壳 tool-window.js 按 --tool 加载对应渲染目录 */
+/* 独立工具窗（研究台 / 证据检证 / 资料溯源……）：
+   通用壳 tool-window.js 按 --tool 加载，工具清单的唯一来源是 app/tool-registry.js */
 ipcMain.handle('app:openTool', async (_evt, payload) => {
   try {
     const name = String((payload || {}).name || '');
-    if (!['verify', 'trace'].includes(name)) return { ok: false, error: '未知工具：' + name };
+    if (!Object.prototype.hasOwnProperty.call(TOOLS, name)) return { ok: false, error: '未知工具：' + name };
     const exePath = process.execPath;
     const script = path.join(__dirname, 'tool-window.js');
     if (!fs.existsSync(script)) return { ok: false, error: '找不到工具窗程序（app/tool-window.js）' };

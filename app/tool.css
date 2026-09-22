@@ -1,6 +1,7 @@
 /* 独立工具窗共享样式（证据检证 / 资料溯源）。
-   从研究台 research.css 抽出来的公共骨架 + 报告面板样式，
-   研究台仍是独立文件；若哪天研究台迁到 tool-window 壳上，可合并。 */
+   从研究台 research.css 抽出来的公共骨架 + 报告面板样式。
+   研究台 2026-09-22 已迁到 tool-window 壳上，但界面是「搜索 + 双栏对话」的
+   整页布局，与工具窗的单面板报告形态不同，样式仍各留一份、不做合并。 */
 :root{ --bg:#f4f6fb; --panel:#fff; --border:#e4e8f1; --text:#1c2434; --muted:#6b7688; --primary:#1f5eff; --primary-soft:#e8efff; --green:#0d9f6e; --amber:#b26a00; --amber-soft:#fff4df; --red:#d23f3f; }
 @media (prefers-color-scheme: dark){ :root:not([data-theme=light]){ --bg:#12161f; --panel:#171d29; --border:#272e3b; --text:#e7ecf3; --muted:#8a94a8; --primary:#6b93ff; --primary-soft:#1c2740; --amber-soft:#3a2c10; } }
 *{ box-sizing:border-box; }

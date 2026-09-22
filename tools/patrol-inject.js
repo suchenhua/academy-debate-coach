@@ -69,6 +69,8 @@
         i: i,
         id: el.id || '',
         ds: el.dataset ? (el.dataset.export || el.dataset.go || '') : '',
+        /* 独立工具窗启动按钮的稳定标识（文案会随简繁切换变字，不能靠文案判定） */
+        tool: (el.dataset && el.dataset.tool) || '',
         text: (el.textContent || '').replace(/\s+/g, ' ').trim().slice(0, 30),
         visible: !!(el.offsetParent || el.offsetWidth || el.offsetHeight)
       };
