@@ -656,7 +656,7 @@ async function main() {
         fsMod.existsSync(path.join(ROOT, 'tools', 'run-ui-patrol.js')) &&
         fsMod.existsSync(path.join(ROOT, 'tools', 'ui-patrol.js')) &&
         fsMod.existsSync(path.join(ROOT, 'tools', 'patrol-inject.js')));
-      /* 测试跑批必须自带收尾：09-19 那次手工起的测试服务漏杀，占住 8790 把桌面快捷方式带偏了 */
+      /* 独立工具窗跑批必须自带收尾：09-19 那次手工起的测试服务漏杀，占住 8790 把桌面快捷方式带偏了 */
       check('★ 工具窗跑批带强制收尾（try/finally 关服务）',
         (() => {
           const p = path.join(ROOT, 'tools', 'run-tool-window-tests.js');
@@ -664,10 +664,32 @@ async function main() {
           const src = fsMod.readFileSync(p, 'utf8');
           return src.indexOf('finally') !== -1 && src.indexOf('8796') !== -1 && src.indexOf('ACADEMY_DATA_DIR') !== -1;
         })());
-      /* 跑批是两轮：渲染层 + 工具箱入口链。第二轮单独成文件，丢了就只剩一半覆盖 */
+      /* 跑批是三轮：渲染层 / 工具箱入口链 / 真实 spawn 认端口。三轮各自成文件，丢了就只剩一半覆盖 */
       check('★ 工具箱入口链探测在位（巡检窗没 preload，那段只有它覆盖）',
         fsMod.existsSync(path.join(ROOT, 'tools', 'verify-tool-open-ipc.js')) &&
         fsMod.readFileSync(path.join(ROOT, 'tools', 'run-tool-window-tests.js'), 'utf8').indexOf('verify-tool-open-ipc.js') !== -1);
+      check('★ 真实 spawn 认端口的第三轮在位（probeServer 只有它能测）',
+        fsMod.readFileSync(path.join(ROOT, 'tools', 'run-tool-window-tests.js'), 'utf8').indexOf('tool-window.js') !== -1);
+
+      /* 端口身份握手（2026-09-22 从 Pro 线搬过来）：
+         「端口上有服务就复用」会让后启动的副本显示前一个副本的界面；
+         「只死盯请求端口」会在 server 自己 +1 挪走后白等 45 秒再静默退出（双击像没反应）。
+         下面这几条钉住的是：指纹上报了、调用方核了、实际端口接上了。 */
+      const instJs = path.join(ROOT, 'app', 'instance-id.js');
+      check('★ 副本指纹模块存在且出 12 位十六进制',
+        fsMod.existsSync(instJs) && /^[0-9a-f]{12}$/.test(require(instJs).SELF));
+      check('★ server 在 /api/status 上报 instanceRoot',
+        serverSrc.indexOf('instanceRoot: INSTANCE_ROOT') !== -1);
+      const emSrc = fsMod.readFileSync(path.join(ROOT, 'app', 'electron-main.js'), 'utf8');
+      check('★ 主进程复用前核指纹（不再「有服务就复用」）',
+        emSrc.indexOf('resolveOwnPort') !== -1 && emSrc.indexOf('info.instanceRoot === wantRoot') !== -1);
+      check('★ 主进程按端口区间等 server（server 自增挪走也找得回）',
+        /waitServerUp\(pick\.port, START_TIMEOUT, \d+\)/.test(emSrc));
+      check('★ 实际端口接到 serverPort（工具窗 spawn 带的必须是它）',
+        emSrc.indexOf('serverPort = usedPort') !== -1);
+      check('★ 工具窗探测也核身份（不再信裸 /api/ping）',
+        fsMod.readFileSync(path.join(ROOT, 'app', 'tool-window.js'), 'utf8').indexOf('info.instanceRoot === INSTANCE_SELF') !== -1);
+      check('★ 端口撞车回归测试在位', fsMod.existsSync(path.join(ROOT, 'tools', 'verify-port-fallback.js')));
       /* 巡检跳过工具窗启动按钮的判据必须是 data-tool，不能是中文文案 ——
          巡检自己会点简繁切换，按文案匹配会在切繁体后静默失效（09-22 实测踩过）。 */
       check('★ 巡检窗按 data-tool 跳过工具窗按钮',

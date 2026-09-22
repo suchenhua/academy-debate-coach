@@ -23,6 +23,14 @@ const OUT = path.join(ROOT, '.build', 'verify-tool-windows.json');
 const log = (m) => console.log('[工具窗验证] ' + m);
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
+/* 真实 spawn 出去的窗口是 detached 的，探测进程退出不代表它们关了。
+   只按自己拿到的 PID 连树杀 —— 这台机器上还跑着别的 electron.exe，按镜像名杀会误伤。 */
+const spawnedWindows = [];
+function killPid(pid) {
+  if (!pid) return;
+  spawnSync('taskkill', ['/PID', String(pid), '/T', '/F'], { windowsHide: true, stdio: 'ignore' });
+}
+
 function pingOnce() {
   return new Promise((resolve) => {
     const req = http.get({ host: '127.0.0.1', port: PORT, path: '/api/ping', timeout: 1500 }, (rs) => {
@@ -87,8 +95,34 @@ async function main() {
       log('✗ 工具箱入口链探测失败 ' + (r2.error ? r2.error.message : '退出码 ' + r2.status));
       process.exitCode = 1;
     }
+
+    /* 第三轮：真的把壳 spawn 起来，核它能不能认出本副本的 server。
+       第一轮用的是自带 mock IPC 的测试壳，摸不到 tool-window.js 里的 probeServer。
+       不带 --port 那次尤其有用：本机 8790 上真站着一个非本 App 的服务，
+       身份核验要是没生效，它就会连错过去。 */
+    log('真实 spawn 工具窗，核端口识别');
+    const lgPath = path.join(DATA, 'tool-research-launch.log');
+    for (const c of [
+      { label: '带 --port（主窗口 spawn 的实际路径）', args: ['--port=' + String(PORT)] },
+      { label: '不带 --port（独立启动，靠扫 8787~8807 认身份）', args: [] },
+    ]) {
+      try { fs.rmSync(lgPath, { force: true }); } catch (_) {}
+      const el = spawn(electronExe, [path.join(ROOT, 'app', 'tool-window.js'), '--tool=research'].concat(c.args), {
+        cwd: ROOT, env: Object.assign({}, process.env, { ACADEMY_DATA_DIR: DATA }), stdio: 'ignore',
+      });
+      spawnedWindows.push(el.pid);
+      await sleep(7000);
+      let txt = '';
+      try { txt = fs.readFileSync(lgPath, 'utf8'); } catch (_) {}
+      const connected = txt.indexOf('已连接，端口 ' + PORT) !== -1;
+      log('  ' + (connected ? '✅' : '❌') + ' ' + c.label);
+      if (!connected) { log('      启动日志：' + (txt.trim().split('\n').slice(-2).join(' / ') || '(没生成)')); process.exitCode = 1; }
+      killPid(el.pid);
+      await sleep(800);
+    }
   } finally {
-    log('收尾：关服务');
+    log('收尾：关遗留窗口 + 关服务');
+    for (const pid of spawnedWindows) killPid(pid);
     try { server.kill(); } catch (_) {}
     if (!(await waitServer(false))) {
       try { server.kill('SIGKILL'); } catch (_) {}

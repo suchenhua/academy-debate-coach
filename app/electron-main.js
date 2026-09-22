@@ -23,6 +23,7 @@ const path = require('path');
 const fs = require('fs');
 const os = require('os');
 const { TOOLS } = require('./tool-registry');
+const { SELF: INSTANCE_ROOT } = require('./instance-id');
 
 const ROOT = path.resolve(__dirname, '..');
 const NODE = path.join(ROOT, 'runtime', 'node', 'node.exe');
@@ -55,31 +56,63 @@ function log(msg) {
   } catch (_) {}
 }
 
-function isServerUp(port, timeoutMs) {
+/* 探测某个端口上有没有 server。
+   wantRoot 传本副本指纹时，只有「同一个安装目录」的 server 才算命中 ——
+   不能只看「端口上有服务就复用」：那正是多副本串台（点哪个快捷方式都是同一个版本）的根因。
+   wantRoot 传空时退化为「只看有没有本 App 的服务」，用来判断端口是否被别的副本占着。 */
+function isServerUp(port, timeoutMs, wantRoot) {
   return new Promise((resolve) => {
     const req = http.get({
       host: '127.0.0.1', port, path: '/api/status', timeout: timeoutMs || 1200,
     }, (res) => {
       let body = '';
       res.on('data', (d) => (body += d));
-      res.on('end', () => resolve(res.statusCode === 200 && body.indexOf('"version"') !== -1));
+      res.on('end', () => {
+        if (res.statusCode !== 200 || body.indexOf('"version"') === -1) return resolve(false);
+        if (!wantRoot) return resolve(true);
+        let info = null;
+        try { info = JSON.parse(body); } catch (_) {}
+        /* 老版本 server（不上报 instanceRoot）一律视为「不是自己」：
+           宁可自己另起一个，也不复用身份不明的实例。 */
+        resolve(!!info && info.instanceRoot === wantRoot);
+      });
     });
     req.on('error', () => resolve(false));
     req.on('timeout', () => { req.destroy(); resolve(false); });
   });
 }
 
-async function waitServerUp(port, timeoutMs) {
+/* 从 startPort 起挑一个端口：
+   - 命中本副本已在跑的 server → 复用它
+   - 端口上站着别的副本的本 App 服务 → 跳过，换下一个（否则会显示成别人的界面）
+   - 端口没人应答（空着，或被非本 App 的服务占着）→ 就用它，真正的占用竞争由 server.js 的
+     EADDRINUSE 自增兜底；挪到哪去了由 waitServerUp 扫端口找回来，不再死盯请求的那个端口。 */
+async function resolveOwnPort(startPort, span) {
+  const end = startPort + (span || 20);
+  for (let p = startPort; p < end; p++) {
+    if (await isServerUp(p, 500, INSTANCE_ROOT)) return { port: p, reuse: true };
+    if (await isServerUp(p, 350, '')) continue;
+    return { port: p, reuse: false };
+  }
+  return { port: startPort, reuse: false };
+}
+
+/* 等本副本的 server 就绪，返回实际端口（0 = 超时）。
+   必须扫一段：server.js 撞 EADDRINUSE 会自己 +1，端口未必还是我们请求的那个。 */
+async function waitServerUp(port, timeoutMs, span) {
   const deadline = Date.now() + timeoutMs;
+  const end = port + (span || 20);
   let i = 0;
   while (Date.now() < deadline) {
     // 前 25 次用很短间隔：server 现在「先能响应、再做后台维护」，通常几十毫秒就绪；
     // 固定的 400ms 轮询会白白多等一拍才开窗。
-    if (await isServerUp(port, i < 25 ? 500 : 800)) return true;
+    for (let p = port; p < end; p++) {
+      if (await isServerUp(p, i < 25 ? 500 : 800, INSTANCE_ROOT)) return p;
+    }
     await new Promise((r) => setTimeout(r, i < 25 ? 60 : 400));
     i++;
   }
-  return false;
+  return 0;
 }
 
 /* 静默注册 .md 关联（HKCU，幂等无副作用；失败不影响主流程）
@@ -547,24 +580,43 @@ ipcMain.handle('md:save', async (_evt, { path: filePath, text, crlf, force } = {
 app.whenReady().then(async () => {
   fs.mkdirSync(DATA_DIR, { recursive: true });
   const effectivePort = Number.isInteger(PORT) && PORT > 0 ? PORT : DEFAULT_PORT;
-  serverPort = effectivePort;
-  const url = 'http://127.0.0.1:' + effectivePort + '/';
 
-  // 1. 确保 server 在跑（复用或自启）
-  if (await isServerUp(effectivePort, 1200)) {
-    log('检测到 server 已在 ' + effectivePort + ' 运行，直接复用');
+  /* 1. 确保 server 在跑：只复用「本副本」的；端口被别的副本或非本 App 的服务挡着就换端口自启。
+        绝不能只看「端口上有服务就复用」—— 那会让后启动的副本显示前一个副本的界面；
+        也不能只死盯请求端口 —— server 自己 +1 挪走后，这里等不到就会白等 45 秒再静默退出。 */
+  let usedPort = 0;
+  const pick = await resolveOwnPort(effectivePort, 20);
+  if (pick.reuse) {
+    usedPort = pick.port;
+    log('检测到本副本的 server 已在 ' + usedPort + ' 运行，直接复用');
   } else {
-    log('启动隐藏 server（端口 ' + effectivePort + '）…');
-    serverChild = startServer(effectivePort);
+    if (pick.port !== effectivePort) {
+      log('端口 ' + effectivePort + ' 被其它副本占用，改用 ' + pick.port + ' 自启（避免显示成别人的界面）');
+    }
+    log('启动隐藏 server（端口 ' + pick.port + ' 起）…');
+    serverChild = startServer(pick.port);
     owned = true;
-    if (!(await waitServerUp(effectivePort, START_TIMEOUT))) {
+    usedPort = await waitServerUp(pick.port, START_TIMEOUT, 20);
+    if (!usedPort) {
       log('server 在超时时间内未就绪，退出');
+      /* 走到这里说明 8787~8807 整段都被本 App 之外的东西占着，或 server 本身起不来。
+         静默退出的话用户只看到「双击没反应」，什么线索都没有 —— 至少要告诉他找谁商量。 */
+      try {
+        dialog.showErrorBox('启动失败',
+          '本地服务在 ' + (START_TIMEOUT / 1000) + ' 秒内没能启动。\n\n'
+          + '常见原因：端口 ' + pick.port + '~' + (pick.port + 20) + ' 全被其它软件占用，或 data/ 目录不可写。\n'
+          + '可以先关掉占用了本地端口的程序再试一次；仍不行请到 QQ 群 386631298 反馈，'
+          + '并附上文件：\n' + LOG_FILE);
+      } catch (_) {}
       cleanup();
       app.quit();
       return;
     }
-    log('server 就绪');
+    log('server 就绪（端口 ' + usedPort + '）');
   }
+  /* 开窗、以及之后 spawn 工具窗/研究台，用的都必须是实际端口而不是请求端口 */
+  serverPort = usedPort;
+  const url = 'http://127.0.0.1:' + usedPort + '/';
 
   // 1.5 静默注册 .md 文件关联（幂等）
   try { if (!registerFileAssoc()) log('文件关联注册失败或非 Windows'); else log('已检查/注册 .md 文件关联'); } catch (_) {}

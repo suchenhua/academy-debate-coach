@@ -24,6 +24,7 @@ const os = require('os');
 const path = require('path');
 const crypto = require('crypto');
 const { spawn, exec, spawnSync } = require('child_process');
+const { SELF: INSTANCE_ROOT } = require('./instance-id');
 const { markdownToDocx } = require('./docx');
 const { extractPdfText } = require('./pdf-text');
 const { extractDocxText } = require('./docx-text');
@@ -488,6 +489,7 @@ function statusPayload() {
     ok: true,
     version: APP_VERSION,
     edition: APP_EDITION,
+    instanceRoot: INSTANCE_ROOT,   // 见 app/instance-id.js：供调用方判断「这个 server 是不是自己这份」
     engine: 'dsh-headless',
     dsh: !!dshBin(),
     node: !!bundledNode(),

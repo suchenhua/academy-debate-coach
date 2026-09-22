@@ -23,11 +23,13 @@ const http = require('http');
 const path = require('path');
 const fs = require('fs');
 const { TOOLS } = require('./tool-registry');
+const { SELF: INSTANCE_SELF } = require('./instance-id');
 
 const ROOT = path.resolve(__dirname, '..');
 const DATA_DIR = process.env.ACADEMY_DATA_DIR ? path.resolve(process.env.ACADEMY_DATA_DIR) : path.join(ROOT, 'data');
 const ICON = path.join(ROOT, 'appicon.ico');
 const DEFAULT_PORT = 8787;
+const PORT_SPAN = 21;   // 与 server.js EADDRINUSE 的自增上限（wanted + 20）对齐
 
 /* 工具清单见 app/tool-registry.js —— 那里是唯一来源 */
 const TOOL_ID = (process.argv.find((a) => a.startsWith('--tool=')) || '').split('=')[1] || '';
@@ -95,20 +97,23 @@ function proxyFetch(port, { method = 'GET', path: reqPath = '/', body = null, ti
   });
 }
 
-/* 探测主 App 在哪个端口（8787 是默认；被占用时 server.js 会自动换端口，所以多试几个） */
-function probeServer(ports) {
-  return new Promise((resolve) => {
-    let i = 0;
-    const tryNext = () => {
-      if (i >= ports.length) return resolve({ ok: false, error: '主 App 未运行' });
-      const port = ports[i++];
-      proxyFetch(port, { path: '/api/ping', timeout: 3000 }).then((r) => {
-        if (r.status === 200 && r.body.indexOf('"ok"') !== -1) return resolve({ ok: true, port });
-        setTimeout(tryNext, 10);
-      });
-    };
-    tryNext();
-  });
+/* 认出本副本的主 App 在哪个端口。必须核 instanceRoot：8787 往上这一段里可能站着
+   另一条线（Pro）或另一份解压副本的服务，连错了就是「工具窗查的东西不是这个 App 的」
+   这类怪现象。主窗口 spawn 时会带 --port=（它知道实际端口），先试它；
+   没带或试错，再按 +20 的区间扫 —— 宽度与 server.js 的 EADDRINUSE 自增一致。 */
+async function probeServer() {
+  const order = PORT_ARG > 0 ? [PORT_ARG] : [];
+  for (let p = DEFAULT_PORT; p < DEFAULT_PORT + PORT_SPAN; p++) {
+    if (order.indexOf(p) === -1) order.push(p);
+  }
+  for (const port of order) {
+    const r = await proxyFetch(port, { path: '/api/status', timeout: 1500 });
+    if (r.status !== 200) continue;
+    let info = null;
+    try { info = JSON.parse(r.body); } catch (_) {}
+    if (info && info.instanceRoot === INSTANCE_SELF) return { ok: true, port };
+  }
+  return { ok: false, port: 0 };
 }
 
 let serverPort = 0;
@@ -146,9 +151,10 @@ function createWindow() {
 
 /* ---- IPC ---- */
 ipcMain.handle('tool:init', async () => {
-  const ports = PORT_ARG > 0 ? [PORT_ARG] : [DEFAULT_PORT, 8788, 8789, 8790, 8791, 8792];
-  const probe = await probeServer(ports);
+  const probe = await probeServer();
   serverPort = probe.ok ? probe.port : 0;
+  /* 连到哪个端口 / 连不上都要落一行：今天排查端口问题全靠手工翻进程 */
+  log('主 App ' + (probe.ok ? '已连接，端口 ' + serverPort : '未找到（本副本的 server 没在 ' + DEFAULT_PORT + '~' + (DEFAULT_PORT + PORT_SPAN - 1) + ' 应答）'));
   const opts = loadOpts();
   return {
     ok: probe.ok,
