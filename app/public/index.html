@@ -625,8 +625,13 @@ whenToUse: 可选：触发条件描述。
             <input type="text" id="deliverSearch" placeholder="筛选文件名…" autocomplete="off" />
             <button type="button" class="btn ghost small" id="btnDeliverFolder" title="打开产物目录文件夹"><svg class="ic" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><use href="#i-folder"></use></svg>打开目录</button>
             <button type="button" class="btn ghost small" id="btnDeliverRefresh">↻ 刷新</button>
+            <button type="button" class="btn ghost small" id="btnDeliverSnap" title="每次对话启动前自动把产物空间整体存档（保留最近 10 份）；对话把文件改坏、误删时，可一键回滚到那次对话开始前">↺ 快照还原</button>
           </div>
           <div id="deliverMeta" class="lib-meta" style="margin:6px 0"></div>
+          <div id="deliverSnapPane" class="hidden" style="margin:6px 0;padding:8px 10px;border:1px solid var(--line,#ddd);border-radius:8px">
+            <p class="memory-hint" style="margin:0 0 6px">每次对话开始前自动存档产物空间。还原＝把整个产物目录回滚到那次对话开始前（还原前会自动保存当前状态，可再还原回去）。</p>
+            <div id="deliverSnapList" class="deliver-list"></div>
+          </div>
           <div id="deliverList" class="deliver-list"></div>
         </div>
         <div id="deliverCasesPane" class="hidden">

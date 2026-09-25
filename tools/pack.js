@@ -44,6 +44,7 @@ const ITEMS = [
   'runtime/persona.patch.yml',
   // 正文流式插件：被 persona.patch.yml 的 insert 引用，漏打包会导致内核整个起不来
   'runtime/academy-text-stream.mjs',
+  'runtime/academy-write-gate.mjs',
   'knowledge', 'modules', 'prep-coach', 'review-coach', 'judge-assistant',
   'protocols', 'personas', 'scripts', 'tools',
 ];

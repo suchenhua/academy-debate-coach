@@ -49,6 +49,71 @@ const PERSONA_PATCH = path.join(ROOT, 'runtime', 'persona.patch.yml');
    文件若缺失（漏打包 / 被杀软误删），内核会整个加载失败、用户只看到「Agent 运行失败」，
    所以启动时做一次自愈：缺失即从内置副本写回。 */
 const STREAM_PLUGIN = path.join(ROOT, 'runtime', 'academy-text-stream.mjs');
+const WRITE_GATE_PLUGIN = path.join(ROOT, 'runtime', 'academy-write-gate.mjs');   // A 档写区硬约束插件
+/* A 档写区硬约束插件的内置副本：与 academy-text-stream 同一条自愈路线——
+   runtime/ 不入库、漏打包或杀软误删时内核会整体加载失败，
+   所以每次运行前从这段源码写回（两处内容不一致以本模板为准由打包时人工同步）。 */
+const WRITE_GATE_PLUGIN_SRC = `/**
+ * academy-write-gate — A 档写区硬约束：普通模式下，Agent 的 write/edit 工具只能
+ * 写产物空间（data/deliverables/）与系统临时目录，越界即硬拒绝。
+ *
+ * 背景：提示词早已要求「除产物空间外不新建/修改文件」，但那只是软约束，
+ * 模型状态不好时可能越界写到知识库/人格文件。本插件订阅内核的
+ * tools/pre-execute 瀑布（dsh-tools 的公开政策接缝），在派发前拦截：
+ * 返回 { kind: 'deny', reason }，拒绝理由会回到模型上下文，模型可自行纠偏。
+ *
+ * 开关（都是 App 侧注入的环境变量，插件不改内核文件、升级内核不受影响）：
+ * - ACADEMY_WRITE_ROOT：产物空间绝对路径；未设置 → 插件休眠（裸跑 dsh 不受影响）
+ * - DSH_PERMISSION_MODE=danger-full-access：扩展模式，用户已确认风险 → 插件休眠
+ */
+import path from 'node:path'
+import os from 'node:os'
+
+export const name = 'academy-write-gate'
+
+const WRITE_ROOT = String(process.env.ACADEMY_WRITE_ROOT || '').trim()
+const FULL_ACCESS = process.env.DSH_PERMISSION_MODE === 'danger-full-access'
+
+function norm(p) {
+  return path.resolve(p).replace(/\\\\/g, '/').toLowerCase()
+}
+function insideZone(target, root) {
+  const a = norm(root)
+  const b = norm(target)
+  return b === a || b.startsWith(a.endsWith('/') ? a : a + '/')
+}
+
+const ZONES = [WRITE_ROOT, os.tmpdir(), '/tmp'].filter((r) => r && r !== '/')
+
+export function apply(ctx) {
+  if (!WRITE_ROOT || FULL_ACCESS) return
+  ctx.on('tools/pre-execute', async (exec, next) => {
+    if (exec.name === 'write' || exec.name === 'edit') {
+      const fp = exec.arguments && exec.arguments.file_path
+      if (typeof fp === 'string' && fp && !ZONES.some((z) => insideZone(fp, z))) {
+        return {
+          kind: 'deny',
+          reason:
+            '写区限制（App 普通模式）：write/edit 只能写 data/deliverables/ 产物空间或系统临时目录，' +
+            '越界目标：' + fp + '。交付物请写入产物空间；确需修改知识库或其它位置的文件，' +
+            '请告知用户在设置中切换到扩展模式。',
+        }
+      }
+    }
+    return next()
+  })
+}
+`;
+function ensureWriteGatePlugin() {
+  try {
+    if (fs.existsSync(WRITE_GATE_PLUGIN)) return;
+    ensureDir(path.dirname(WRITE_GATE_PLUGIN));
+    fs.writeFileSync(WRITE_GATE_PLUGIN, WRITE_GATE_PLUGIN_SRC, 'utf8');
+    console.log('[write-gate] 已恢复写区硬约束插件（原文件缺失）');
+  } catch (e) {
+    console.log('[write-gate] 插件恢复失败：' + e.message);
+  }
+}
 const STREAM_PLUGIN_SRC = `/**
  * academy-text-stream — 把 assistant 正文的实时增量写到 stderr，供桌面 App 边生成边显示。
  *
@@ -92,7 +157,9 @@ function materializePatch() {
     if (!fs.existsSync(PERSONA_PATCH)) return PERSONA_PATCH;
     const src = fs.readFileSync(PERSONA_PATCH, 'utf8');
     const abs = STREAM_PLUGIN.replace(/\\/g, '/');
-    const next = src.replace(/^(\s*name:\s*).*academy-text-stream\.mjs\s*$/m, '$1' + abs);
+    const next = src
+      .replace(/^(\s*name:\s*).*academy-text-stream\.mjs\s*$/m, '$1' + abs)
+      .replace(/^(\s*name:\s*).*academy-write-gate\.mjs\s*$/m, '$1' + WRITE_GATE_PLUGIN.replace(/\\/g, '/'));
     if (next === src) return PERSONA_PATCH;   // 模板里已是绝对路径（手工改过）→ 直接用
     ensureDir(DATA_DIR);
     const out = path.join(DATA_DIR, 'persona.patch.yml');
@@ -2140,6 +2207,90 @@ function deliverSafeName(raw) {
   const n = String(raw || '').replace(/[\\/:*?"<>|\r\n]+/g, '_').trim();
   return n || 'untitled';
 }
+/* ---------------- C 档：产物空间影子快照 ----------------
+   每次正式对话（runId 以 task- 开头）启动内核前，把 data/deliverables/ 整体存档到
+   data/_shadow/<runId>/，滚动保留最近 SHADOW_KEEP 份。配合 A 档写区硬约束：
+   A 挡大多数越界，C 兜住漏网的（扩展模式、shell 绕过路径检查等）——
+   一键还原 = 把产物空间整体回滚到那次对话开始前（还原前自动再存一份 pre-restore 快照，操作可逆）。 */
+const SHADOW_ROOT = path.join(DATA_DIR, '_shadow');
+const SHADOW_KEEP = 10;
+function shadowRelFiles(dir) {
+  const out = [];
+  const walk = (d, rel) => {
+    let ents;
+    try { ents = fs.readdirSync(path.join(d, rel), { withFileTypes: true }); } catch (_) { return; }
+    for (const e of ents) {
+      const r2 = rel ? rel + '/' + e.name : e.name;
+      if (e.isDirectory()) walk(d, r2);
+      else if (e.isFile()) out.push(r2);
+    }
+  };
+  walk(dir, '');
+  return out;
+}
+function snapshotDeliverables(runId) {
+  const res = { ok: false, files: 0 };
+  try {
+    const id = String(runId).replace(/[^a-z0-9_-]/gi, '').slice(0, 80) || 'snap-' + Date.now().toString(36);
+    const dir = path.join(SHADOW_ROOT, id);
+    ensureDir(SHADOW_ROOT);
+    fs.rmSync(dir, { recursive: true, force: true });
+    ensureDir(dir);
+    const files = shadowRelFiles(DELIVER_DIR);
+    for (const rel of files) {
+      try {
+        const dst = path.join(dir, rel);
+        ensureDir(path.dirname(dst));
+        fs.copyFileSync(path.join(DELIVER_DIR, rel), dst);
+      } catch (_) {}
+    }
+    fs.writeFileSync(path.join(dir, 'snapshot.json'), JSON.stringify({ id, time: Date.now(), files }), 'utf8');
+    res.ok = true; res.files = files.length;
+    // 滚动清理：只留最近 SHADOW_KEEP 份
+    try {
+      const all = snapshotList();
+      for (const old of all.slice(SHADOW_KEEP)) {
+        fs.rmSync(path.join(SHADOW_ROOT, old.id), { recursive: true, force: true });
+      }
+    } catch (_) {}
+    console.log('[shadow] 快照 ' + id + '：' + files.length + ' 个文件');
+  } catch (e) {
+    console.log('[shadow] 快照失败（不影响对话）：' + e.message);
+    res.error = e.message;
+  }
+  return res;
+}
+function snapshotList() {
+  const out = [];
+  let ents;
+  try { ents = fs.readdirSync(SHADOW_ROOT, { withFileTypes: true }); } catch (_) { return out; }
+  for (const e of ents) {
+    if (!e.isDirectory() || e.name.startsWith('_')) continue;
+    let meta = null;
+    try { meta = JSON.parse(fs.readFileSync(path.join(SHADOW_ROOT, e.name, 'snapshot.json'), 'utf8')); } catch (_) {}
+    out.push({ id: e.name, time: (meta && meta.time) || fs.statSync(path.join(SHADOW_ROOT, e.name)).mtimeMs, files: (meta && meta.files) || null });
+  }
+  return out.sort((a, b) => b.time - a.time);
+}
+function snapshotRestore(runId) {
+  try {
+    const id = String(runId).replace(/[^a-z0-9_-]/gi, '');
+    const dir = path.join(SHADOW_ROOT, id);
+    if (!id || !fs.existsSync(path.join(dir, 'snapshot.json'))) return { ok: false, error: '找不到快照：' + runId };
+    snapshotDeliverables('pre-restore-' + Date.now().toString(36));   // 还原前先存当前状态，操作可逆
+    const files = shadowRelFiles(dir).filter((rel) => rel !== 'snapshot.json');
+    fs.rmSync(DELIVER_DIR, { recursive: true, force: true });
+    ensureDir(DELIVER_DIR);
+    for (const rel of files) {
+      const dst = path.join(DELIVER_DIR, rel);
+      ensureDir(path.dirname(dst));
+      fs.copyFileSync(path.join(dir, rel), dst);
+    }
+    console.log('[shadow] 已还原到快照 ' + id + '（' + files.length + ' 个文件）');
+    return { ok: true, id, files: files.length };
+  } catch (e) { return { ok: false, error: e.message }; }
+}
+
 function deliverList() {
   const out = [];
   try {
@@ -2874,9 +3025,12 @@ function runDsh(runId, taskText, cfg, stream) {
     const node = bundledNode();
     migrateZstdSessions();
     ensureStreamPlugin();
+    ensureWriteGatePlugin();
     // 补丁必须用「实例化到 data/ 的本机版本」——模板里是相对占位，内核加载不了
     const patchPath = materializePatch();
     const extended = cfg.extendedTools === true;
+    // C 档影子快照：正式对话跑之前把产物空间整体存档（后台小任务 sug/ver/trc 不占额度）
+    if (/^task-/.test(String(runId))) snapshotDeliverables(String(runId));
     const env = Object.assign({}, process.env, {
       DSH_HOME: DSH_HOME,
       // 普通模式：工作区写权限；扩展模式：全权 + code-mode（模型可见 run_code）——设置里已做风险确认
@@ -2884,6 +3038,8 @@ function runDsh(runId, taskText, cfg, stream) {
       DSH_TOOLS_MODE: extended ? 'code' : undefined,
       DEEPSEEK_API_KEY: String(cfg.apiKey || '').trim(),
       ACADEMY_NO_OPEN: '1',
+      // A 档写区硬约束：普通模式下 write/edit 只能写产物空间/临时目录（academy-write-gate.mjs 读这两个变量）
+      ACADEMY_WRITE_ROOT: DELIVER_DIR,
     });
     if (env.DSH_TOOLS_MODE === undefined) delete env.DSH_TOOLS_MODE;
     delete env.DEEPSEEK_KEY;
@@ -5064,6 +5220,21 @@ function handleRequest(req, res) {
 
 
   /* ---------------- 产物空间 API ---------------- */
+  if (req.method === 'GET' && p === '/api/deliverables/snapshots') {
+    try { return sendJson(res, 200, { ok: true, items: snapshotList(), keep: SHADOW_KEEP }); }
+    catch (e) { return sendJson(res, 500, { ok: false, error: e.message }); }
+  }
+
+  if (req.method === 'POST' && p === '/api/deliverables/restore') {
+    return readBody(req, 128 * 1024).then((raw) => {
+      let body;
+      try { body = JSON.parse(raw || '{}'); } catch (_) { return sendJson(res, 400, { ok: false, error: 'JSON 解析失败' }); }
+      const r = snapshotRestore(String(body.id || ''));
+      if (!r.ok) return sendJson(res, 422, { ok: false, error: r.error });
+      return sendJson(res, 200, r);
+    }).catch((e) => sendJson(res, 500, { ok: false, error: e.message }));
+  }
+
   if (req.method === 'GET' && p === '/api/deliverables') {
     try {
       const items = deliverList();
@@ -5516,6 +5687,6 @@ function startServer() {
 
 /* 测试专用导出：tools/memory-forget-driver.js 直调 FORGET 撤回内核。
    require 本文件会启动 listen，调用方用完必须立刻 process.exit。 */
-module.exports = { memoryForget: forgetLongEntries };
+module.exports = { memoryForget: forgetLongEntries, deliverShadow: { snapshot: snapshotDeliverables, list: snapshotList, restore: snapshotRestore }, ensureWriteGatePlugin, WRITE_GATE_PLUGIN };
 
 startServer();

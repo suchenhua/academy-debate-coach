@@ -620,6 +620,110 @@ async function main() {
           check('FORGET：未命中不动存量', rr2.status === 0 && res2 && res2.removed === 0 && fsMod.readFileSync(pathMod.join(testDir, 'memory.md'), 'utf8').includes('保留乙'));
           try { fsMod.rmSync(testDir, { recursive: true, force: true }); } catch (_) {}
         }
+        // 7b5. A 档写区硬约束（Phase 3-A）静态接线四环：插件文件、补丁挂载、env 注入、打包清单
+        {
+          const fsMod = require('fs');
+          const srv = fsMod.readFileSync(pathMod.join(ROOT, 'app', 'server.js'), 'utf8');
+          check('A档 写闸插件在位', fsMod.existsSync(pathMod.join(ROOT, 'runtime', 'academy-write-gate.mjs')));
+          const patchTpl = fsMod.readFileSync(pathMod.join(ROOT, 'runtime', 'persona.patch.yml'), 'utf8');
+          check('A档 补丁模板挂载写闸', patchTpl.indexOf('id: academy-write-gate') !== -1 && patchTpl.indexOf('./runtime/academy-write-gate.mjs') !== -1);
+          check('A档 materializePatch 改写写闸路径', srv.indexOf('WRITE_GATE_PLUGIN') !== -1 && srv.indexOf('academy-write-gate') !== -1);
+          check('A档 runDsh 注入 ACADEMY_WRITE_ROOT', /ACADEMY_WRITE_ROOT:\s*DELIVER_DIR/.test(srv));
+          const pack = fsMod.readFileSync(pathMod.join(ROOT, 'tools', 'pack.js'), 'utf8');
+          check('A档 打包清单含写闸插件', pack.indexOf('runtime/academy-write-gate.mjs') !== -1);
+          // runtime/ 不入库是项目惯例，插件必须带内置自愈副本（与 academy-text-stream 同路线）
+          const gateSrc = fsMod.readFileSync(pathMod.join(ROOT, 'runtime', 'academy-write-gate.mjs'), 'utf8');
+          const gCap = srv.match(/const WRITE_GATE_PLUGIN_SRC = `([\s\S]*?)`;/);
+          const gateEmb = gCap ? eval('`' + gCap[1] + '`') : '';
+          check('A档 server.js 内置自愈副本与插件文件同步', !!gCap && gateEmb === gateSrc);
+          check('A档 runDsh 前调用 ensureWriteGatePlugin', /ensureStreamPlugin\(\);\s*\n\s*ensureWriteGatePlugin\(\);/.test(srv));
+        }
+        // 7b6. ★ A 档行为单元：假 ctx 直驱插件的 tools/pre-execute 处理器，
+        // 验证「产物区内放行 / 越界拒绝 / 读不受影响 / 临时目录放行 / 扩展模式与裸跑休眠」。
+        {
+          const { pathToFileURL } = require('url');
+          const gateUrl = pathToFileURL(pathMod.join(ROOT, 'runtime', 'academy-write-gate.mjs')).href;
+          const savedRoot = process.env.ACADEMY_WRITE_ROOT, savedMode = process.env.DSH_PERMISSION_MODE;
+          process.env.ACADEMY_WRITE_ROOT = pathMod.join(ROOT, 'data', 'deliverables');
+          delete process.env.DSH_PERMISSION_MODE;
+          try {
+            const handlers = [];
+            const mod = await import(gateUrl + '?t=' + Date.now());
+            mod.apply({ on: function (ev, fn) { handlers.push([ev, fn]); } });
+            const pre = handlers.filter(function (h) { return h[0] === 'tools/pre-execute'; })[0];
+            check('A档 普通模式订阅 tools/pre-execute', !!pre);
+            const call = async function (name, args) { return pre ? await pre[1]({ name: name, arguments: args }, async function () { return { kind: 'allow' }; }) : { kind: 'missing' }; };
+            const a1 = await call('write', { file_path: pathMod.join(ROOT, 'data', 'deliverables', 'x.md') });
+            check('A档 产物区绝对路径放行', a1.kind === 'allow');
+            const a2 = await call('edit', { file_path: 'data/deliverables/y.md' });
+            check('A档 产物区相对路径放行', a2.kind === 'allow');
+            const d1 = await call('write', { file_path: pathMod.join(ROOT, 'runtime', 'persona.patch.yml') });
+            check('A档 越界写被拒且带说理', d1.kind === 'deny' && /写区限制/.test(String(d1.reason)));
+            const d2 = await call('write', { file_path: 'AGENTS.md' });
+            check('A档 相对越界同样被拒', d2.kind === 'deny');
+            const r1 = await call('read', { file_path: pathMod.join(ROOT, 'knowledge', 'x.md') });
+            check('A档 读工具不受限', r1.kind === 'allow');
+            const r2 = await call('write', { file_path: pathMod.join(require('os').tmpdir(), 'academy_smoke_tmp.md') });
+            check('A档 临时目录放行', r2.kind === 'allow');
+            process.env.DSH_PERMISSION_MODE = 'danger-full-access';
+            let n2 = 0;
+            const mod2 = await import(gateUrl + '?f=' + Date.now());
+            mod2.apply({ on: function () { n2++; } });
+            check('A档 扩展模式休眠', n2 === 0);
+            delete process.env.DSH_PERMISSION_MODE;
+            delete process.env.ACADEMY_WRITE_ROOT;
+            let n3 = 0;
+            const mod3 = await import(gateUrl + '?b=' + Date.now());
+            mod3.apply({ on: function () { n3++; } });
+            check('A档 无 WRITE_ROOT 休眠（裸跑 dsh 不受影响）', n3 === 0);
+          } finally {
+            if (savedRoot === undefined) delete process.env.ACADEMY_WRITE_ROOT; else process.env.ACADEMY_WRITE_ROOT = savedRoot;
+            if (savedMode === undefined) delete process.env.DSH_PERMISSION_MODE; else process.env.DSH_PERMISSION_MODE = savedMode;
+          }
+        }
+        // 7b7. ★ C 档影子快照端到端（Phase 3-C）：快照 → 改坏 → 还原 → 复核，
+        // 数据目录隔离到 data/_smoke_shadow（测后即删），真实产物空间零风险。
+        {
+          const fsMod = require('fs');
+          const srv = fsMod.readFileSync(pathMod.join(ROOT, 'app', 'server.js'), 'utf8');
+          check('C档 runDsh 接线快照（仅正式对话）', srv.indexOf('function snapshotDeliverables(') !== -1 && /\^task-/.test(srv));
+          check('C档 前端还原中心在位', fsMod.readFileSync(pathMod.join(ROOT, 'app', 'public', 'index.html'), 'utf8').indexOf('btnDeliverSnap') !== -1
+            && fsMod.readFileSync(pathMod.join(ROOT, 'app', 'public', 'app.js'), 'utf8').indexOf('loadDeliverSnapshots') !== -1);
+          const testDir = pathMod.join(ROOT, 'data', '_smoke_shadow');
+          try { fsMod.rmSync(testDir, { recursive: true, force: true }); } catch (_) {}
+          const dd = pathMod.join(testDir, 'deliverables');
+          fsMod.mkdirSync(pathMod.join(dd, 'sub'), { recursive: true });
+          fsMod.writeFileSync(pathMod.join(dd, 'a.md'), '第一版', 'utf8');
+          fsMod.writeFileSync(pathMod.join(dd, 'sub', 'b.md'), '乙文件', 'utf8');
+          const drv = pathMod.join(ROOT, 'tools', 'shadow-driver.js');
+          check('C档 驱动器在位', fsMod.existsSync(drv));
+          const envT = Object.assign({}, process.env, { ACADEMY_DATA_DIR: testDir, ACADEMY_NO_OPEN: '1' });
+          const run = function (args) {
+            const rr = spawnSync(process.execPath, [drv].concat(args), { cwd: ROOT, encoding: 'utf8', windowsHide: true, timeout: 30000, env: envT });
+            let o = null;
+            try { o = JSON.parse(String(rr.stdout || '').trim().split(/\r?\n/).pop()); } catch (_) {}
+            return { status: rr.status, o: o };
+          };
+          const s1 = run(['snapshot', 'task-test1']);
+          check('C档 快照成功且计文件数', s1.status === 0 && s1.o && s1.o.ok === true && s1.o.files === 2, JSON.stringify(s1.o));
+          fsMod.writeFileSync(pathMod.join(dd, 'a.md'), '被改坏了', 'utf8');
+          fsMod.rmSync(pathMod.join(dd, 'sub', 'b.md'));
+          fsMod.writeFileSync(pathMod.join(dd, 'c.md'), '多了个野文件', 'utf8');
+          const s2 = run(['list']);
+          check('C档 快照列表可见', s2.o && s2.o.ok === true && s2.o.items.some(function (i) { return i.id === 'task-test1'; }));
+          const s3 = run(['restore', 'task-test1']);
+          check('C档 还原成功', s3.status === 0 && s3.o && s3.o.ok === true && s3.o.files === 2, JSON.stringify(s3.o));
+          const aNow = (() => { try { return fsMod.readFileSync(pathMod.join(dd, 'a.md'), 'utf8'); } catch (_) { return ''; } })();
+          const bNow = (() => { try { return fsMod.readFileSync(pathMod.join(dd, 'sub', 'b.md'), 'utf8'); } catch (_) { return ''; } })();
+          check('C档 改坏的文件回到原样', aNow === '第一版');
+          check('C档 被删的文件回来了', bNow === '乙文件');
+          check('C档 野文件随整体回滚消失', !fsMod.existsSync(pathMod.join(dd, 'c.md')));
+          const s4 = run(['list']);
+          check('C档 还原前自动留 pre-restore 快照（可逆）', s4.o && s4.o.items.some(function (i) { return String(i.id).indexOf('pre-restore-') === 0; }));
+          const s5 = run(['restore', 'task-not-exist']);
+          check('C档 还原不存在的快照明确报错', s5.o && s5.o.ok === false && !!s5.o.error);
+          try { fsMod.rmSync(testDir, { recursive: true, force: true }); } catch (_) {}
+        }
         // 7c. 清空全部记忆：长期 + 流水都应清掉（含每日文件删除）；清空前应自动留快照
         {
           const fsMod = require('fs');

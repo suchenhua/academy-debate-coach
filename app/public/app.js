@@ -3013,9 +3013,43 @@ async function deliverDelete(name) {
   const r = await libApi('/api/deliverables/delete', { name });
   if (r && r.ok) { toast('已删除'); loadDeliverables(); } else toast('删除失败：' + ((r&&r.error)||''));
 }
+/* ===== C 档：产物空间影子快照（还原中心） ===== */
+async function loadDeliverSnapshots() {
+  const box = document.getElementById('deliverSnapList'); if (!box) return;
+  box.innerHTML = '<span class="hint">加载中…</span>';
+  try {
+    const r = await fetchJSON('/api/deliverables/snapshots');
+    const items = r.items || [];
+    box.innerHTML = '';
+    if (!items.length) { box.innerHTML = '<span class="hint">还没有快照——开始一次对话后自动生成。</span>'; return; }
+    for (const it of items) {
+      const row = document.createElement('div'); row.className = 'deliver-item';
+      const label = document.createElement('span');
+      label.textContent = fmtTime(it.time) + ' · ' + (it.files === null ? '?' : it.files) + ' 个文件 · ' + it.id;
+      label.style.flex = '1';
+      row.appendChild(label);
+      const b = document.createElement('button'); b.type = 'button'; b.className = 'btn ghost small'; b.textContent = '还原到这里';
+      b.onclick = async () => {
+        if (!window.confirm('把产物空间整体还原到「' + fmtTime(it.time) + '」之前？\n当前产物会先自动存档，可再还原回来。')) return;
+        const rr = await libApi('/api/deliverables/restore', { id: it.id });
+        if (rr && rr.ok) { toast('已还原：' + rr.files + ' 个文件'); loadDeliverables(); loadDeliverSnapshots(); }
+        else toast('还原失败：' + ((rr && rr.error) || ''));
+      };
+      row.appendChild(b);
+      box.appendChild(row);
+    }
+  } catch (e) { box.innerHTML = '<span class="hint">读取失败：' + e.message + '</span>'; }
+}
 function bindDeliverables() {
   const btn = $('#btnDeliver'); if (btn) btn.onclick = () => { $('#deliverModal').classList.remove('hidden'); loadDeliverables(); renderDeliverStars(); };
   const rf = $('#btnDeliverRefresh'); if (rf) rf.onclick = loadDeliverables;
+  const snap = $('#btnDeliverSnap');
+  if (snap) snap.onclick = () => {
+    const pane = $('#deliverSnapPane'); if (!pane) return;
+    const show = pane.classList.contains('hidden');
+    pane.classList.toggle('hidden', !show);
+    if (show) loadDeliverSnapshots();
+  };
   const srch = $('#deliverSearch');
   if (srch) srch.oninput = () => { deliverState.search = srch.value; renderDeliverList(); };
   // 文件类型分类片
