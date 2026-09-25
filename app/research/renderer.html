@@ -3,12 +3,14 @@
 <head>
 <meta charset="UTF-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-<title>🔍 研究台 · Academy 辩论教练</title>
+<title>研究台 · Academy 辩论教练</title>
+<link rel="stylesheet" href="../public/tokens.css" />
 <link rel="stylesheet" href="research.css" />
+<script src="../public/icons.js"></script>
 </head>
 <body>
   <header class="topbar">
-    <span class="logo">🔍 研究台</span>
+    <span class="logo"><svg class="ic" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><use href="#i-search"></use></svg>研究台</span>
     <span class="grow"></span>
     <span id="connState" class="conn">连接中…</span>
   </header>
@@ -20,14 +22,14 @@
     <section class="search-area">
       <div class="search-row">
         <input type="text" id="topic" placeholder="输入辩题或关键词，如：人工智能应该有版权吗…" autocomplete="off" />
-        <button id="btnSearch" class="btn primary">🔍 搜索</button>
-        <button id="btnSuggest" class="btn ghost" title="按 7 种触发条件分析该搜什么">📋 建议该搜什么</button>
-        <button id="btnVerify" class="btn verify" title="核查论据是否被编造或曲解（独立工具窗）">🛡 证据检证</button>
+        <button id="btnSearch" class="btn primary"><svg class="ic" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><use href="#i-search"></use></svg>搜索</button>
+        <button id="btnSuggest" class="btn ghost" title="按 7 种触发条件分析该搜什么"><svg class="ic" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><use href="#i-lightbulb"></use></svg>建议该搜什么</button>
+        <button id="btnVerify" class="btn verify" title="核查论据是否被编造或曲解（独立工具窗）"><svg class="ic" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><use href="#i-shield"></use></svg>证据检证</button>
       </div>
       <div class="mode-row">
         <span class="lbl">检索方式：</span>
-        <button type="button" class="mode-chip active" data-mode="server" title="调当前模型商的联网搜索，结果更准">⭐ 深度检索（推荐）</button>
-        <button type="button" class="mode-chip" data-mode="free" title="免费本地抓取，覆盖有限，部分网络下可能搜不到">⚡ 基础检索</button>
+        <button type="button" class="mode-chip active" data-mode="server" title="调当前模型商的联网搜索，结果更准"><svg class="ic" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><use href="#i-star"></use></svg>深度检索（推荐）</button>
+        <button type="button" class="mode-chip" data-mode="free" title="免费本地抓取，覆盖有限，部分网络下可能搜不到"><svg class="ic" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><use href="#i-bolt"></use></svg>基础检索</button>
         <span id="modeNote" class="mode-note"></span>
       </div>
     </section>
@@ -45,13 +47,13 @@
       <!-- 右：与教练的独立对话 -->
       <section class="right">
         <div class="chat-head">
-          <span>💬 研究助手</span>
-          <button id="btnChatClear" class="tbtn" title="清空当前对话">🗑</button>
+          <span><svg class="ic" width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><use href="#i-free"></use></svg>研究助手</span>
+          <button id="btnChatClear" class="tbtn" title="清空当前对话"><svg class="ic" width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><use href="#i-trash"></use></svg></button>
         </div>
         <div id="chatLog" class="chat-log"><p class="hint">搜到的结果看不懂？贴给研究助手帮你解读、找下一步该搜什么。</p></div>
         <div class="chat-input-row">
           <textarea id="chatInput" rows="2" placeholder="问研究助手：这条数据可信吗 / 下一步搜什么 / 帮我整理成弹药…"></textarea>
-          <button id="btnChatSend" class="btn primary">发送</button>
+          <button id="btnChatSend" class="btn primary"><svg class="ic" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><use href="#i-send"></use></svg>发送</button>
         </div>
       </section>
     </div>

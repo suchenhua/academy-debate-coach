@@ -1,0 +1,222 @@
+/* ============================================================================
+   设计令牌 —— Apple Human Interface Guidelines 落地层
+   ----------------------------------------------------------------------------
+   参考 https://developer.apple.com/cn/design/human-interface-guidelines/
+   三条支柱：Clarity（清晰）/ Deference（服从内容）/ Depth（层次）
+
+   本文件只放令牌（token），不放任何组件样式。所有组件一律引用 var(--*)，
+   禁止再出现魔法数字。改主题 = 改这一处。
+
+   命名规则：
+     --c-*   颜色 (color)          --sp-*  间距 (space)
+     --fs-*  字号 (font size)      --fw-*  字重 (font weight)
+     --r-*   圆角 (radius)         --dur-* 时长 (duration)
+     --z-*   层级 (z-index)
+   ========================================================================== */
+
+:root {
+  /* ── 中性灰阶 ──────────────────────────────────────────────────────────
+     Apple 的界面由灰阶撑起结构，颜色只留给强调与状态。
+     浅色：近白底 + 极淡面板 + 细腻描边，靠明度差而非重线分隔。 */
+  --c-bg:            #f5f5f7;   /* 窗口底：Apple 官网同款中性灰 */
+  --c-bg-elevated:   #ffffff;   /* 浮起的面板（侧栏、弹窗） */
+  --c-surface:       #ffffff;   /* 卡片/气泡底 */
+  --c-surface-sunken:#fafafa;   /* 下沉区（代码块、内嵌输入） */
+  --c-surface-hover: #f0f0f2;   /* hover 底 */
+  --c-surface-active:#e8e8ed;   /* 按下 / 选中底 */
+
+  --c-line:          #e3e3e6;   /* 分隔线（弱） */
+  --c-line-strong:   #d2d2d7;   /* 描边（强，如输入框） */
+
+  --c-text:          #1d1d1f;   /* 主文字：Apple 近黑 */
+  --c-text-2:        #424245;   /* 次级文字 */
+  --c-text-3:        #6e6e73;   /* 三级 / 说明文字 */
+  --c-text-4:        #74747a;   /* 最弱 / 占位符（比 Apple 的 #86868b 略深，保证 4.5:1） */
+
+  /* ── 强调色 ────────────────────────────────────────────────────────────
+     单一强调色。Apple 系统蓝的克制版本，不用高饱和 SaaS 蓝。 */
+  --c-accent:        #0071e3;
+  --c-accent-hover:  #0077ed;
+  --c-accent-press:  #0068cc;
+  --c-accent-soft:   #e8f2fd;   /* 选中底 */
+  --c-accent-ring:   rgba(0, 113, 227, .35);
+
+  /* ── 语义色 ────────────────────────────────────────────────────────────── */
+  --c-success:       #0e8a5f;
+  --c-success-soft:  #e6f5ef;
+  --c-warn:          #9a6400;
+  --c-warn-soft:     #fdf3e3;
+  --c-danger:        #c7362f;
+  --c-danger-soft:   #fdecea;
+
+  /* ── 阴影 ────────────────────────────────────────────────────────────────
+     Apple 的层次靠极淡的弥散阴影 + 描边，不靠大黑边。 */
+  --sh-xs:  0 1px 2px rgba(0, 0, 0, .04);
+  --sh-sm:  0 1px 3px rgba(0, 0, 0, .06), 0 1px 2px rgba(0, 0, 0, .04);
+  --sh-md:  0 4px 16px rgba(0, 0, 0, .08), 0 1px 3px rgba(0, 0, 0, .04);
+  --sh-lg:  0 12px 40px rgba(0, 0, 0, .14), 0 2px 8px rgba(0, 0, 0, .06);
+
+  /* ── 间距（4pt 栅格）────────────────────────────────────────────────── */
+  --sp-1:  4px;
+  --sp-2:  8px;
+  --sp-3:  12px;
+  --sp-4:  16px;
+  --sp-5:  20px;
+  --sp-6:  24px;
+  --sp-8:  32px;
+  --sp-10: 40px;
+  --sp-12: 48px;
+  --sp-16: 64px;
+
+  /* ── 字号 ────────────────────────────────────────────────────────────────
+     桌面端阅读基准 13-14px；层级靠字重与颜色，不靠一味放大。 */
+  --fs-xs:   11px;   /* 角标、极弱说明 */
+  --fs-sm:   12px;   /* 辅助文字、标签 */
+  --fs-base: 13px;   /* 界面默认（按钮、导航） */
+  --fs-md:   14px;   /* 正文次级 */
+  --fs-lg:   15px;   /* 对话正文（--chat-fs 覆盖） */
+  --fs-xl:   17px;   /* 区块标题 */
+  --fs-2xl:  22px;   /* 页面主标题 */
+  --fs-3xl:  28px;   /* 欢迎语 */
+
+  --fw-normal:   400;
+  --fw-medium:   500;
+  --fw-semibold: 600;
+  --fw-bold:     700;
+
+  --lh-tight: 1.3;
+  --lh-base:  1.55;
+  --lh-loose: 1.75;
+
+  /* ── 圆角 ──────────────────────────────────────────────────────────────── */
+  --r-xs:  5px;
+  --r-sm:  7px;
+  --r-md:  10px;   /* 按钮、输入框 */
+  --r-lg:  14px;   /* 卡片、气泡 */
+  --r-xl:  20px;   /* 弹窗 */
+  --r-full: 999px;
+
+  /* ── 动效 ────────────────────────────────────────────────────────────────
+     Apple 的动效短促、克制、带轻微缓出。 */
+  --dur-fast:  .12s;
+  --dur-base:  .2s;
+  --dur-slow:  .32s;
+  --ease:      cubic-bezier(.25, .1, .25, 1);   /* 标准缓动 */
+  --ease-out:  cubic-bezier(.16, 1, .3, 1);     /* 出场，Apple 常用 */
+
+  /* ── 布局尺寸 ──────────────────────────────────────────────────────────── */
+  --sidebar-w:   264px;
+  --topbar-h:    56px;
+  --control-h:   32px;
+
+  /* ── 层级 ──────────────────────────────────────────────────────────────── */
+  --z-base:    1;
+  --z-sticky:  100;
+  --z-dropdown:800;
+  --z-modal:   1000;
+  --z-toast:   2000;
+}
+
+/* ── 深色主题 ────────────────────────────────────────────────────────────────
+   Apple 深色不是「黑」，是分层的深灰：#000 底 + 抬升的面板 + 更淡的描边。 */
+:root[data-theme="dark"] {
+  --c-bg:            #1c1c1e;
+  --c-bg-elevated:   #2c2c2e;
+  --c-surface:       #2c2c2e;
+  --c-surface-sunken:#232325;
+  --c-surface-hover: #3a3a3c;
+  --c-surface-active:#48484a;
+
+  --c-line:          #38383a;
+  --c-line-strong:   #48484a;
+
+  --c-text:          #f5f5f7;
+  --c-text-2:        #d1d1d6;
+  --c-text-3:        #a1a1a6;
+  --c-text-4:        #98989d;   /* 深色下也留够对比度 */
+
+  --c-accent:        #0a84ff;
+  --c-accent-hover:  #3d9bff;
+  --c-accent-press:  #0071e3;
+  --c-accent-soft:   #12365c;
+  --c-accent-ring:   rgba(10, 132, 255, .45);
+
+  --c-success:       #30d158;
+  --c-success-soft:  #12301c;
+  --c-warn:          #ffd60a;
+  --c-warn-soft:     #33290a;
+  --c-danger:        #ff453a;
+  --c-danger-soft:   #3a1a18;
+
+  --sh-xs:  0 1px 2px rgba(0, 0, 0, .3);
+  --sh-sm:  0 1px 3px rgba(0, 0, 0, .4), 0 1px 2px rgba(0, 0, 0, .3);
+  --sh-md:  0 4px 16px rgba(0, 0, 0, .5), 0 1px 3px rgba(0, 0, 0, .3);
+  --sh-lg:  0 12px 40px rgba(0, 0, 0, .6), 0 2px 8px rgba(0, 0, 0, .4);
+}
+
+/* 跟随系统（用户未显式选择主题时） */
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]):not([data-theme="dark"]) {
+    --c-bg:            #1c1c1e;
+    --c-bg-elevated:   #2c2c2e;
+    --c-surface:       #2c2c2e;
+    --c-surface-sunken:#232325;
+    --c-surface-hover: #3a3a3c;
+    --c-surface-active:#48484a;
+    --c-line:          #38383a;
+    --c-line-strong:   #48484a;
+    --c-text:          #f5f5f7;
+    --c-text-2:        #d1d1d6;
+    --c-text-3:        #a1a1a6;
+    --c-text-4:        #98989d;   /* 深色下也留够对比度 */
+    --c-accent:        #0a84ff;
+    --c-accent-hover:  #3d9bff;
+    --c-accent-press:  #0071e3;
+    --c-accent-soft:   #12365c;
+    --c-accent-ring:   rgba(10, 132, 255, .45);
+    --c-success:       #30d158;
+    --c-success-soft:  #12301c;
+    --c-warn:          #ffd60a;
+    --c-warn-soft:     #33290a;
+    --c-danger:        #ff453a;
+    --c-danger-soft:   #3a1a18;
+    --sh-xs:  0 1px 2px rgba(0, 0, 0, .3);
+    --sh-sm:  0 1px 3px rgba(0, 0, 0, .4), 0 1px 2px rgba(0, 0, 0, .3);
+    --sh-md:  0 4px 16px rgba(0, 0, 0, .5), 0 1px 3px rgba(0, 0, 0, .3);
+    --sh-lg:  0 12px 40px rgba(0, 0, 0, .6), 0 2px 8px rgba(0, 0, 0, .4);
+  }
+}
+
+/* ── 兼容别名 ────────────────────────────────────────────────────────────────
+   旧样式表里用的是 --bg / --panel / --border / --text / --muted / --primary …
+   保留映射，这样老规则不用一次性全改也能跟着新令牌走。
+   （新代码请直接用 --c-* 系列。） */
+:root {
+  --bg:           var(--c-bg);
+  --panel:        var(--c-surface);
+  --border:       var(--c-line);
+  --text:         var(--c-text);
+  --muted:        var(--c-text-3);
+  --primary:      var(--c-accent);
+  --primary-dark: var(--c-accent-press);
+  --primary-soft: var(--c-accent-soft);
+  --green:        var(--c-success);
+  --green-soft:   var(--c-success-soft);
+  --red:          var(--c-danger);
+  --red-soft:     var(--c-danger-soft);
+  --amber:        var(--c-warn);
+  --amber-soft:   var(--c-warn-soft);
+  --shadow:       var(--sh-md);
+  --radius:       var(--r-lg);
+}
+
+/* ── 无障碍：尊重系统「减弱动态效果」─────────────────────────────────────── */
+@media (prefers-reduced-motion: reduce) {
+  :root { --dur-fast: 0s; --dur-base: 0s; --dur-slow: 0s; }
+  *, *::before, *::after {
+    animation-duration: .001ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: .001ms !important;
+    scroll-behavior: auto !important;
+  }
+}

@@ -12,6 +12,12 @@
   }
   function esc(s) { return String(s == null ? '' : s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;').replace(/'/g, '&#39;'); }
 
+  /* 图标助手：统一走 icons.js 的 sprite（线性 SVG，继承 currentColor）。 */
+  function ic(name, size) {
+    return (window.AcademyIcons && window.AcademyIcons.icon(name, { size: size || 14 })) || '';
+  }
+
+
   /* ---- 主 App 请求 ---- */
   function api(path, method, body) {
     return A.proxy({ method: method || 'GET', path: path, body: body || null }).then(function (r) {
@@ -36,7 +42,7 @@
     } else {
       $('connState').textContent = '未连接';
       $('connState').className = 'conn bad';
-      $('boot').innerHTML = '<p class="hint">⛔ ' + esc(st.error || '') + '<br><br>启动主 App 后，重开本窗口即可。</p>';
+      $('boot').innerHTML = '<p class="hint">' + ic('warn', 18) + ' ' + esc(st.error || '') + '<br><br>启动主 App 后，重开本窗口即可。</p>';
     }
   });
 
@@ -72,11 +78,11 @@
       if (j.lowQuality) {
         box.innerHTML =
           '<div class="search-warn">' +
-          '<b>⚠️ 基础检索没找到相关结果</b><br>' +
+          '<b>' + ic('warn',15) + ' 基础检索没找到相关结果</b><br>' +
           esc(j.notice || '当前网络下免费搜索源被限制。') +
           '<div class="acts">' +
-          '<button class="btn primary" id="warnSwitch">⭐ 改用深度检索</button>' +
-          '<button class="btn" id="warnCopy">📋 复制关键词去浏览器搜</button>' +
+          '<button class="btn primary" id="warnSwitch">' + ic('star',13) + '改用深度检索</button>' +
+          '<button class="btn" id="warnCopy">' + ic('copy',13) + '复制关键词去浏览器搜</button>' +
           '</div>' +
           '</div>';
         var sw = document.getElementById('warnSwitch');
@@ -94,8 +100,8 @@
           '<div class="u">' + esc(s.url) + '</div>' +
           (s.snippet ? '<div class="s">' + esc(s.snippet) + '</div>' : '') +
           '<div class="acts">' +
-          '<button class="btn" data-act="cite">📤 给研究助手</button>' +
-          '<button class="btn" data-act="copy">📋 复制</button>' +
+          '<button class="btn" data-act="cite">' + ic('free',13) + '给研究助手</button>' +
+          '<button class="btn" data-act="copy">' + ic('copy',13) + '复制</button>' +
           '</div>';
         d.querySelector('[data-act=cite]').onclick = function () {
           sendChat('我搜到了这条资料，帮我判断可信度、口径，以及能用在哪个环节：\n\n【' + (s.title || s.url) + '】\n' + (s.url || '') + (s.snippet ? '\n摘要：' + s.snippet : ''));
@@ -114,27 +120,27 @@
     if (!q) { toast('先输入辩题或关键词'); return; }
     var box = $('suggestBox');
     box.classList.remove('hidden');
-    box.innerHTML = '<div class="suggest-title">📋 建议该搜什么（按 7 种触发条件分析）</div><p class="hint loading">正在分析（走内核，约 10~30 秒）…</p>';
+    box.innerHTML = '<div class="suggest-title">' + ic('lightbulb',15) + '建议该搜什么（按 7 种触发条件分析）</div><p class="hint loading">正在分析（走内核，约 10~30 秒）…</p>';
     $('btnSuggest').disabled = true;
     api('/api/research/suggest', 'POST', { topic: q }).then(function (r) {
       var j = r.json || {};
       $('btnSuggest').disabled = false;
       var hits = j.hits || [];
       if (!hits.length) {
-        box.innerHTML = '<div class="suggest-title">📋 建议该搜什么</div><p class="hint">没有拿到结构化建议' + (j.raw ? '，原始输出：<br>' + esc(j.raw).slice(0, 300) : '') + '</p>';
+        box.innerHTML = '<div class="suggest-title">' + ic('lightbulb',15) + '建议该搜什么</div><p class="hint">没有拿到结构化建议' + (j.raw ? '，原始输出：<br>' + esc(j.raw).slice(0, 300) : '') + '</p>';
         return;
       }
-      box.innerHTML = '<div class="suggest-title">📋 建议该搜什么（' + hits.length + ' 项）</div>';
+      box.innerHTML = '<div class="suggest-title">' + ic('lightbulb',15) + '建议该搜什么（' + hits.length + ' 项）</div>';
       hits.forEach(function (h) {
         var d = document.createElement('div'); d.className = 'suggest-item';
         d.innerHTML =
           '<span class="trg">' + esc(h.trigger || '建议') + '</span>' +
           '<div class="q">' + esc(h.query) + (h.reason ? '<div class="why">' + esc(h.reason) + '</div>' : '') + '</div>' +
-          '<button class="btn">🔍 搜</button>';
+          '<button class="btn">' + ic('search',13) + '搜</button>';
         d.querySelector('button').onclick = function () { doSearch(h.query); };
         box.appendChild(d);
       });
-    }).catch(function (e) { $('btnSuggest').disabled = false; box.innerHTML = '<div class="suggest-title">📋 建议该搜什么</div><p class="hint">失败：' + esc(e.message) + '</p>'; });
+    }).catch(function (e) { $('btnSuggest').disabled = false; box.innerHTML = '<div class="suggest-title">' + ic('lightbulb',15) + '建议该搜什么</div><p class="hint">失败：' + esc(e.message) + '</p>'; });
   }
 
   $('btnSearch').onclick = function () { doSearch(); };

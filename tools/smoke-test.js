@@ -645,6 +645,123 @@ async function main() {
       const appJsSrc = fsMod.readFileSync(path.join(ROOT, 'app', 'public', 'app.js'), 'utf8');
       check('★ app.js 不再调用 window.prompt', appJsSrc.indexOf('window.prompt(') === -1);
       check('★ askInput 应用内输入弹窗存在', /function askInput\(/.test(appJsSrc));
+
+      /* 10c. 设计系统（2026-09-23 Apple HIG 重做）：
+         令牌层是唯一的颜色/间距来源，图标层是唯一的图标来源。
+         这两层一旦被绕过（有人在业务样式里写死颜色、或又贴回 emoji），
+         界面就会重新散开，所以在这里钉住。 */
+      const tokensPath = path.join(ROOT, 'app', 'public', 'tokens.css');
+      const uiPath = path.join(ROOT, 'app', 'public', 'ui.css');
+      const iconsPath = path.join(ROOT, 'app', 'public', 'icons.js');
+      check('★ 设计令牌层存在 · tokens.css',
+        fsMod.existsSync(tokensPath) &&
+        fsMod.readFileSync(tokensPath, 'utf8').indexOf('--c-accent') !== -1);
+      check('★ UI 重做层存在 · ui.css',
+        fsMod.existsSync(uiPath) &&
+        fsMod.readFileSync(uiPath, 'utf8').indexOf('Apple Human Interface Guidelines') !== -1);
+      check('★ 图标系统存在 · icons.js',
+        fsMod.existsSync(iconsPath) &&
+        /window\.AcademyIcons\s*=/.test(fsMod.readFileSync(iconsPath, 'utf8')));
+      const indexSrc = fsMod.readFileSync(path.join(ROOT, 'app', 'public', 'index.html'), 'utf8');
+      check('★ index.html 按序引入 令牌 → 旧样式 → 重做层',
+        indexSrc.indexOf('/tokens.css') !== -1 &&
+        indexSrc.indexOf('/style.css') !== -1 &&
+        indexSrc.indexOf('/ui.css') !== -1 &&
+        indexSrc.indexOf('/tokens.css') < indexSrc.indexOf('/style.css') &&
+        indexSrc.indexOf('/style.css') < indexSrc.indexOf('/ui.css'));
+      check('★ index.html 引入图标脚本', indexSrc.indexOf('/icons.js') !== -1);
+      /* 深色主题必须成对：只写浅色会让深色模式塌回默认 */
+      const tokensSrc = fsMod.readFileSync(tokensPath, 'utf8');
+      check('★ 令牌层含深色主题覆盖', tokensSrc.indexOf(':root[data-theme="dark"]') !== -1);
+      check('★ 令牌层尊重减弱动态效果', tokensSrc.indexOf('prefers-reduced-motion') !== -1);
+      /* 导航/顶栏这些「界面骨架」不该再出现 emoji 图标 */
+      check('★ 主界面骨架不再用 emoji 当图标',
+        !/class="mode-btn[^"]*"><span>[\u{1F300}-\u{1FAFF}\u{2600}-\u{27BF}]/u.test(indexSrc));
+
+      /* 10e. 工具窗/研究台也要跟同一套设计系统（2026-09-23 统一观感）：
+         它们各有自己的样式表，是「重做时最容易漏掉的那一块」——
+         每个渲染层都要引令牌层与图标层，且不再出现 emoji 图标。 */
+      const toolPages = [
+        ['证据检证', 'app/verify/renderer.html'],
+        ['资料溯源', 'app/trace/renderer.html'],
+        ['研究台', 'app/research/renderer.html'],
+      ];
+      for (const [label, rel] of toolPages) {
+        const src = fsMod.readFileSync(path.join(ROOT, rel), 'utf8');
+        check('★ ' + label + ' 引入设计令牌层', src.indexOf('tokens.css') !== -1);
+        check('★ ' + label + ' 引入图标系统', src.indexOf('icons.js') !== -1);
+        check('★ ' + label + ' 界面不再用 emoji',
+          (src.match(/[\u{1F300}-\u{1FAFF}\u{2600}-\u{27BF}]/gu) || []).length === 0);
+      }
+      /* 三个工具渲染层的 JS 里也不该留 emoji —— 动态生成的按钮/状态同样要统一 */
+      for (const rel of ['app/verify/verify.js', 'app/trace/trace.js', 'app/research/research.js']) {
+        const src = fsMod.readFileSync(path.join(ROOT, rel), 'utf8');
+        check('★ ' + rel.split('/')[1] + ' 动态文案不再用 emoji',
+          (src.match(/[\u{1F300}-\u{1FAFF}\u{2600}-\u{27BF}]/gu) || []).length === 0);
+      }
+      /* 工具窗共享样式必须接令牌（否则改主题只改一半） */
+      check('★ 工具窗共享样式接设计令牌',
+        fsMod.readFileSync(path.join(ROOT, 'app', 'tool.css'), 'utf8').indexOf('var(--c-') !== -1);
+      check('★ 研究台样式接设计令牌',
+        fsMod.readFileSync(path.join(ROOT, 'app', 'research', 'research.css'), 'utf8').indexOf('var(--c-') !== -1);
+
+      /* 10g. ★ 附件必须显示在消息里（2026-09-23 子涵反馈「发出去就看不见了」）。
+         两个独立的坑叠在一起，各钉一条：
+         ① 内容层 —— 用户消息分支原来用 bubble.textContent = m.text，
+            那会**清空整个气泡**，把前面 appendChild 进去的附件标记一起抹掉；
+         ② 样式层 —— .msg-attach 用了 rgba(255,255,255,.18) 白底，
+            那是配旧的实心蓝气泡的，用户气泡改浅色后白底白字直接隐形。 */
+      check('★ 用户消息正文不清空气泡（附件才留得住）',
+        appJsSrc.indexOf('bubble.appendChild(el(\'div\', \'msg-text\', m.text))') !== -1);
+      check('★ 用户消息分支不再用 bubble.textContent 赋值',
+        !/\} else \{\s*\n\s*bubble\.textContent = m\.text;/.test(appJsSrc));
+      const uiSrc = fsMod.readFileSync(uiPath, 'utf8');
+      check('★ 消息里的附件标记有可见样式',
+        uiSrc.indexOf('.msg-attach {') !== -1 && uiSrc.indexOf('.msg-attachments {') !== -1);
+      check('★ 附件标记不再用写死的白色底',
+        !/\.msg-attach \{[^}]*rgba\(255,\s*255,\s*255/.test(uiSrc));
+      /* 附件名要转义，且图标与名字要分成两个节点（拼成一个字符串会被转义成源码） */
+      check('★ 消息附件按节点组装（图标 + 转义后的名字）',
+        /chip\.innerHTML = fileIcon\(a\.name\) \+ '<span>' \+ esc\(a\.name\)/.test(appJsSrc));
+
+      /* 10f. 欢迎页不再有「试试这样问」示例卡片（2026-09-23 子涵：有点鸡肋）。
+         判据只看**代码**：注释里保留说明是好事（后人能看懂为什么删），
+         不能因为注释提到这个词就判失败。 */
+      const codeOnly = appJsSrc.replace(/\/\*[\s\S]*?\*\//g, '').replace(/^\s*\/\/.*$/gm, '');
+      check('★ 欢迎页已去掉示例卡片栏（代码里不再渲染它）',
+        codeOnly.indexOf('试试这样问') === -1 &&
+        codeOnly.indexOf('welcome-prompts') === -1 &&
+        codeOnly.indexOf("'welcome-prompt'") === -1);
+      /* 示例词改由输入框 placeholder 承载，别把它一起弄丢了 */
+      check('★ 输入框 placeholder 带模式示例',
+        /const fallback = \(mm\.prompts && mm\.prompts\[0\]\)/.test(appJsSrc));
+
+      /* 10d. ★ 静态引用自检（2026-09-23 血泪）：
+         改 emoji 时把 `const b = el(...)` 那行一起删了，只剩 `b.innerHTML = ...`，
+         页面开屏就抛 ReferenceError → init() 半路夭折 → /api/status 永远不落地 →
+         「关于应用」里显示「Node 缺失 · DSH 缺失」，用户以为要重装。
+         **冒烟和 UI 巡检当时全绿**：巡检只验「点了有没有反应」，而页面崩在更早的地方，
+         它压根没察觉。所以这里补一条静态自检。 */
+      /* 静态扫描这个文件里「短名」的声明/使用很容易误报（箭头函数参数、块级 const、
+         解构都在不同层级），所以这里只钉一条**精确**的：函数体第一行就对一个
+         单字母变量赋属性 —— 这正是本次闯祸的形态（\`const b = el(...)\` 被连带删掉，
+         只剩 \`b.innerHTML = ...\`）。这类写法在真实代码里永远不会是合法的「先声明后使用」。 */
+      const firstLineUse = [];
+      {
+        const lines2 = appJsSrc.split(/\r?\n/);
+        for (let i = 0; i < lines2.length; i++) {
+          if (!/^\s*(?:async\s+)?function\s+\w+\s*\([^)]*\)\s*\{\s*$/.test(lines2[i])) continue;
+          const next = (lines2[i + 1] || '').trim();
+          const um = next.match(/^([a-z])\.(innerHTML|textContent|onclick|classList|appendChild|type|title|value)\s*=/);
+          if (!um) continue;
+          /* 该函数签名里是不是已经带了这个参数？带了就不算 */
+          const sig = lines2[i].match(/\(([^)]*)\)/);
+          const params = sig ? sig[1].split(',').map((s) => s.trim().replace(/[={].*$/, '').trim()) : [];
+          if (params.indexOf(um[1]) === -1) firstLineUse.push((i + 1) + ': ' + lines2[i].trim() + ' → ' + next.slice(0, 60));
+        }
+      }
+      check('★ 函数体首行不引用未声明的短变量（防 init 半路夭折）',
+        firstLineUse.length === 0 || (() => { console.log('     ' + firstLineUse.join('\n     ')); return false; })());
       check('★ inputModal 弹窗结构存在',
         fsMod.readFileSync(path.join(ROOT, 'app', 'public', 'index.html'), 'utf8').indexOf('id="inputModal"') !== -1);
       /* 巡检必须用隔离数据目录跑 —— server 支持 ACADEMY_DATA_DIR 是隔离的前提 */

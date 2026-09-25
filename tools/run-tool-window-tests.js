@@ -49,6 +49,42 @@ async function waitServer(up) {
   return false;
 }
 
+/* 扫应用端口区间，找出是否有**本副本**的 App 正在运行（同一个 instanceRoot）。
+   有的话，「不带 --port」那条会正确地连到它 —— 那不是 bug，是断言写死了目标端口。
+   返回那个端口号，没有则返回 0。 */
+function getInstanceRoot() {
+  try {
+    /* 模块导出：{ instanceRoot(rootDir) -> 12位hex, SELF: 本副本的 12 位hex } */
+    const idMod = require(path.join(ROOT, 'app', 'instance-id.js'));
+    if (typeof idMod.SELF === 'string' && idMod.SELF) return idMod.SELF;
+    if (typeof idMod === 'function') return idMod();
+    if (typeof idMod.instanceRoot === 'function') return idMod.instanceRoot(ROOT);
+  } catch (_) {}
+  return null;
+}
+function probeStatus(port) {
+  return new Promise((resolve) => {
+    const req = http.get({ host: '127.0.0.1', port: port, path: '/api/status', timeout: 900 }, (rs) => {
+      let b = '';
+      rs.on('data', (c) => { b += c; });
+      rs.on('end', () => {
+        try { resolve(JSON.parse(b)); } catch (_) { resolve(null); }
+      });
+    });
+    req.on('error', () => resolve(null));
+    req.on('timeout', () => { req.destroy(); resolve(null); });
+  });
+}
+async function scanForLiveCopy() {
+  const mine = getInstanceRoot();
+  if (!mine) return 0;
+  for (let p = 8787; p <= 8807; p++) {
+    const j = await probeStatus(p);
+    if (j && j.ok && j.instanceRoot && j.instanceRoot === mine) return p;
+  }
+  return 0;
+}
+
 async function main() {
   fs.mkdirSync(path.dirname(OUT), { recursive: true });
   if (await pingOnce()) {
@@ -99,13 +135,27 @@ async function main() {
     /* 第三轮：真的把壳 spawn 起来，核它能不能认出本副本的 server。
        第一轮用的是自带 mock IPC 的测试壳，摸不到 tool-window.js 里的 probeServer。
        不带 --port 那次尤其有用：本机 8790 上真站着一个非本 App 的服务，
-       身份核验要是没生效，它就会连错过去。 */
+       身份核验要是没生效，它就会连错过去。
+
+       ⚠️ 已知前提：这一轮假设本机**没有**同副本的 App 正在运行。
+       若子涵的桌面版开着（同一个 instanceRoot 的服务在 8787~8807 上应答），
+       「不带 --port」那次会**正确地**认出那个服务并连过去 —— 行为是对的，
+       但断言写死了「必须连到 PORT(8796)」，于是报 ❌。
+       遇到这种失败先确认是不是这种情况，不要当成回归。 */
+    let livePort = 0;
+    if (process.env.TOOLTEST_ALLOW_LIVE_APP !== '1') livePort = await scanForLiveCopy();
+    if (livePort) {
+      log('⚠️ 本机已有同副本 App 在 ' + livePort + ' 端口运行。');
+      log('   「不带 --port」那条会（正确地）连到它 —— 断言写死了必须连 ' + PORT + '，必然失败，本轮跳过该条。');
+      log('   想连它一起测：关掉桌面版，或设 TOOLTEST_ALLOW_LIVE_APP=1。');
+    }
     log('真实 spawn 工具窗，核端口识别');
     const lgPath = path.join(DATA, 'tool-research-launch.log');
-    for (const c of [
+    const spawnCases = [
       { label: '带 --port（主窗口 spawn 的实际路径）', args: ['--port=' + String(PORT)] },
       { label: '不带 --port（独立启动，靠扫 8787~8807 认身份）', args: [] },
-    ]) {
+    ].filter((c) => !(livePort && c.args.length === 0));
+    for (const c of spawnCases) {
       try { fs.rmSync(lgPath, { force: true }); } catch (_) {}
       const el = spawn(electronExe, [path.join(ROOT, 'app', 'tool-window.js'), '--tool=research'].concat(c.args), {
         cwd: ROOT, env: Object.assign({}, process.env, { ACADEMY_DATA_DIR: DATA }), stdio: 'ignore',

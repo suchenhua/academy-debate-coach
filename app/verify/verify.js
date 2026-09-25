@@ -13,6 +13,13 @@
   }
   function esc(s) { return String(s == null ? '' : s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;').replace(/'/g, '&#39;'); }
 
+  /* 图标助手：统一走 icons.js 的 sprite（线性 SVG，继承 currentColor）。
+     工具窗的文字里不再出现 emoji —— 彩色字形会把整个界面的质感拉下来。 */
+  function ic(name, size) {
+    return (window.AcademyIcons && window.AcademyIcons.icon(name, { size: size || 15 })) || '';
+  }
+
+
   function api(path, method, body) {
     return A.proxy({ method: method || 'GET', path: path, body: body || null }).then(function (r) {
       if (r.status === 0) throw new Error('主 App 未响应（可能已关闭）');
@@ -34,7 +41,7 @@
     } else {
       $('connState').textContent = '未连接';
       $('connState').className = 'conn bad';
-      $('boot').innerHTML = '<p class="hint">⛔ ' + esc(st.error || '') + '<br><br>启动主 App 后，重开本窗口即可。</p>';
+      $('boot').innerHTML = '<p class="hint">' + ic('warn', 18) + ' ' + esc(st.error || '') + '<br><br>启动主 App 后，重开本窗口即可。</p>';
     }
   });
 
@@ -70,8 +77,8 @@
     var box = $('workResult');
     box.classList.remove('hidden');
     box.innerHTML = quick
-      ? '<div class="loading-bar"></div><p class="hint">⚡ 快速检证中：联网检索原始出处并核对…（约 20~40 秒）</p>'
-      : '<div class="loading-bar"></div><p class="hint">🛡 完整检证中：多轮检索 + 交叉验证…（约 1~5 分钟，取决于论据数量）</p>';
+      ? '<div class="loading-bar"></div><p class="hint">' + ic('bolt',13) + ' 快速检证中：联网检索原始出处并核对…（约 20~40 秒）</p>'
+      : '<div class="loading-bar"></div><p class="hint">' + ic('shield',13) + ' 完整检证中：多轮检索 + 交叉验证…（约 1~5 分钟，取决于论据数量）</p>';
     var req = quick
       ? api('/api/research/verify-quick', 'POST', { claim: claim })
       : api('/api/research/verify', 'POST', { claim: claim });
@@ -83,7 +90,7 @@
       if (quick && (j.sources || []).length) {
         report += '\n\n**本轮检索到的来源：**\n' + j.sources.map(function (s) { return '- [' + (s.title || s.url) + '](' + s.url + ')'; }).join('\n');
       }
-      box.innerHTML = '<div class="panel-title">🛡 检证报告' + (quick ? '（快速）' : '') + '<span><button type="button" class="tbtn" id="resCopy" title="复制报告">📋</button></span></div><div class="md" id="resMd"></div>';
+      box.innerHTML = '<div class="panel-title">' + ic('shield',16) + ' 检证报告' + (quick ? '（快速）' : '') + '<span><button type="button" class="tbtn" id="resCopy" title="复制报告">' + ic('copy',15) + '</button></span></div><div class="md" id="resMd"></div>';
       renderMd(document.getElementById('resMd'), report);
       document.getElementById('resCopy').onclick = function () {
         A.copyText(report).then(function () { toast('报告已复制'); });

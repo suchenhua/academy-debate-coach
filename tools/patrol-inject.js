@@ -63,6 +63,24 @@
     };
   }
 
+  /* 递归取「可见文字」：整棵子树里跳过 <svg>。
+     为什么不能直接用 textContent —— svg 的 textContent 返回的是内部标记串
+     （'<path d="..."/>'），会把图标按钮的文案显示成一大段源码。
+     SVG 是纯装饰（aria-hidden），本就不该参与文案。 */
+  function visibleText(node) {
+    var t = '';
+    for (var n = 0; n < node.childNodes.length; n++) {
+      var c = node.childNodes[n];
+      if (c.nodeType === 3) { t += c.nodeValue; }
+      else if (c.nodeType === 1 && c.tagName.toLowerCase() !== 'svg') { t += visibleText(c); }
+    }
+    t = t.replace(/\s+/g, ' ').trim();
+    if (!t) {
+      t = ((node.getAttribute && (node.getAttribute('title') || node.getAttribute('aria-label'))) || '').trim();
+    }
+    return t.slice(0, 30);
+  }
+
   function list(sel) {
     return Array.prototype.slice.call(document.querySelectorAll(sel)).map(function (el, i) {
       return {
@@ -71,7 +89,11 @@
         ds: el.dataset ? (el.dataset.export || el.dataset.go || '') : '',
         /* 独立工具窗启动按钮的稳定标识（文案会随简繁切换变字，不能靠文案判定） */
         tool: (el.dataset && el.dataset.tool) || '',
-        text: (el.textContent || '').replace(/\s+/g, ' ').trim().slice(0, 30),
+        /* 文案：跳过 SVG —— svg 的 textContent 返回的是它内部的标记串，
+           直接取会把 '&lt;svg class="ic" width="13"...&gt;' 当成按钮文案，
+           既看不懂、又会让「同文案不同元素」的判断失真。
+           图标一律用「可见文字」表示；纯图标按钮则回落到 title / aria-label。 */
+        text: visibleText(el),
         visible: !!(el.offsetParent || el.offsetWidth || el.offsetHeight)
       };
     });

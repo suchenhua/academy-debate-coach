@@ -134,7 +134,16 @@ function $(sel) { return document.querySelector(sel); }
 function el(tag, cls, text) {
   const n = document.createElement(tag);
   if (cls) n.className = cls;
-  if (text !== undefined) n.textContent = text;
+  if (text !== undefined) {
+    // 文本走 textContent（默认安全）；只有本文件自己生成的图标 SVG 才认。
+    // 判据收紧到 <svg 开头，避免任何外部字符串被当 HTML 解析。
+    if (typeof text === 'string' && text.charCodeAt(0) === 60 /* '<' */ &&
+        text.slice(0, 4).toLowerCase() === '<svg') {
+      n.innerHTML = text;
+    } else {
+      n.textContent = text;
+    }
+  }
   return n;
 }
 function esc(s) {
@@ -561,7 +570,19 @@ function ensureChat(firstText) {
     原来只是一条「你好我是逻敏」的气泡，打开就是个对话框，缺个像样的门面。
     这里做成标准 AI 应用的欢迎页：品牌 + 能力介绍 + 可点的示例提示 + 常用入口。
     模式不同，介绍与示例随之切换（复用 MODES 里的 prompts）。 */
-const WELCOME_ICONS = { free: '💬', prep: '🎯', review: '🔍', judge: '⚖️' };
+const WELCOME_ICONS = { free: 'free', prep: 'target', review: 'review', judge: 'judge' };
+
+/* 图标助手：统一走 icons.js 的 sprite（线性 SVG，继承 currentColor）。
+   老代码里用 emoji 当图标的地方一律改走这里，界面才不会花花绿绿。 */
+function ic(name, size) {
+  return (window.AcademyIcons && window.AcademyIcons.icon(name, { size: size || 18 })) || '';
+}
+/* 往元素里塞图标（清空后放入） */
+function setIcon(node, name, size) {
+  if (!node) return;
+  node.innerHTML = ic(name, size);
+  return node;
+}
 
 /* 顶部大问候语：按时段问候 + 一句引导，简短、字号大、居中 */
 function welcomeGreeting() {
@@ -581,36 +602,21 @@ function renderWelcome() {
 
   // 2) 当前模式说明
   const modeBox = el('div', 'welcome-mode', '');
-  modeBox.appendChild(el('span', 'wm-icon', WELCOME_ICONS[state.mode] || '💬'));
+  modeBox.appendChild(el('span', 'wm-icon', ic(WELCOME_ICONS[state.mode] || 'free', 20)));
   const mt = el('div', 'wm-text', '');
   mt.appendChild(el('div', 'wm-title', (modeT.title || state.mode) + '模式'));
   mt.appendChild(el('div', 'wm-desc', modeT.desc || ''));
   modeBox.appendChild(mt);
   wrap.appendChild(modeBox);
 
-  // 3) 示例提示（点一下直接填入输入框）
-  const prompts = (modeT.prompts || []).slice(0, 4);
-  if (prompts.length) {
-    wrap.appendChild(el('div', 'welcome-sec', '试试这样问'));
-    const grid = el('div', 'welcome-prompts', '');
-    for (const p of prompts) {
-      const b = el('button', 'welcome-prompt', p);
-      b.type = 'button';
-      b.title = '点击填入输入框';
-      b.onclick = () => {
-        const input = $('#input');
-        if (input) {
-          input.value = p;
-          input.focus();
-          try { updateCharCount(); } catch (_) {}
-        }
-      };
-      grid.appendChild(b);
-    }
-    wrap.appendChild(grid);
-  }
+  /* 3) 原来这里有一栏「试试这样问」的示例卡片（4 个可点提示）。
+     2026-09-23 子涵反馈「有点鸡肋」去掉 —— 理由成立：
+     四种模式的示例各写各的，占了半屏却只在「刚打开、还不想打字」那一小会儿有用；
+     真要发问的人已经在输入框里打字了，卡片反而把欢迎页顶得很高、要滚才看得全。
+     示例词没浪费：每个模式第一句进了输入框 placeholder（见 updateModeUI），
+     要问什么、该怎么起头，在真正要打字的地方给。 */
 
-  // 5) 底部提示
+  // 4) 底部提示
   const foot = el('div', 'welcome-foot', '');
   foot.innerHTML = '<span>本模式是<b>独立</b>的对话空间，切换模式不会把这段对话带过去。</span>'
     + '<span class="wf-hint">Ctrl + Enter 发送</span>';
@@ -654,9 +660,9 @@ function latestContextUsed() {
   }
   return null;
 }
-/* Token 栏右侧的压缩上下文入口（与顶部 🧹 按钮同一处理函数） */
+/* Token 栏右侧的压缩上下文入口（与顶部压缩按钮同一处理函数） */
 function appendCompactBtn(bar) {
-  const b = el('button', 'sum-compact', '🧹 压缩上下文');
+  const b = el('button', 'sum-compact', ic('broom',12) + '压缩上下文');
   b.type = 'button';
   b.title = '把当前对话压缩成摘要，释放上下文空间';
   b.onclick = () => compactContext();
@@ -672,7 +678,7 @@ function renderUsageSummary() {
   bar.classList.remove('hidden');
   if (totalInput + u.output + u.reasoning <= 0) {
     const t = el('span', 'usage-summary-item');
-    t.innerHTML = '<b>📊 本对话 Token</b> 暂无用量（发消息后显示）';
+    t.innerHTML = ic('chart', 13) + '<b>本对话 Token</b> 暂无用量（发消息后显示）';
     bar.innerHTML = '';
     bar.appendChild(t);
     appendCompactBtn(bar);
@@ -685,7 +691,7 @@ function renderUsageSummary() {
   };
   bar.innerHTML = '';
   const t = el('span', 'usage-summary-item');
-  t.innerHTML = '<b>📊 本对话 Token</b>';
+  t.innerHTML = ic('chart', 13) + '<b>本对话 Token</b>';
   bar.appendChild(t);
   const cu = latestContextUsed();
   if (cu) {
@@ -693,13 +699,13 @@ function renderUsageSummary() {
     const win = cu.window > 0 ? cu.window : 1048576;
     const ctxPct = Math.min(99.99, cu.used / win * 100);
     const c = el('span', 'usage-summary-item sum-ctx');
-    c.innerHTML = '<b>🧭 上下文已使用占比</b> ' + ctxPct.toFixed(2) + '%';
+    c.innerHTML = ic('compass',12) + '<b>上下文已使用占比</b> ' + ctxPct.toFixed(2) + '%';
     c.title = '最近一轮输入 ' + cu.used.toLocaleString() + ' tokens ÷ 上下文窗口 ' + (win / 1024).toFixed(0) + 'K tokens' + (cu.window > 0 ? '' : '（模型未上报窗口，按默认估算）');
     bar.appendChild(c);
   }
   bar.appendChild(p('输入', u.input));
   const hit = el('span', 'usage-summary-item sum-hit');
-  hit.innerHTML = '<b>🎯 缓存命中</b> ' + hitRate.toFixed(1) + '%';
+  hit.innerHTML = ic('target',12) + '<b>缓存命中</b> ' + hitRate.toFixed(1) + '%';
   bar.appendChild(hit);
   bar.appendChild(p('输出', u.output));
   if (u.cacheWrite) bar.appendChild(p('缓存写', u.cacheWrite));
@@ -737,7 +743,7 @@ function renderUsageBox(m) {
   box.appendChild(p('输入', u.input));
   box.appendChild(p('缓存读', u.cacheRead));
   const hit = el('span', 'usage-item usage-hit');
-  hit.innerHTML = '<b>🎯 缓存命中</b> ' + hitRate.toFixed(1) + '%';
+  hit.innerHTML = ic('target',12) + '<b>缓存命中</b> ' + hitRate.toFixed(1) + '%';
   box.appendChild(hit);
   box.appendChild(p('输出', u.output));
   if (u.cacheWrite) box.appendChild(p('缓存写', u.cacheWrite));
@@ -767,7 +773,7 @@ function renderMessage(idx, m) {
   const wrap = el('div', 'msg ' + (m.role === 'user' ? 'user' : 'assistant'));
   wrap.dataset.idx = String(idx);
   const avatar = el('div', 'avatar');
-  avatar.textContent = m.role === 'user' ? '🧑' : '🎓';
+  avatar.innerHTML = ic(m.role === 'user' ? 'user' : 'sparkle', 15);
   const bubble = el('div', 'bubble' + (m.error ? ' error' : ''));
   const meta = el('div', 'msg-meta');
   const who = el('span', null, m.role === 'user' ? '你 · ' + fmtTime(m.time) : '逻敏 · ' + fmtTime(m.time));
@@ -778,11 +784,11 @@ function renderMessage(idx, m) {
     const copy = el('button', null, '复制');
     copy.onclick = () => copyText(m.text || m.error || '');
     // 一键存产物：不用再让 Agent「写一份存到产物空间」，点一下就行
-    const toDeliver = el('button', null, '💾 存产物');
+    const toDeliver = el('button', null, ic('save',13) + '存产物');
     toDeliver.title = '把这条回复存为产物空间的 Markdown 文件';
     toDeliver.onclick = () => saveMsgToDeliver(m);
-    const star = el('button', m.starred ? 'starred' : null, m.starred ? '⭐ 已收藏' : '⭐ 收藏');
-    star.title = '收藏后可在「📦 产物 → ⭐ 收藏」跨对话查看';
+    const star = el('button', m.starred ? 'starred' : null, ic('star',13) + (m.starred ? '已收藏' : '收藏'));
+    star.title = '收藏后可在「产物 → 收藏」跨对话查看';
     star.onclick = () => {
       m.starred = !m.starred;
       persistChat();
@@ -799,7 +805,7 @@ function renderMessage(idx, m) {
     })();
     let reroll = null;
     if (isLastAssistant && !m.running && !m.error) {
-      reroll = el('button', null, '🔄 重答');
+      reroll = el('button', null, ic('refresh',13) + '重答');
       reroll.title = '按同一句提问重新生成这条回复';
       reroll.onclick = () => regenerateLast();
     }
@@ -818,15 +824,21 @@ function renderMessage(idx, m) {
     actions.appendChild(exportPdfBtn);
     actions.appendChild(exportMd);
     meta.appendChild(actions);
-    if (m.starred) who.appendChild(el('span', 'msg-star-badge', '⭐'));
+    if (m.starred) who.appendChild(el('span', 'msg-star-badge', ic('star',12)));
   }
   bubble.appendChild(meta);
 
-  // 用户消息里附带的文件
+  /* 用户消息里附带的文件。
+     ★ 用 innerHTML 组装：fileIcon() 返回的是图标 SVG，拼在字符串里交给 el()
+     会被当文本转义（el 只认整串以 <svg 开头的情况），附件标记就会显示成
+     一段源码。这里显式分组，图标节点与名字节点分开。 */
   if (m.role === 'user' && Array.isArray(m.attachments) && m.attachments.length) {
     const attBox = el('div', 'msg-attachments', '');
     for (const a of m.attachments) {
-      attBox.appendChild(el('span', 'msg-attach', fileIcon(a.name) + ' ' + a.name));
+      const chip = el('span', 'msg-attach');
+      chip.innerHTML = fileIcon(a.name) + '<span>' + esc(a.name) + '</span>';
+      if (a.size) chip.title = a.name + ' · ' + Math.max(1, Math.round(a.size / 1024)) + ' KB';
+      attBox.appendChild(chip);
     }
     bubble.appendChild(attBox);
   }
@@ -834,7 +846,7 @@ function renderMessage(idx, m) {
   // 本次召回的个人资料（用户自己的备赛资料）
   if (Array.isArray(m.library) && m.library.length) {
     const lb = el('div', 'lib-chips');
-    lb.appendChild(el('span', 'lib-chips-label', '📚 本次召回你的资料'));
+    lb.appendChild(el('span', 'lib-chips-label', ic('library',13) + '本次召回你的资料'));
     for (const d of m.library) {
       const c = el('span', 'lib-chip', '《' + d.name + '》');
       c.title = '相关度 ' + d.score + ' · 全文 ' + Number(d.charCount || 0).toLocaleString() + ' 字';
@@ -849,7 +861,7 @@ function renderMessage(idx, m) {
     toolsBox.id = 'toolsBox' + idx;
     toolsBox.innerHTML = m.tools.map((t) => (
       '<div class="tool-item ' + (t.done ? 'done' : 'active') + '">' +
-      (t.done ? '✅' : '🔧') + ' <b>' + esc(t.name) + '</b>' +
+      ic(t.done ? 'check' : 'plugin',13) + ' <b>' + esc(t.name) + '</b>' +
       (t.detail ? '<span class="tool-detail">' + esc(t.detail) + '</span>' : '') +
       '</div>'
     )).join('');
@@ -863,7 +875,7 @@ function renderMessage(idx, m) {
     details.id = 'thinkBox' + idx;
     details.open = !!m.running;
     const summary = document.createElement('summary');
-    summary.textContent = '💭 思考过程' + (m.running ? '' : '（已完成）');
+    summary.innerHTML = ic('lightbulb',13) + '思考过程' + (m.running ? '' : '（已完成）');
     details.appendChild(summary);
     const body = el('div', 'md think-md');
     body.id = 'thinkMd' + idx;
@@ -894,14 +906,18 @@ function renderMessage(idx, m) {
     bubble.appendChild(status);
   } else if (m.error) {
     const p = el('div', 'md');
-    p.innerHTML = '<p>⚠️ ' + esc(m.error) + '</p>';
+    p.innerHTML = '<p>' + ic('warn',14) + ' ' + esc(m.error) + '</p>';
     bubble.appendChild(p);
   } else if (m.role === 'assistant') {
     const md = el('div', 'md');
     md.innerHTML = mdToHtml(m.text || '');
     bubble.appendChild(md);
   } else {
-    bubble.textContent = m.text;
+    /* 用户消息：正文单独包一层，不能用 bubble.textContent 直接赋值 ——
+       那会**清空整个气泡**，把前面 appendChild 进去的附件标记一起抹掉
+       （2026-09-23 的「附件发出去就看不见了」就是这个原因）。
+       文字放进子节点，附件的 DOM 才能留住。 */
+    bubble.appendChild(el('div', 'msg-text', m.text));
   }
   wrap.appendChild(avatar);
   wrap.appendChild(bubble);
@@ -1154,7 +1170,7 @@ function updateRunningMessage(patch) {
         const tools = patch.tools || [];
         box.innerHTML = tools.map((t) => (
           '<div class="tool-item ' + (t.done ? 'done' : 'active') + '">' +
-          (t.done ? '✅' : '🔧') + ' <b>' + esc(t.name) + '</b>' +
+          ic(t.done ? 'check' : 'plugin',13) + ' <b>' + esc(t.name) + '</b>' +
           (t.detail ? '<span class="tool-detail">' + esc(t.detail) + '</span>' : '') +
           '</div>'
         )).join('');
@@ -1169,7 +1185,7 @@ function updateRunningMessage(patch) {
         details.id = 'thinkBox' + idx;
         details.open = true;
         const summary = document.createElement('summary');
-        summary.textContent = '💭 思考过程';
+        summary.innerHTML = ic('lightbulb',13) + '思考过程';
         details.appendChild(summary);
         const body = el('div', 'md think-md');
         body.id = 'thinkMd' + idx;
@@ -1416,9 +1432,16 @@ function updateModeUI() {
   });
   $('#modeTitle').textContent = modeMeta[state.mode].title;
   $('#modeDesc').textContent = modeMeta[state.mode].desc;
-  $('#input').placeholder = modeMeta[state.mode].placeholder || (modeMeta[state.mode].title + ' · 输入后 Ctrl+Enter 发送');
+  /* 占位提示 = 该模式的第一句示例 + 发送快捷键。
+     以前这里只有「自由问答 · 输入后 Ctrl+Enter 发送」这种干巴巴一句，
+     示例全靠欢迎页那栏卡片；卡片去掉后，示例挪到这里 ——
+     在真正要打字的地方给例子，比在半屏外的地方给更管用。
+     各模式若显式写了 placeholder（如评判），仍以它为准。 */
+  const mm = modeMeta[state.mode] || {};
+  const fallback = (mm.prompts && mm.prompts[0]) ? (mm.prompts[0] + '…') : (mm.title || '') + ' · 输入后 Ctrl+Enter 发送';
+  $('#input').placeholder = mm.placeholder || fallback;
   const hs = document.querySelector('.side-head h3');
-  if (hs) hs.textContent = '🕘 对话历史 · ' + modeMeta[state.mode].title;
+  if (hs) hs.innerHTML = ic('history',13) + '对话历史 · ' + esc(modeMeta[state.mode].title);
 }
 
 /* ================= 拖拽 / 粘贴文件上传 ================= */
@@ -1502,7 +1525,7 @@ function renderHistory() {
     // 操作按钮整组包进 .history-ops：平时隐藏，hover 到该条才出现（见 style.css）
     const ops = el('span', 'history-ops', '');
     // 重命名按钮（单击标题会切换对话，双击不可靠，改用显式按钮）
-    const edit = el('span', 'history-edit', '✎');
+    const edit = el('span', 'history-edit', ic('edit',12));
     edit.title = '重命名';
     edit.onclick = (e) => { e.stopPropagation(); e.preventDefault(); startRenameChat(c.id, t); };
     ops.appendChild(edit);
@@ -1781,20 +1804,20 @@ function renderStatus() {
   const pill = $('#statusPill');
   if (s.busy) {
     pill.className = 'status-pill busy';
-    pill.textContent = '⚙️ Agent 运行中…';
+    pill.innerHTML = ic('sparkle',12) + 'Agent 运行中…';
   } else if (!s.hasKey) {
     pill.className = 'status-pill err';
     pill.textContent = '未配置 API Key';
   } else if (s.dsh && s.node) {
     pill.className = 'status-pill ok';
-    pill.textContent = '✅ 引擎就绪 · ' + (s.model || '');
+    pill.innerHTML = '引擎就绪 · ' + esc(s.model || '');
   } else {
     pill.className = 'status-pill err';
-    pill.textContent = '⚠️ 引擎缺失';
+    pill.innerHTML = ic('warn',12) + '引擎缺失';
   }
   const providerLabel = s.searchMode === 'free' ? '免费端侧' : '服务侧';
   // 本对话 Token 明细已常驻在输入框下方的统计栏里，这里不再重复拼接
-  const memoryText = (s.memorySize > 0) ? (' · 🧠 记忆 ' + s.memorySize.toLocaleString() + ' B') : '';
+  const memoryText = (s.memorySize > 0) ? (' · 记忆 ' + s.memorySize.toLocaleString() + ' B') : '';
   $('#engineInfo').textContent = 'DSH 内核: ' + (s.dsh ? '✅' : '❌') + ' · 内置 Node: ' + (s.node ? '✅' : '❌') + ' · API: ' + (s.baseUrl || '').replace(/^https?:\/\//, '') + ' · 搜索: ' + providerLabel + '✅' + memoryText;
 }
 
@@ -1832,7 +1855,7 @@ function switchSettingsPane(pane) {
 /* ———— 关于应用 ———— */
 const ABOUT_LICENSE_URL = 'https://creativecommons.org/licenses/by-nc-sa/4.0/deed.zh';
 function renderAboutPane() {
-  const ver = (state.status && state.status.version) || '2.1.1';
+  const ver = (state.status && state.status.version) || '2.2.0';
   const edition = String((state.status && state.status.edition) || 'Flash').trim();
   const v = 'v' + String(ver).replace(/^v/i, '') + (edition ? ' ' + edition : '');
   const elVer = $('#aboutVersion');
@@ -1840,14 +1863,26 @@ function renderAboutPane() {
   const elFoot = $('#aboutFootVer');
   if (elFoot) elFoot.textContent = 'Academy 辩论教练 ' + v;
 
-  // 引擎信息：让用户能自查运行环境是否完整
-  const s = state.status || {};
+  /* 引擎信息：让用户能自查运行环境是否完整。
+     ★ 三态，不是两态 —— 之前拿不到 status 时报「缺失」，
+     等于把「还没问到 / 连不上」误报成「运行环境坏了」，
+     用户会以为要重装。没有数据时必须说「检测中」，不能替服务下结论。 */
+  const elEng = $('#aboutEngine');
+  if (!elEng) return;
+  const s = state.status || null;
+  if (!s) {
+    elEng.textContent = '引擎检测中…';
+    elEng.className = 'about-engine';
+    return;
+  }
   const parts = [];
   if (s.engine) parts.push('内核 ' + s.engine);
   parts.push('Node ' + (s.node ? '就绪' : '缺失'));
   parts.push('DSH ' + (s.dsh ? '就绪' : '缺失'));
-  const elEng = $('#aboutEngine');
-  if (elEng) elEng.textContent = parts.join(' · ');
+  elEng.textContent = parts.join(' · ');
+  // 真有缺失时标红，让它在「关于」页里能一眼被看到
+  const bad = !s.node || !s.dsh;
+  elEng.className = 'about-engine' + (bad ? ' bad' : '');
 }
 function copyAboutQQ() {
   const qq = ($('#aboutQQ') && $('#aboutQQ').textContent || '').trim();
@@ -1968,14 +2003,14 @@ async function setSearchMode(mode) {
     syncSearchModeChoices({ searchMode: r.searchMode });
     const outEl = $('#searchResultMsg');
     if (outEl) {
-      outEl.textContent = mode === 'server' ? '✅ 已切换为服务侧搜索（用当前模型 Key）' : '✅ 已切换为端侧搜索（免费）';
+      outEl.textContent = mode === 'server' ? '已切换为服务侧搜索（用当前模型 Key）' : '已切换为端侧搜索（免费）';
       outEl.className = 'settings-result ok';
       setTimeout(() => { if (outEl) outEl.textContent = ''; }, 2600);
     }
     await refreshStatus();
   } catch (e) {
     const outEl = $('#searchResultMsg');
-    if (outEl) { outEl.textContent = '❌ ' + e.message; outEl.className = 'settings-result err'; }
+    if (outEl) { outEl.textContent = '' + e.message; outEl.className = 'settings-result err'; }
   }
 }
 
@@ -2063,10 +2098,10 @@ function renderProfilesList() {
     main.onclick = () => activateProfileClient(p.id);
     item.appendChild(main);
     const ops = el('span', 'profile-item-ops', '');
-    const edit = el('button', 'profile-op', '✎');
+    const edit = el('button', 'profile-op', ic('edit',13));
     edit.title = '编辑';
     edit.onclick = (e) => { e.stopPropagation(); loadProfileIntoEditor(p); renderProfilesList(); };
-    const del = el('button', 'profile-op danger', '🗑');
+    const del = el('button', 'profile-op danger', ic('trash',13));
     del.title = '删除';
     del.onclick = (e) => { e.stopPropagation(); deleteProfileClient(p.id); };
     ops.appendChild(edit);
@@ -2132,11 +2167,11 @@ async function saveCurrentProfile() {
       });
     }
     if (!r.ok) throw new Error(r.error || '保存失败');
-    if (out) { out.textContent = '✅ 已保存' + (r.activated ? '并已启用' : ''); out.className = 'settings-result ok'; }
+    if (out) { out.textContent = '已保存' + (r.activated ? '并已启用' : ''); out.className = 'settings-result ok'; }
     await loadProfilesUI();
     await refreshStatus();
   } catch (e) {
-    if (out) { out.textContent = '❌ ' + e.message; out.className = 'settings-result err'; }
+    if (out) { out.textContent = '' + e.message; out.className = 'settings-result err'; }
   }
 }
 
@@ -2207,7 +2242,7 @@ async function loadModels() {
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(body),
     });
-    if (!r.ok) { out.textContent = '❌ ' + (r.error || '获取失败'); out.className = 'settings-result err'; return; }
+    if (!r.ok) { out.textContent = '' + (r.error || '获取失败'); out.className = 'settings-result err'; return; }
     const sel = $('#modelSelect');
     sel.innerHTML = '';
     if (!r.models || !r.models.length) { out.textContent = '服务商未返回模型，请手动输入模型名。'; out.className = 'settings-result'; return; }
@@ -2222,10 +2257,10 @@ async function loadModels() {
     if (current && [...sel.options].some((o) => o.value === current)) sel.value = current;
     // 同步到输入框
     if (sel.value) $('#modelInput').value = sel.value;
-    out.textContent = '✅ 获取到 ' + r.models.length + ' 个模型，请在下拉中选择（也可手动输入）。';
+    out.textContent = '获取到 ' + r.models.length + ' 个模型，请在下拉中选择（也可手动输入）。';
     out.className = 'settings-result ok';
   } catch (e) {
-    out.textContent = '❌ ' + e.message;
+    out.textContent = '' + e.message;
     out.className = 'settings-result err';
   }
 }
@@ -2469,8 +2504,8 @@ function renderDeliverStars() {
   for (const s of stars) {
     const card = el('div', 'star-item');
     const head = el('div', 'star-item-head');
-    head.appendChild(el('span', null, '💬 ' + (s.chat.title || '未命名对话')));
-    head.appendChild(el('span', null, '🕘 ' + fmtTime(s.msg.time || s.chat.updated)));
+    head.appendChild(el('span', null, ic('free',12) + ' ' + esc(s.chat.title || '未命名对话')));
+    head.appendChild(el('span', null, ic('clock',12) + ' ' + fmtTime(s.msg.time || s.chat.updated)));
     card.appendChild(head);
     const tx = el('div', 'star-item-text', (s.msg.text || '').replace(/[#*`>|]/g, ' ').replace(/\s+/g, ' ').trim().slice(0, 160) + '…');
     tx.title = (s.msg.text || '').slice(0, 300);
@@ -2478,7 +2513,7 @@ function renderDeliverStars() {
     const acts = el('div', 'star-item-actions');
     const bGo = el('button', 'btn ghost small', '查看原文'); bGo.type = 'button'; bGo.onclick = () => jumpToStarred(s.chat.id);
     const bCopy = el('button', 'btn ghost small', '复制'); bCopy.type = 'button'; bCopy.onclick = () => copyText(s.msg.text || '');
-    const bSave = el('button', 'btn ghost small', '💾 存产物'); bSave.type = 'button'; bSave.onclick = () => saveMsgToDeliver(s.msg, s.chat.title);
+    const bSave = el('button', 'btn ghost small', ic('save',13) + '存产物'); bSave.type = 'button'; bSave.onclick = () => saveMsgToDeliver(s.msg, s.chat.title);
     const bDel = el('button', 'btn ghost small danger', '取消收藏'); bDel.type = 'button';
     bDel.onclick = () => {
       s.msg.starred = false;
@@ -2660,11 +2695,11 @@ function fmtFileSize(n) {
 }
 
 function fileIcon(name) {
-  if (/\.pdf$/i.test(name)) return '📕';
-  if (/\.docx?$/i.test(name)) return '📘';
-  if (/\.(md|markdown)$/i.test(name)) return '📝';
-  if (/\.srt$/i.test(name)) return '💬';
-  return '📄';
+  if (/\.pdf$/i.test(name)) return ic('file', 14);
+  if (/\.docx?$/i.test(name)) return ic('file', 14);
+  if (/\.(md|markdown)$/i.test(name)) return ic('edit', 14);
+  if (/\.srt$/i.test(name)) return ic('free', 14);
+  return ic('file', 14);
 }
 
 function renderAttachments() {
@@ -2748,10 +2783,10 @@ function attachmentsPrefix() {
 
 /* ================= 工具列表 ================= *//* ================= 工具列表 ================= */
 const TOOL_INFO = [
-  ['__research__', '🔍 研究台', '边查资料边和教练聊：搜索 + 7 触发条件建议 + 独立研究对话（独立小窗）'],
-  ['__verify__', '🛡 证据检证', '核查论据是否被编造 / 曲解 / 断章取义，真联网查原始出处（独立小窗）'],
-  ['__trace__', '📚 资料溯源', '追一段资料的最早出处与原文，梳理流传链、查讹传（独立小窗）'],
-  ['__mdReader__', '📖 MD 阅读器', '打开本地 Markdown / 文本文件阅读'],
+  ['__research__', '研究台', '边查资料边和教练聊：搜索 + 7 触发条件建议 + 独立研究对话（独立小窗）'],
+  ['__verify__', '证据检证', '核查论据是否被编造 / 曲解 / 断章取义，真联网查原始出处（独立小窗）'],
+  ['__trace__', '资料溯源', '追一段资料的最早出处与原文，梳理流传链、查讹传（独立小窗）'],
+  ['__mdReader__', 'MD 阅读器', '打开本地 Markdown / 文本文件阅读'],
   ['辩案工作台-Case-Workbench.html', '辩案工作台', '九步法构建完整辩案'],
   ['简易流水单-Flowing-Tool.html', '简易流水单', '比赛攻防流水记录'],
 ];
@@ -2759,9 +2794,9 @@ const TOOL_INFO = [
 /* 独立工具窗（Electron 单独进程）的统一入口：
    三个窗都走 tool-window.js 通用壳，name 与 app/tool-registry.js 的注册项对应。 */
 const TOOL_WINDOWS = {
-  '__research__': { icon: '🔍', tool: 'research', fail: '研究台是独立小窗，需要桌面版（Electron）环境；浏览器模式下请用双击文件的方式打开' },
-  '__verify__': { icon: '🛡', tool: 'verify', fail: '证据检证是独立小窗，需要桌面版（Electron）环境' },
-  '__trace__': { icon: '📚', tool: 'trace', fail: '资料溯源是独立小窗，需要桌面版（Electron）环境' },
+  '__research__': { icon: 'search', tool: 'research', fail: '研究台是独立小窗，需要桌面版（Electron）环境；浏览器模式下请用双击文件的方式打开' },
+  '__verify__': { icon: 'shield', tool: 'verify', fail: '证据检证是独立小窗，需要桌面版（Electron）环境' },
+  '__trace__': { icon: 'library', tool: 'trace', fail: '资料溯源是独立小窗，需要桌面版（Electron）环境' },
 };
 
 function renderTools() {
@@ -2777,7 +2812,8 @@ function renderTools() {
       /* data-tool 是给 UI 巡检认的 stable 标识：这些按钮一点就 spawn 真实窗口，
          巡检必须跳过；界面文案会随简繁切换变字，不能拿文案当判据。 */
       b.dataset.tool = tw.tool;
-      b.innerHTML = '<span><b>' + esc(name) + '</b><br><small>' + esc(desc) + '</small></span><span>' + tw.icon + '</span>';
+      b.innerHTML = '<span class="tool-link-text"><b>' + esc(name) + '</b><small>' + esc(desc) + '</small></span>' +
+        '<span class="tool-link-go">' + ic('chevronRight', 16) + '</span>';
       b.onclick = async () => {
         try {
           const ae = window.academyElectron;
@@ -2798,7 +2834,8 @@ function renderTools() {
       const b = document.createElement('button');
       b.type = 'button';
       b.className = 'tool-link';
-      b.innerHTML = '<span><b>' + esc(name) + '</b><br><small>' + esc(desc) + '</small></span><span>📂</span>';
+      b.innerHTML = '<span class="tool-link-text"><b>' + esc(name) + '</b><small>' + esc(desc) + '</small></span>' +
+        '<span class="tool-link-go">' + ic('book', 16) + '</span>';
       b.onclick = () => { $('#toolsModal').classList.add('hidden'); openMdReader(); };
       box.appendChild(b);
       continue;
@@ -2808,7 +2845,8 @@ function renderTools() {
     a.href = '/tools/' + encodeURIComponent(file);
     a.target = '_blank';
     a.rel = 'noopener';
-    a.innerHTML = '<span><b>' + esc(name) + '</b><br><small>' + esc(desc) + '</small></span><span>↗</span>';
+    a.innerHTML = '<span class="tool-link-text"><b>' + esc(name) + '</b><small>' + esc(desc) + '</small></span>' +
+      '<span class="tool-link-go">' + ic('link', 16) + '</span>';
     box.appendChild(a);
   }
 }
@@ -2817,13 +2855,13 @@ function renderTools() {
 const deliverState = { items: [], search: '', filter: 'all', tab: 'files' };
 function deliverFileIcon(name) {
   const e = String(name||'').split('.').pop().toLowerCase();
-  if (e==='md'||e==='markdown') return '📝';
-  if (e==='csv') return '📊';
-  if (e==='xlsx') return '📗';
-  if (e==='docx') return '📘';
-  if (e==='pdf') return '📕';
-  if (e==='txt') return '📄';
-  return '📦';
+  if (e==='md'||e==='markdown') return ic('edit', 14);
+  if (e==='csv') return ic('chart', 14);
+  if (e==='xlsx') return ic('chart', 14);
+  if (e==='docx') return ic('file', 14);
+  if (e==='pdf') return ic('file', 14);
+  if (e==='txt') return ic('file', 14);
+  return ic('package', 14);
 }
 async function loadDeliverables() {
   try {
@@ -2857,7 +2895,7 @@ function renderDeliverList() {
     head.appendChild(el('span','deliver-item-size', (it.size>=1048576 ? (it.size/1048576).toFixed(1)+'MB' : Math.max(1,Math.round(it.size/1024))+'KB')));
     card.appendChild(head);
     const meta = el('div','deliver-item-meta');
-    meta.appendChild(el('span',null,'🕘 '+ fmtTime(it.mtime) + (it.textType ? ' · 文本' : ' · 文件')));
+    meta.appendChild(el('span',null, ic('clock',12) + ' ' + fmtTime(it.mtime) + (it.textType ? ' · 文本' : ' · 文件')));
     card.appendChild(meta);
     const acts = el('div','deliver-item-actions');
     const bPrev = el('button','btn ghost small','预览'); bPrev.type='button'; bPrev.onclick = () => deliverPreview(it);
@@ -2868,7 +2906,7 @@ function renderDeliverList() {
     if (it.textType) { const bP=el('button','btn ghost small','存 PDF'); bP.type='button'; bP.onclick=()=>deliverPdf(it); acts.appendChild(bP); }
     // 文本类产物可一键送进资料库（引用式：不复制内容，永远读最新版）
     if (it.textType && ['md','markdown','txt','csv','srt','log','json','html'].includes(String(it.ext).toLowerCase())) {
-      const bLib = el('button','btn ghost small','📚 存入资料库');
+      const bLib = el('button','btn ghost small', ic('library',13) + '存入资料库');
       bLib.type='button';
       bLib.title = '存为资料库条目（引用式，跟随这份产物更新）；之后备赛/复盘会自动召回';
       bLib.onclick=()=>deliverToLibrary(it);
@@ -3068,7 +3106,7 @@ function renderCases() {
       const dl = el('div', 'case-sub-list', '');
       for (const nm of c.deliverables.slice(0, 8)) {
         const row = el('button', 'case-sub-item', '');
-        row.appendChild(el('span', 'case-sub-title', '📄 ' + nm));
+        row.appendChild(el('span', 'case-sub-title', ic('file',13) + ' ' + nm));
         row.onclick = () => { deliverState.tab = 'files'; switchDeliverTab('files'); deliverPreview({ name: nm }); };
         dl.appendChild(row);
       }
@@ -3301,7 +3339,7 @@ async function saveCustomSearch() {
   const out = document.getElementById('customSearchResult');
   const c = csCollect();
   if (c.enabled && !String(c.urlTemplate || '').trim()) {
-    if (out) { out.textContent = '❌ 启用时必须填「请求地址模板」'; out.className = 'settings-result err'; }
+    if (out) { out.textContent = '启用时必须填「请求地址模板」'; out.className = 'settings-result err'; }
     return;
   }
   try {
@@ -3313,11 +3351,11 @@ async function saveCustomSearch() {
     csState.hasKey = !!(r.config && r.config.hasKey);
     csSet('csApiKey', '');
     if (out) {
-      out.textContent = '✅ 已保存' + (c.enabled ? '（已启用，下次搜索生效）' : '（未启用）');
+      out.textContent = '已保存' + (c.enabled ? '（已启用，下次搜索生效）' : '（未启用）');
       out.className = 'settings-result ok';
     }
   } catch (e) {
-    if (out) { out.textContent = '❌ ' + (e.message || '保存失败'); out.className = 'settings-result err'; }
+    if (out) { out.textContent = '' + (e.message || '保存失败'); out.className = 'settings-result err'; }
   }
 }
 
@@ -3326,7 +3364,7 @@ async function testCustomSearch() {
   const btn = document.getElementById('btnCustomSearchTest');
   const c = csCollect();
   if (!String(c.urlTemplate || '').trim()) {
-    if (out) { out.textContent = '❌ 先填「请求地址模板」再测试'; out.className = 'settings-result err'; }
+    if (out) { out.textContent = '先填「请求地址模板」再测试'; out.className = 'settings-result err'; }
     return;
   }
   if (btn) { btn.disabled = true; btn.textContent = '测试中…'; }
@@ -3339,15 +3377,15 @@ async function testCustomSearch() {
     if (r && r.ok) {
       const s = (r.samples || [])[0];
       if (out) {
-        out.innerHTML = '✅ 成功：' + r.count + ' 条结果，用时 ' + r.elapsedMs + 'ms'
+        out.innerHTML = '成功：' + r.count + ' 条结果，用时 ' + r.elapsedMs + 'ms'
           + (s ? '<br><span style="color:var(--muted)">样例：' + esc(String(s.title || s.url).slice(0, 60)) + '</span>' : '');
         out.className = 'settings-result ok';
       }
     } else {
-      if (out) { out.textContent = '❌ ' + ((r && r.error) || '测试失败'); out.className = 'settings-result err'; }
+      if (out) { out.textContent = '' + ((r && r.error) || '测试失败'); out.className = 'settings-result err'; }
     }
   } catch (e) {
-    if (out) { out.textContent = '❌ ' + (e.message || '测试失败'); out.className = 'settings-result err'; }
+    if (out) { out.textContent = '' + (e.message || '测试失败'); out.className = 'settings-result err'; }
   } finally {
     if (btn) { btn.disabled = false; btn.textContent = '🔌 测试一下'; }
   }
@@ -3522,7 +3560,7 @@ async function skillImportFiles(files) {
     } catch (e) { fail++; }
   }
   toast('导入完成：成功 ' + ok + ' 份' + (fail ? '，失败 ' + fail + ' 份（同名或格式问题，看面板提示）' : ''));
-  $('#skillMsg').textContent = (ok ? '✅ 成功 ' + ok + ' 份。' : '') + (fail ? '❌ 失败 ' + fail + ' 份：同名冲突或缺少 frontmatter（name/description）。可改名或勾选覆盖后重试。' : '');
+  $('#skillMsg').textContent = (ok ? '成功 ' + ok + ' 份。' : '') + (fail ? '失败 ' + fail + ' 份：同名冲突或缺少 frontmatter（name/description）。可改名或勾选覆盖后重试。' : '');
   loadSkillsUI();
 }
 function bindSkillsUI() {
@@ -3565,8 +3603,8 @@ function memEntryCard(e, scope, date) {
 
   // 编辑工具条（平时不占位，hover 显示）
   const acts = el('div', 'mem-entry-acts');
-  const bEdit = el('button', 'mem-act-btn', '✏️ 编辑'); bEdit.type = 'button';
-  const bDel = el('button', 'mem-act-btn danger', '🗑 删除'); bDel.type = 'button';
+  const bEdit = el('button', 'mem-act-btn', ic('edit',12) + '编辑'); bEdit.type = 'button';
+  const bDel = el('button', 'mem-act-btn danger', ic('trash',12) + '删除'); bDel.type = 'button';
   acts.appendChild(bEdit); acts.appendChild(bDel);
   head.appendChild(acts);
   d.appendChild(head);
@@ -3834,7 +3872,7 @@ function libItemCard(it) {
   d.appendChild(head);
   if (it.preview) d.appendChild(el('div', 'lib-item-preview', it.preview));
   const meta = el('div', 'lib-item-meta');
-  meta.appendChild(el('span', 'lib-tag cat', LIB_CATS[libCategory(it)] || '📦 其他'));
+  meta.appendChild(el('span', 'lib-tag cat', LIB_CATS[libCategory(it)] || LIB_CATS.other));
   // 引用式条目（来自产物空间）：标出来历，原件被删时明确提示而不是静默空掉
   if (it.kind === 'deliverable') {
     if (it.missing) meta.appendChild(el('span', 'lib-tag warn', '⚠ 原件已删除'));
@@ -3872,9 +3910,15 @@ function libItemCard(it) {
   return d;
 }
 
-/* 资料分类（与产物空间的 chip 筛选同一套交互）：按来源类型自动归类 */
+/* 资料分类（与产物空间的 chip 筛选同一套交互）：按来源类型自动归类。
+   ★ LIB_CATS 只放**纯文本** —— 它同时被 chip 标签、条目角标、以及
+   `textContent` 赋值三处消费，塞 HTML 进去会被当字面量转义出来。
+   图标单独放 LIB_CAT_ICONS，只在需要 innerHTML 的地方用。 */
 const LIB_CATS = {
-  doc: '📝 文档', word: '📘 Word', pdf: '📕 PDF', img: '🖼 图片OCR', other: '📦 其他',
+  doc: '文档', word: 'Word', pdf: 'PDF', img: '图片OCR', other: '其他',
+};
+const LIB_CAT_ICONS = {
+  doc: 'edit', word: 'file', pdf: 'file', img: 'image', other: 'package',
 };
 function libCategory(it) {
   const ext = String(it.ext || '').toLowerCase();
@@ -3897,7 +3941,15 @@ function renderLibraryList() {
   document.querySelectorAll('#libChips .chip').forEach((c) => {
     const k = c.dataset.lfilter || 'all';
     const n = counts[k] || 0;
-    c.textContent = (k === 'all' ? '全部' : LIB_CATS[k]) + (n ? ' ' + n : '');
+    /* ★ 不能用 textContent —— 会把 chip 里的图标 SVG 一起抹掉。
+       只替换「文字部分」：图标节点原样保留，末尾追加计数。 */
+    const label = (k === 'all' ? '全部' : (LIB_CATS[k] || k)) + (n ? ' ' + n : '');
+    let textNode = null;
+    for (const node of c.childNodes) {
+      if (node.nodeType === 3 && node.nodeValue.trim()) { textNode = node; break; }
+    }
+    if (textNode) textNode.nodeValue = label;
+    else c.appendChild(document.createTextNode(label));
   });
   $('#libCount').textContent = '共 ' + all.length + ' 份' + (libState.filter !== 'all' ? ' · 当前分类 ' + items.length + ' 份' : '');
   if (!items.length) {
@@ -4285,23 +4337,23 @@ function renderStatsCardsFromStats(s, isLocal) {
   const totalTok = input + output + cacheRead + cacheWrite + reasoning;
   const hitRate = (input + cacheRead) > 0 ? (cacheRead / (input + cacheRead) * 100) : 0;
   const cards = [
-    ['💬', fmtToken(s.msgs != null ? s.msgs : (s.messages || 0)), '总消息数'],
-    ['🗂', String(s.chats || 0), '总对话数'],
-    ['🔢', fmtToken(input), '输入 Token'],
-    ['📤', fmtToken(output), '输出 Token'],
-    ['⚡', fmtToken(cacheRead), '缓存节省 Token'],
-    ['🎯', hitRate.toFixed(1) + '%', '缓存命中率'],
+    ['free', fmtToken(s.msgs != null ? s.msgs : (s.messages || 0)), '总消息数'],
+    ['grid', String(s.chats || 0), '总对话数'],
+    ['arrowDown', fmtToken(input), '输入 Token'],
+    ['arrowLeft', fmtToken(output), '输出 Token'],
+    ['bolt', fmtToken(cacheRead), '缓存节省 Token'],
+    ['target', hitRate.toFixed(1) + '%', '缓存命中率'],
   ];
   if (!isLocal) {
     // 账本才有的口径：活跃天数 / 连续天数 / 总轮次 / 总消耗
-    cards.push(['🗓', String(s.activeDays || 0) + ' 天', '活跃天数']);
-    if (s.streak) cards.push(['🔥', String(s.streak) + ' 天', '连续活跃']);
-    cards.push(['🔁', fmtToken((u.turns || 0)), '对话轮次']);
-    cards.push(['📊', fmtToken(totalTok), '累计 Token']);
+    cards.push(['calendar', String(s.activeDays || 0) + ' 天', '活跃天数']);
+    if (s.streak) cards.push(['sparkle', String(s.streak) + ' 天', '连续活跃']);
+    cards.push(['refresh', fmtToken((u.turns || 0)), '对话轮次']);
+    cards.push(['chart', fmtToken(totalTok), '累计 Token']);
   }
-  for (const [ic, val, label] of cards) {
+  for (const [iconName, val, label] of cards) {
     const c = el('div', 'stats-card');
-    c.appendChild(el('div', 'sc-icon', ic));
+    c.appendChild(el('div', 'sc-icon', ic(iconName, 16)));
     c.appendChild(el('div', 'sc-val', val));
     c.appendChild(el('div', 'sc-label', label));
     grid.appendChild(c);
@@ -4395,7 +4447,7 @@ async function exportBackup() {
       if (res && res.canceled) { if (out) out.textContent = ''; return; }
       if (!res || !res.ok) throw new Error((res && res.error) || '保存失败');
       if (out) {
-        out.innerHTML = '✅ 已导出到：<br><code>' + esc(res.path) + '</code><br>' + esc(summary) +
+        out.innerHTML = '已导出到：<br><code>' + esc(res.path) + '</code><br>' + esc(summary) +
           ' <button type="button" class="link-btn" id="btnShowBackupFolder">打开所在文件夹</button>';
         out.className = 'settings-result ok';
         const sb = $('#btnShowBackupFolder');
@@ -4409,10 +4461,10 @@ async function exportBackup() {
       a.download = 'academy-backup-' + new Date().toISOString().slice(0, 10) + '.json';
       a.click();
       URL.revokeObjectURL(a.href);
-      if (out) { out.textContent = '✅ 已下载备份文件\n' + summary; out.className = 'settings-result ok'; }
+      if (out) { out.textContent = '已下载备份文件\n' + summary; out.className = 'settings-result ok'; }
     }
   } catch (e) {
-    if (out) { out.textContent = '❌ ' + e.message; out.className = 'settings-result err'; }
+    if (out) { out.textContent = '' + e.message; out.className = 'settings-result err'; }
   } finally {
     if (btn) btn.disabled = false;
   }
@@ -4445,13 +4497,13 @@ async function importBackup() {
     if (!r || !r.ok) throw new Error((r && r.error) || '导入失败');
     const rr = r.result || {};
     if (out) {
-      out.textContent = '✅ 导入完成：' + (rr.chats || 0) + ' 个对话、' + (rr.memoryDaily || 0) + ' 天记忆、' + (rr.profiles || 0) + ' 套配置\n旧数据已备份到 data/' + (r.backupDir || '_backup_*');
+      out.textContent = '导入完成：' + (rr.chats || 0) + ' 个对话、' + (rr.memoryDaily || 0) + ' 天记忆、' + (rr.profiles || 0) + ' 套配置\n旧数据已备份到 data/' + (r.backupDir || '_backup_*');
       out.className = 'settings-result ok';
     }
     toast('导入完成，正在重新加载…');
     setTimeout(() => location.reload(), 1200);
   } catch (e) {
-    if (out) { out.textContent = '❌ ' + e.message; out.className = 'settings-result err'; }
+    if (out) { out.textContent = '' + e.message; out.className = 'settings-result err'; }
   } finally {
     if (btn) btn.disabled = false;
   }
@@ -4501,7 +4553,7 @@ async function compactContext() {
     persistChat();
     renderMessages();
     renderHistory();
-    toast('✅ 上下文已压缩为摘要');
+    toast('上下文已压缩为摘要');
   } catch (e) {
     toast('压缩失败：' + e.message + '（原对话未改动）');
   } finally {
@@ -4702,7 +4754,7 @@ function bindEvents() {
       await refreshStatus();
     } catch (e) {
       const out = $('#settingsResult');
-      if (out) { out.textContent = '❌ ' + e.message; out.className = 'settings-result err'; }
+      if (out) { out.textContent = '' + e.message; out.className = 'settings-result err'; }
     }
   };
   const btnLoad = $('#btnLoadModels');
@@ -4722,10 +4774,10 @@ function bindEvents() {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ apiKey, model, baseUrl }),
       });
-      out.textContent = r.ok ? '✅ ' + r.message : '❌ ' + r.message;
+      out.textContent = r.ok ? '' + r.message : '' + r.message;
       out.className = 'settings-result ' + (r.ok ? 'ok' : 'err');
     } catch (e) {
-      out.textContent = '❌ ' + e.message;
+      out.textContent = '' + e.message;
       out.className = 'settings-result err';
     }
   };
@@ -4878,12 +4930,12 @@ async function wizardTestAndSave() {
       body: JSON.stringify({ name: profileName, baseUrl, model, apiKey: key }),
     });
     if (!save.ok) throw new Error(save.error || '保存失败');
-    if (out) { out.textContent = '✅ 验证通过，已保存！'; out.className = 'settings-result ok'; }
+    if (out) { out.textContent = '验证通过，已保存！'; out.className = 'settings-result ok'; }
     await refreshStatus();
     await loadProfilesUI();
     setTimeout(() => showWizardStep(4), 500);
   } catch (e) {
-    if (out) { out.textContent = '❌ ' + e.message; out.className = 'settings-result err'; }
+    if (out) { out.textContent = '' + e.message; out.className = 'settings-result err'; }
   } finally {
     if (btn) { btn.disabled = false; btn.textContent = '🔌 测试并保存'; }
   }
