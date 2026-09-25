@@ -31,6 +31,7 @@ const { extractDocxText } = require('./docx-text');
 const { ocrImageBuffer, ocrStatus, IMAGE_EXT: OCR_IMAGE_EXT } = require('./ocr-win');
 /* 资料库召回 BM25 打分核（移植自 DSH-RAG，MIT，见 app/licenses/DSH-RAG-MIT.txt） */
 const { bm25Scores } = require('./library-bm25');
+const memoryGuard = require('./memory-guard');
 
 const ROOT = path.resolve(__dirname, '..');
 const PUBLIC_DIR = path.join(__dirname, 'public');
@@ -770,6 +771,12 @@ function appendLongMemory(text) {
 function appendMemory(text, opts) {
   const t = String(text || '').trim();
   if (!t) return 0;
+  // 记忆守卫：疑似密钥/注入指令的内容一律不入库（Agent 与蒸馏两条路都经过这里）
+  const blocked = memoryGuard.blockReason(t);
+  if (blocked) {
+    try { console.log('[memory-guard] 拦截写入（' + blocked + '）: ' + t.slice(0, 40).replace(/\s+/g, ' ')); } catch (_) {}
+    return 0;
+  }
   const toLong = !!(opts && opts.long);
   try {
     // 长期记忆：合并 + 条目上限，写完由 appendLongMemory 内部重建索引
@@ -849,11 +856,45 @@ function memoryMakeSegment(title, body, opts) {
   return b ? head + '\n\n' + b : head;
 }
 
-/* ---- 归档：<!-- MEMORY: x --> 走长期；<!-- NOTE: x --> 走当日流水 ---- */
+/* ---- 记忆撤回（FORGET 协议）：按关键词匹配长期记忆条目，命中条目整体移入
+   archive-long.md 并标注撤回日期。软撤回：内容不丢、仍参与全文召回，只是不再常驻注入。 ---- */
+function forgetLongEntries(keyword) {
+  const kw = String(keyword || '').trim();
+  if (!kw) return { removed: 0 };
+  const entries = parseMemoryEntries(readTextFile(MEMORY_FILE));
+  if (!entries.length) return { removed: 0 };
+  const norm = (s) => String(s || '').replace(/\s+/g, '').toLowerCase();
+  const nkw = norm(kw);
+  const keep = [], gone = [];
+  for (const e of entries) {
+    if (norm(e.body).includes(nkw) || norm(e.title).includes(nkw)) gone.push(e);
+    else keep.push(e);
+  }
+  if (!gone.length) return { removed: 0 };
+  const day = new Date().toISOString().slice(0, 10);
+  archiveLongEntries(gone.map((e) => ({ title: (e.title || '长期记忆') + ' · 撤回于 ' + day, body: e.body })));
+  memoryWriteSegments(MEMORY_FILE, keep.map((e) => memoryEntryText(e.title, e.body)));
+  return { removed: gone.length };
+}
+
+/* ---- 归档：<!-- MEMORY: x --> 走长期；<!-- NOTE: x --> 走当日流水；<!-- FORGET: x --> 软撤回 ---- */
 function archiveMemoryFromOutput(stdout) {
   const reMem = /<!--\s*MEMORY:\s*([\s\S]*?)-->/g;
   const reNote = /<!--\s*NOTE:\s*([\s\S]*?)-->/g;
+  const reForget = /<!--\s*FORGET:\s*([^\n\r]+?)\s*-->/g;
   let m, total = 0, cleaned = String(stdout || '');
+  const forgetNotes = [];
+  // 先撤回后写入：更正类协议块（FORGET 旧 + MEMORY 新）不论出现顺序都能各得其所
+  while ((m = reForget.exec(stdout)) !== null) {
+    cleaned = cleaned.replace(m[0], '');
+    const kw = String(m[1]).trim();
+    try {
+      const r = forgetLongEntries(kw);
+      forgetNotes.push(r.removed
+        ? '✅ 已撤回 ' + r.removed + ' 条含「' + kw + '」的长期记忆（移入归档，仍可被召回）'
+        : '⚠️ 未匹配到可撤回的长期记忆：「' + kw + '」');
+    } catch (e) { forgetNotes.push('❌ 撤回失败（「' + kw + '」）：' + e.message); }
+  }
   while ((m = reMem.exec(stdout)) !== null) {
     total += appendMemory(m[1], { long: true });
     cleaned = cleaned.replace(m[0], '');
@@ -862,6 +903,7 @@ function archiveMemoryFromOutput(stdout) {
     total += appendMemory(m[1], { long: false });
     cleaned = cleaned.replace(m[0], '');
   }
+  if (forgetNotes.length) cleaned = cleaned.replace(/\s+$/, '') + '\n\n---\n**记忆撤回**\n' + forgetNotes.join('\n');
   return { archived: total, cleaned };
 }
 
@@ -2555,7 +2597,8 @@ function buildTaskFile(runId, mode, text, history, opts = {}) {
   }
   lines.push('8. 输出使用中文 Markdown；给用户看的最终答复要完整、结构清晰。');
   lines.push('9. 单次输出有 token 上限：写一辩稿/长报告等长篇交付时，优先保证「正稿主体完整」，过程性说明（加载了哪些文件、搜索过程等）尽量一句话带过，避免因输出超长被截断导致任务失败。');
-  lines.push('10. 记忆：若本次对话中有「值得长期记住」的内容（你的常用判准、辩题笔记、资料索引、用户偏好、基准结论等），在最终回复末尾单独附加 HTML 注释块 `<!-- MEMORY: 要记住的内容 -->`（服务端归档到长期记忆）；若只是「短期观察/可复用的过程信息」，用 `<!-- NOTE: 内容 -->`（归档到当日流水）。不要修改任何文件，不要重复已存在于「长程记忆」段落的内容。');
+  lines.push('10. 记忆：若本次对话中有「值得长期记住」的内容（你的常用判准、辩题笔记、资料索引、用户偏好、基准结论等），在最终回复末尾单独附加 HTML 注释块 `<!-- MEMORY: 要记住的内容 -->`（服务端归档到长期记忆）；若只是「短期观察/可复用的过程信息」，用 `<!-- NOTE: 内容 -->`（归档到当日流水）。用户要求忘记/撤回某条长期记忆时，附 `<!-- FORGET: 关键词 -->`（关键词须出现在原条目中；命中条目会被移入归档，不再常驻）；更正某条记忆 = FORGET 旧关键词 + MEMORY 新内容。绝不把密钥、API Key、密码、token 写进记忆（服务端也会拦截）。不要修改任何文件，不要重复已存在于「长程记忆」段落的内容。');
+  if (memoryGuard.memoryTalkIntent(text)) lines.push('    ※ 注意：用户当前消息疑似涉及「撤回/更正记忆」。若确认此意，务必在最终回复中输出对应的 FORGET / MEMORY 协议块，而不要只口头答应。');
   if (Array.isArray(opts.library) && opts.library.length) {
     lines.push('11. 本次任务已附带「个人资料库」召回片段：这些是用户自己的备赛资料，优先级高于通用知识。引用其中的数据、口径、话术时直接采用；需要更多细节时用文件工具读取片段后给出的全文路径。资料库里没有的内容，不要说成来自资料库。');
   }
@@ -4500,6 +4543,8 @@ function handleRequest(req, res) {
       const title = String(body.title || '').trim();
       const text = String(body.body || '').trim();
       if (!title && !text) return sendJson(res, 400, { ok: false, error: '标题和内容不能都为空' });
+      const memBlock = memoryGuard.blockReason(title + '\n' + text);
+      if (memBlock) return sendJson(res, 400, { ok: false, error: '记忆守卫：' + memBlock + '，不会写入记忆（密钥/口令请只保存在设置页的环境变量里）' });
 
       let segs;
       try { segs = memorySegments(fs.existsSync(fp) ? fs.readFileSync(fp, 'utf8') : ''); } catch (_) { segs = []; }
@@ -5468,5 +5513,9 @@ function startServer() {
     }
   });
 }
+
+/* 测试专用导出：tools/memory-forget-driver.js 直调 FORGET 撤回内核。
+   require 本文件会启动 listen，调用方用完必须立刻 process.exit。 */
+module.exports = { memoryForget: forgetLongEntries };
 
 startServer();
