@@ -266,6 +266,34 @@ async function main() {
       if (s0) await j('POST', '/api/library/delete', { id: s0.id });
     }
 
+    /* 5b1+. BM25 打分核单元测试（纯数学，不起服务器、不碰数据） */
+    {
+      const { bm25Scores, K1, B } = require(path.join(ROOT, 'app', 'library-bm25.js'));
+      check('BM25 常数 k1=1.2 b=0.75', K1 === 1.2 && B === 0.75);
+      const weights = new Map([['rare', 1], ['common', 1]]);
+      const stats = { total: 100, df: new Map([['rare', 1], ['common', 90]]) };
+      const sRare = bm25Scores([{ tf: new Map([['rare', 2]]), len: 100 }], new Map([['rare', 1]]), stats)[0];
+      const sCom = bm25Scores([{ tf: new Map([['common', 2]]), len: 100 }], new Map([['common', 1]]), stats)[0];
+      check('BM25 IDF：罕见词显著重于常见词', sRare > 3 * sCom && sRare > 0, 'rare=' + sRare.toFixed(2) + ' common=' + sCom.toFixed(2));
+      const sat = bm25Scores(
+        [{ tf: new Map([['rare', 2]]), len: 100 }, { tf: new Map([['rare', 60]]), len: 100 }],
+        new Map([['rare', 1]]), stats);
+      check('BM25 TF 饱和：60 次出现不到 2 次的 8 倍', sat[1] > sat[0] && sat[1] < 8 * sat[0], 'tf2=' + sat[0].toFixed(2) + ' tf60=' + sat[1].toFixed(2));
+      const pair = bm25Scores(
+        [{ tf: new Map([['rare', 3]]), len: 100 }, { tf: new Map([['rare', 3]]), len: 1600 }],
+        new Map([['rare', 1]]), { total: 100, df: new Map([['rare', 2]]) });
+      check('BM25 长度归一：同词频长文分更低', pair[1] < pair[0], '短=' + pair[0].toFixed(2) + ' 长=' + pair[1].toFixed(2));
+      const zero = bm25Scores([{ tf: new Map(), len: 100 }], weights, stats)[0];
+      check('BM25 零命中分数为 0（召回门槛拦得住负例）', zero === 0);
+      const fb = bm25Scores([{ tf: new Map([['rare', 1]]), len: 100 }], new Map([['rare', 1]]), null)[0];
+      check('BM25 缺 stats 退回池内统计仍可用', fb > 0, 'score=' + fb.toFixed(3));
+      const fsMod2 = require('fs');
+      const srvSrc = fsMod2.readFileSync(path.join(ROOT, 'app', 'server.js'), 'utf8');
+      check('server.js 接入 BM25 打分', srvSrc.indexOf('bm25Scores(') !== -1 && srvSrc.indexOf('libCorpusStats') !== -1);
+      check('BM25 出处许可证随包（DSH-RAG MIT）',
+        fsMod2.existsSync(path.join(ROOT, 'app', 'licenses', 'DSH-RAG-MIT.txt')));
+    }
+
     /* 5b2. 产物 → 资料库 打通（引用式，不复制内容） */
     {
       // 先造一份产物

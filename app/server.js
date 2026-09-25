@@ -29,6 +29,8 @@ const { markdownToDocx } = require('./docx');
 const { extractPdfText } = require('./pdf-text');
 const { extractDocxText } = require('./docx-text');
 const { ocrImageBuffer, ocrStatus, IMAGE_EXT: OCR_IMAGE_EXT } = require('./ocr-win');
+/* 资料库召回 BM25 打分核（移植自 DSH-RAG，MIT，见 app/licenses/DSH-RAG-MIT.txt） */
+const { bm25Scores } = require('./library-bm25');
 
 const ROOT = path.resolve(__dirname, '..');
 const PUBLIC_DIR = path.join(__dirname, 'public');
@@ -1687,9 +1689,10 @@ function libTokenize(src) {
   return words;
 }
 
-/* 一次扫描正文：统计命中次数与命中位置（中文 O(n) 滑窗，英文 indexOf） */
-function libScoreText(text, terms) {
-  // terms: Map(token -> 权重)；中文二元组命中计权重，英文 token 同样计权重
+/* 一次扫描正文：查询词频表（tf）+ 命中位置 + 文档长度。
+   tf 交给 BM25（app/library-bm25.js）打分，hits 供 libSnippets 取摘录窗口。 */
+function libTermScan(text, terms) {
+  // terms: Map(token -> 权重)；中文二元组与英文 token 都按查询词精确计数
   const cjkKeys = new Map();
   const enKeys = [];
   for (const [k, w] of terms) {
@@ -1697,32 +1700,51 @@ function libScoreText(text, terms) {
     else enKeys.push([k, w]);
   }
   const scan = text.length > 200000 ? text.slice(0, 200000) : text;
-  let score = 0;
+  const tf = new Map();
   const hits = [];
-  /* 原有写法命中后 i += 1（跳 1 字），会把紧邻的下一个 bigram 一起吃掉：
-     正文「打钉子」命中「打钉」后跳到「子」开头，于是「钉子」再也匹配不上 →
-     查询「打钉子」（切出 打钉/钉子 两个 bigram）在正文里明明完整出现，却只得 1 分。
-     这里改为「仅在两个 bigram 重叠（相邻 1 字）时才跳过」，既不重复计数也不漏计。 */
+  /* 命中后仅在「两个 bigram 重叠（相邻 1 字）」时跳过（2026-09 修 i+=1 吃词的回归）：
+     正文「打钉子」命中「打钉」后仍能看到「钉子」，既不重复计数也不漏计。 */
   let prevHitEnd = -1;
   for (let i = 0; i + 2 <= scan.length; i++) {
-    const w = cjkKeys.get(scan.slice(i, i + 2));
-    if (!w) continue;
+    const seg = scan.slice(i, i + 2);
+    if (!cjkKeys.has(seg)) continue;
     if (i === prevHitEnd) { prevHitEnd = i + 2; continue; }  // 与上一命中重叠，跳过
-    score += w;
+    tf.set(seg, (tf.get(seg) || 0) + 1);
     if (hits.length < 400) hits.push(i);
     prevHitEnd = i + 2;
   }
-  for (const [k, w] of enKeys) {
+  const lower = scan.toLowerCase();
+  for (const [k] of enKeys) {
     let from = 0, guard = 0;
-    while (guard++ < 30) {
-      const p = scan.toLowerCase().indexOf(k, from);
+    while (guard++ < 50) {
+      const p = lower.indexOf(k, from);
       if (p < 0) break;
-      score += w;
+      tf.set(k, (tf.get(k) || 0) + 1);
       if (hits.length < 400) hits.push(p);
       from = p + k.length;
     }
   }
-  return { score, hits };
+  return { tf, hits, len: Math.max(8, scan.length) };
+}
+
+/* BM25 的 df 必须按全库统计（候选池是「至少命中一词」的集合，池内 df≈N 会把 IDF 塌成 0）。
+   数据源就是 FTS 索引本身，与候选预筛同源；索引不可用时返回 null，
+   由 bm25Scores 退回「全量扫描集内统计」——那条路径的池子本来就是全库，语义仍正确。 */
+function libCorpusStats(keys) {
+  if (!openMemoryIndex()) return null;
+  try {
+    const row = memDb.prepare('SELECT count(*) c FROM lib_docs WHERE enabled=1').get();
+    const total = row && row.c ? row.c : 0;
+    if (!total) return null;
+    const st = memDb.prepare(
+      'SELECT count(*) c FROM lib_fts JOIN lib_docs d ON d.rowid = lib_fts.rowid WHERE lib_fts MATCH ? AND d.enabled=1'
+    );
+    const df = new Map();
+    for (const [k] of keys) {
+      try { const r = st.get('"' + k + '"'); df.set(k, r ? r.c : 0); } catch (_) { df.set(k, 0); }
+    }
+    return { total, df };
+  } catch (_) { return null; }
 }
 
 /* 按命中位置取摘录窗口（最多 2 段） */
@@ -1818,27 +1840,32 @@ function libRecall(query, opts = {}) {
   return libScoreAndCollect(items, keys, termsMap);
 }
 
-/* 精确打分 + 摘要组装（旧版 libRecall 的核心逻辑，语义保持不变） */
+/* 精确打分（BM25）+ 摘要组装 */
 function libScoreAndCollect(pool, keys, termsMap) {
-  const scored = [];
+  /* BM25 打分（app/library-bm25.js，移植自 DSH-RAG/MIT）替换旧的原始词频累加：
+     IDF 让「问题/观点」这类常见词自动降权，TF 边际递减与长度归一让长文不再白赚分。
+     标题 / 标签命中仍加权：资料名与标签直接对应辩题时，优先级更高。
+     门槛只排除「零命中」（tf 全 0 且无标题加权 → 分数恰为 0）：
+     相关性高低交给 IDF 排序，不设死值——小语料里 idf 天然小，
+     固定门槛会把单文档库的正常召回误杀（旧版死值 2 就是这样丢词的）。 */
+  const scanned = [];
   for (const it of pool) {
     let text = '';
     try { text = fs.readFileSync(dataAbs(it.textFile), 'utf8'); } catch (_) { continue; }
     if (!text) continue;
-    const { score, hits } = libScoreText(text, termsMap);
-    // 标题 / 标签命中加权：资料名与标签直接对应辩题时，优先级更高
-    const meta = String(it.name || '') + ' ' + (Array.isArray(it.tags) ? it.tags.join(' ') : '');
-    let bonus = 0;
-    for (const [k, w] of keys) if (meta.indexOf(k) >= 0) bonus += w;
-    const total = score + bonus * 4;
-    /* 命中门槛：原来是死值 2，导致「击中」「主线」这类两字词（只产生 1 个 bigram）
-       在正文里明明出现却永远召不回——用户搜「打钉子」搜不到自己的备赛包。
-       改为按「查询词能切出几个 bigram」定下限：命中全部查询片段即可，
-       长查询仍要求多点命中，避免一个常见字就把全库捞出来。 */
-    const minScore = Math.max(1, Math.min(2, termsMap.size));
-    if (total < minScore) continue;
-    const norm = total / Math.sqrt(Math.max(1, text.length / 1000));
-    scored.push({ item: it, score: norm, raw: total, hits: (hits.length ? hits : [0]), text });
+    const scan = libTermScan(text, termsMap);
+    scanned.push({ item: it, text, tf: scan.tf, len: scan.len, hits: scan.hits });
+  }
+  if (!scanned.length) return [];
+  const scores = bm25Scores(scanned, termsMap, libCorpusStats(keys));
+  const scored = [];
+  for (let i = 0; i < scanned.length; i++) {
+    const s = scanned[i];
+    let total = scores[i];
+    const meta = String(s.item.name || '') + ' ' + (Array.isArray(s.item.tags) ? s.item.tags.join(' ') : '');
+    for (const [k, w] of keys) if (meta.indexOf(k) >= 0) total += w * 2.5;
+    if (!(total > 0)) continue;
+    scored.push({ item: s.item, score: total, hits: (s.hits.length ? s.hits : [0]), text: s.text });
   }
   if (!scored.length) return [];
   scored.sort((a, b) => b.score - a.score);
