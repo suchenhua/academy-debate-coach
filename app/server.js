@@ -367,15 +367,33 @@ function writeDshSettings(model, baseUrl, searchApiKey, searchProvider) {
     '  maxTokens: 1024',
     '  maxUses: 8',
   ];
+  /* 内核 ≥0.1.7：llm-deepseek 只说 Anthropic Messages（官方根是 /anthropic，
+     直传 https://api.deepseek.com 会 404）；第三方 OpenAI 兼容端点改走
+     llm-pi-ai 路由（api: openai-completions），Key 按环境变量名解析。 */
+  const modelSection = isOfficialDeepSeek ? [
+    'llm-deepseek:',
+    '  baseURL: ' + esc('https://api.deepseek.com/anthropic'),
+    '  models:',
+    ...models,
+  ] : [
+    'llm-pi-ai:',
+    '  providers:',
+    '    academy-gateway:',
+    '      apiKeyEnv: DEEPSEEK_API_KEY',
+    '      api: openai-completions',
+    '      baseURL: ' + esc(base),
+    '      models:',
+    '        - id: ' + esc(modelId),
+    '          name: ' + esc(modelId),
+    '          contextWindow: ' + modelContextWindow(modelId),
+    '          maxTokens: 65536',
+  ];
   const yaml = [
     '# 由 Academy 辩论教练 App 自动生成，请勿手改',
     'agent-default-model:',
-    '  provider: deepseek-official',
+    '  provider: ' + esc(isOfficialDeepSeek ? 'deepseek-official' : 'academy-gateway'),
     '  model: ' + esc(modelId),
-    'llm-deepseek:',
-    '  baseURL: ' + esc(base),
-    '  models:',
-    ...models,
+    ...modelSection,
     ...searchSection,
     '',
   ].join('\n');
@@ -2252,8 +2270,8 @@ function deliverProtocolParse(stdout) {
     const mm = body.match(/^(.+?)\s*(->|->|->|→)\s*(docx|xlsx|pdf)(?:\s*(?:到|至|去|to)\s+(.+))?$/i);
     if (!mm) continue;
     const srcName = path.basename(String(mm[1]).trim());
-    const fmt = String(mm[2]).toLowerCase();
-    const sub = String(mm[3] || '').trim().replace(/[\\/:*?"<>|]+/g, '_').slice(0, 40);
+    const fmt = String(mm[3]).toLowerCase();
+    const sub = String(mm[4] || '').trim().replace(/[\\/:*?"<>|]+/g, '_').slice(0, 40);
     out.requests.push({ src: srcName, fmt, sub });
     out.cleaned = out.cleaned.replace(m[0], '');
   }

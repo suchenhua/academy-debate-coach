@@ -736,6 +736,25 @@ async function main() {
       check('★ 输入框 placeholder 带模式示例',
         /const fallback = \(mm\.prompts && mm\.prompts\[0\]\)/.test(appJsSrc));
 
+      /* 10h. ★ 内核 0.1.7 协议适配（2026-09-25 升级实测）：
+         llm-deepseek 从 OpenAI chat/completions 改说 Anthropic Messages，
+         直传 https://api.deepseek.com 会 404 —— 官方端点必须写 /anthropic 根；
+         第三方 OpenAI 兼容端点走 llm-pi-ai 的 academy-gateway 路由。 */
+      const serverSrc2 = fsMod.readFileSync(path.join(ROOT, 'app', 'server.js'), 'utf8');
+      check('★ 官方端点设置写 Anthropic 根',
+        serverSrc2.indexOf("'https://api.deepseek.com/anthropic'") !== -1);
+      check('★ 第三方端点走 llm-pi-ai openai-completions 路由',
+        serverSrc2.indexOf("'llm-pi-ai:'") !== -1 &&
+        serverSrc2.indexOf('api: openai-completions') !== -1 &&
+        serverSrc2.indexOf('academy-gateway') !== -1);
+      /* DELIVER 协议捕获组错位：mm[2] 是箭头、fmt 在 mm[3]、sub 在 mm[4] ——
+         原来把箭头当格式取，产物自动转档从写下那天就没成功过。 */
+      check('★ DELIVER 转档取对捕获组（fmt=mm[3] / sub=mm[4]）',
+        /const fmt = String\(mm\[3\]\)\.toLowerCase\(\);/.test(serverSrc2) &&
+        /const sub = String\(mm\[4\]/.test(serverSrc2));
+      check('★ DELIVER 转档不再把箭头当格式（回归钉）',
+        !/const fmt = String\(mm\[2\]\)/.test(serverSrc2));
+
       /* 10d. ★ 静态引用自检（2026-09-23 血泪）：
          改 emoji 时把 `const b = el(...)` 那行一起删了，只剩 `b.innerHTML = ...`，
          页面开屏就抛 ReferenceError → init() 半路夭折 → /api/status 永远不落地 →
