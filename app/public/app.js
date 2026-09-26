@@ -67,17 +67,25 @@ function setTheme(pref) {
   try { localStorage.setItem(THEME_LS, pref); } catch (_) {}
   applyTheme();
 }
-/* ———— 界面语言（简体 / 繁体） ———— */
+/* ———— 界面语言（简体 / 繁体 / English） ———— */
 const LOCALE_LS = 'academy.locale.v1';
 function restoreLocale() {
   try {
     const v = localStorage.getItem(LOCALE_LS);
-    return v === 'zh-TW' ? 'zh-TW' : 'zh-CN';
+    return v === 'zh-TW' ? 'zh-TW' : v === 'en' ? 'en' : 'zh-CN';
   } catch (_) { return 'zh-CN'; }
 }
 function setLocale(val) {
-  try { localStorage.setItem(LOCALE_LS, val === 'zh-TW' ? 'zh-TW' : 'zh-CN'); } catch (_) {}
-  document.documentElement.lang = restoreLocale();
+  const norm = val === 'zh-TW' ? 'zh-TW' : val === 'en' ? 'en' : 'zh-CN';
+  const prev = restoreLocale();
+  try { localStorage.setItem(LOCALE_LS, norm); } catch (_) {}
+  // 中英互切走整页重载：英文是词条覆盖替换，页内反向还原不可靠；重载后由 init + 观察器重新铺英文
+  if ((prev === 'en') !== (norm === 'en')) {
+    try { document.documentElement.lang = norm; } catch (_) {}
+    location.reload();
+    return;
+  }
+  document.documentElement.lang = norm;
   syncLocaleChoices();
   // 立即转换 + 多次延迟兜底（覆盖异步渲染写完的界面文案）
   applyLocaleToStatic();
@@ -4936,11 +4944,13 @@ try { bindMemToggles(); } catch (_) {}
   document.querySelectorAll('#themeChoices .gen-choice').forEach((b) => {
     b.onclick = () => setTheme(b.dataset.themeVal);
   });
-  // 通用设置：界面语言（简体/繁体）
+  // 通用设置：界面语言（简体/繁体/English）
   document.querySelectorAll('#localeChoices .gen-choice').forEach((b) => {
     b.onclick = () => {
-      setLocale(b.dataset.localeVal === 'zh-TW' ? 'zh-TW' : 'zh-CN');
-      toast(b.dataset.localeVal === 'zh-TW' ? '已切換為繁體中文' : '已切换为简体中文');
+      const v = b.dataset.localeVal === 'zh-TW' ? 'zh-TW' : b.dataset.localeVal === 'en' ? 'en' : 'zh-CN';
+      const crossing = v === 'en' || restoreLocale() === 'en';
+      setLocale(v); // 中英互切会整页重载，toast 就来不及看了，只在简繁切换时提示
+      if (!crossing) toast(v === 'zh-TW' ? '已切換為繁體中文' : '已切换为简体中文');
     };
   });
   // 通用设置：对话字体大小（滑块，实时预览）

@@ -823,7 +823,29 @@ async function main() {
   try { fsMod.rmSync(testDir, { recursive: true, force: true }); } catch (_) {}
 }
 
-// 7c. 清空全部记忆：长期 + 流水都应清掉（含每日文件删除）；清空前应自动留快照
+// 7b10. 界面语言 English：三态归一、词条表、消息区守卫（Phase 5.3）
+        {
+          const fsMod = require('fs');
+          const pathMod = require('path');
+          const htmlSrc = fsMod.readFileSync(pathMod.join(ROOT, 'app', 'public', 'index.html'), 'utf8');
+          const uiSrc = fsMod.readFileSync(pathMod.join(ROOT, 'app', 'public', 'app.js'), 'utf8');
+          const locSrc = fsMod.readFileSync(pathMod.join(ROOT, 'app', 'public', 'locale.js'), 'utf8');
+          check('Phase5.3 界面语言：English 选项 / 三态归一 / 跨语言界重载',
+            htmlSrc.includes('data-locale-val="en"')
+            && uiSrc.includes("v === 'zh-TW' ? 'zh-TW' : v === 'en' ? 'en' : 'zh-CN'")
+            && uiSrc.includes("(prev === 'en') !== (norm === 'en')") && uiSrc.includes("location.reload()"));
+          const m = locSrc.match(/const EN_UI = \{([\s\S]*?)\n\};/);
+          const entries = m ? (m[1].match(/^ {2}"/gm) || []).length : 0;
+          const vals = m ? (m[1].match(/: "([^"]*)"/g) || []).map((s) => s.slice(3, -1)) : [];
+          check('Phase5.3 词条表：' + entries + ' 条覆盖外壳、值不含中文、消息区只放行界面控件',
+            entries >= 200
+            && vals.every((v) => !/[\u4e00-\u9fff]/.test(v))
+            && locSrc.includes('function applyEnglishUI') && locSrc.includes('MutationObserver')
+            && locSrc.includes(".closest('.welcome')") && locSrc.includes("'button, select, option, a'")
+            && locSrc.includes('设置\": "Settings"') && locSrc.includes('界面语言\": "Interface language"'));
+        }
+
+        // 7c. 清空全部记忆：长期 + 流水都应清掉（含每日文件删除）；清空前应自动留快照
         {
           const fsMod = require('fs');
           const abDir = path.join(ROOT, 'data', '_auto_backup');
