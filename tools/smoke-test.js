@@ -845,6 +845,29 @@ async function main() {
             && locSrc.includes('设置\": "Settings"') && locSrc.includes('界面语言\": "Interface language"'));
         }
 
+        // 7b11. 英文模式补齐：EN_EXTRA 并表、动态文案规则、缓存版本号（Phase 5.4）
+        {
+          const fsMod = require('fs');
+          const pathMod = require('path');
+          const locSrc = fsMod.readFileSync(pathMod.join(ROOT, 'app', 'public', 'locale.js'), 'utf8');
+          const htmlSrc = fsMod.readFileSync(pathMod.join(ROOT, 'app', 'public', 'index.html'), 'utf8');
+          const vmMod = require('vm');
+          const sb = { console }; vmMod.createContext(sb); vmMod.runInContext(locSrc, sb);
+          const merged = vmMod.runInContext('Object.assign({}, EN_EXTRA, EN_UI)', sb);
+          const vals = Object.values(merged);
+          check('Phase5.4 英文补齐：EN_UI+EN_EXTRA ≥ 430 条且译文无汉字',
+            vals.length >= 430 && vals.every((v) => !/[\u4e00-\u9fff]/.test(v)));
+          const rules = vmMod.runInContext('EN_RULES', sb);
+          const applyR = (s) => rules.reduce((acc, [re, val]) => (re.test(acc) ? acc.replace(re, val) : acc), s);
+          check('Phase5.4 动态文案规则：排队/就绪/字数三类拼接串可译',
+            /^Queued #2/.test(applyR('已排队第 2 位，等待前面的任务完成…'))
+            && /^Engine ready · /.test(applyR('引擎就绪 · deepseek-chat'))
+            && applyR('1,234 字') === '1,234 chars'
+            && applyR('⏳ 排队第 1 位 · 对话').includes('Chat'));
+          check('Phase5.4 缓存版本号已提升（locale.js v1.1.0 / app.js v3.36.0）',
+            htmlSrc.includes('/locale.js?v=1.1.0') && htmlSrc.includes('/app.js?v=3.36.0'));
+        }
+
         // 7c. 清空全部记忆：长期 + 流水都应清掉（含每日文件删除）；清空前应自动留快照
         {
           const fsMod = require('fs');
