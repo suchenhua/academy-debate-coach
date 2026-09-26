@@ -707,8 +707,9 @@ button.tool-link:hover { background: var(--primary-soft); }
 /* ── 侧边栏收起 / 展开 ── */
 .layout { position: relative; }
 .sidebar-toggle {
-  position: absolute; top: 50%; left: 288px; z-index: 30;
-  transform: translate(50%, -50%);
+  position: absolute; top: 50%; left: var(--sidebar-w, 264px); z-index: 30;
+  /* 2026-09-27 子涵：别骑缝飘着，贴在侧边栏右缘（ui.css 造型的右圆角把手朝外） */
+  transform: translateY(-50%);
   width: 26px; height: 26px; border-radius: 50%; cursor: pointer;
   background: var(--panel); border: 1px solid var(--border); color: var(--muted);
   display: flex; align-items: center; justify-content: center; font-size: 11px;
@@ -722,7 +723,7 @@ body.sidebar-collapsed .mode-btn div,
 body.sidebar-collapsed .side-section,
 body.sidebar-collapsed .history-section,
 body.sidebar-collapsed .side-foot { display: none; }
-body.sidebar-collapsed .sidebar-toggle { left: 54px; transform: translate(50%, -50%); }
+body.sidebar-collapsed .sidebar-toggle { left: 54px; transform: translateY(-50%); }
 
 /* ── 记忆中心：层级展示 ── */
 .memory-box {
