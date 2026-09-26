@@ -865,7 +865,7 @@ async function main() {
             && applyR('1,234 字') === '1,234 chars'
             && applyR('⏳ 排队第 1 位 · 对话').includes('Chat'));
           check('Phase5.4/5.5/5.7/5.8/5.9 缓存版本号已提升（locale v1.5.0 / app v3.37.0 / style 3.28.9 / ui 4.0.3）',
-            htmlSrc.includes('/locale.js?v=1.5.0') && htmlSrc.includes('/app.js?v=3.38.0')
+            htmlSrc.includes('/locale.js?v=1.5.0') && htmlSrc.includes('/app.js?v=3.39.0')
             && htmlSrc.includes('/style.css?v=3.28.9') && htmlSrc.includes('/ui.css?v=4.0.3'));
           check('Phase5.5 英文观察器同步执行且吞掉自触发记录（切模式不闪中文）',
             locSrc.includes('enObserver.takeRecords()')
@@ -894,6 +894,12 @@ async function main() {
             applyR('已连接主 App :8787').indexOf('Connected to main App: 8787') === 0
             && /^Quick verify checks one at a time \(2 pending\)/.test(applyR('快速检证一次只查一条（ 2 条待检）。请删到只剩一条，或切「完整检证」。'))
             && applyR('已复制 1,234 字') === 'Copied 1,234 chars');
+          // Phase 6.0：思考强度选择器（composer 思考下拉 → config.reasoningEffort → settings.yaml）
+          check('Phase6.0 思考强度接线（server 归一化/写入 YAML / composer 下拉 / app 同步）',
+            require('fs').readFileSync(path.join(ROOT, 'app', 'server.js'), 'utf8').includes("next.reasoningEffort = ['off', 'low', 'high', 'max'].includes(patch.reasoningEffort)")
+            && require('fs').readFileSync(path.join(ROOT, 'app', 'server.js'), 'utf8').includes("reasoningEffort: ' + esc(String(reasoningEffort))")
+            && htmlSrc.includes('composerEffortSelect') && htmlSrc.includes('思考强度：控制模型推理深度')
+            && require('fs').readFileSync(path.join(ROOT, 'app', 'public', 'app.js'), 'utf8').includes('syncComposerEffortSelect'));
           check('Phase5.8 语言链路与页面接线（preload 透传 / registry titleEn / 五页挂 locale）',
             locSrc.includes('window.LT')
             && require('fs').readFileSync(path.join(ROOT, 'app', 'preload.js'), 'utf8').includes('lang')

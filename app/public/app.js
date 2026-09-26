@@ -2045,6 +2045,7 @@ async function loadProfilesUI() {
     }
     renderProfilesList();
     refreshComposerModelSelect();
+    syncComposerEffortSelect();
   } catch (e) {
     toast('加载配置失败：' + e.message);
   }
@@ -2122,6 +2123,7 @@ async function activateProfileClient(id) {
     renderProfilesList();
     refreshComposerModelSelect();
     await refreshStatus();
+    syncComposerEffortSelect();
     toast('已切换到：' + (p ? p.name : ''));
   } catch (e) {
     toast('切换失败：' + e.message);
@@ -2195,6 +2197,25 @@ async function bindComposerModelSelect() {
     if (sel.value) activateProfileClient(sel.value);
   };
 }
+/* 思考强度下拉：与配置一起存服务端（config.reasoningEffort），随每次请求生效 */
+function syncComposerEffortSelect() {
+  const sel = $('#composerEffortSelect');
+  if (!sel) return;
+  sel.value = (state.status && state.status.reasoningEffort) || 'high';
+  if (![...sel.options].some((o) => o.value === sel.value)) sel.value = 'high';
+}
+async function onComposerEffortChange(val) {
+  const eff = ['off', 'low', 'high', 'max'].includes(val) ? val : 'high';
+  try {
+    const r = await fetchJSON('/api/config', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ reasoningEffort: eff }) });
+    if (r.ok && state.status) state.status.reasoningEffort = r.reasoningEffort || eff;
+    toast('思考强度：' + ({ off: '关闭', low: '轻量', high: '标准', max: '最强' }[eff] || eff));
+  } catch (e) {
+    toast('保存失败：' + e.message);
+    syncComposerEffortSelect();
+  }
+}
+
 /* 静默自动拉取模型列表（打开设置时若已有 Key） */
 let _autoModelTimer = null;
 async function autoLoadModelsSilent() {

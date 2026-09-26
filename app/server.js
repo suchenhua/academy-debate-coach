@@ -448,7 +448,7 @@ function defaultConfig() {
     // 审阅开启后，Agent 的记忆候选先进「待审阅」，由用户在记忆中心批准或否决。
     memoryAutoLearn: true, memoryAutoCite: true, memoryReview: false,
     // DSH 移植：工作步骤展示档位（simple|standard|detailed|full）与繁忙时的发送行为（queue|interrupt）
-    stepsDisplay: 'standard', busyBehavior: 'queue',
+    stepsDisplay: 'standard', busyBehavior: 'queue', reasoningEffort: 'high',
     // 微信式发送热键：ctrlEnter = Ctrl+Enter 发送、Enter 换行；enter = Enter 发送、Ctrl/Shift+Enter 换行
     sendHotkey: 'ctrlEnter',
     // 自定义搜索服务（学习 RikkaHub 的插件式思路）：
@@ -499,8 +499,9 @@ function saveConfig(patch) {
   if (patch.stepsDisplay !== undefined) next.stepsDisplay = ['simple', 'standard', 'detailed', 'full'].includes(patch.stepsDisplay) ? patch.stepsDisplay : 'standard';
   if (patch.busyBehavior !== undefined) next.busyBehavior = patch.busyBehavior === 'interrupt' ? 'interrupt' : 'queue';
   if (patch.sendHotkey !== undefined) next.sendHotkey = patch.sendHotkey === 'enter' ? 'enter' : 'ctrlEnter';
+  if (patch.reasoningEffort !== undefined) next.reasoningEffort = ['off', 'low', 'high', 'max'].includes(patch.reasoningEffort) ? patch.reasoningEffort : 'high';
   writeJsonAtomic(CONFIG_FILE, next);
-  writeDshSettings(next.model, next.baseUrl, effectiveSearchKey(next), resolveSearchProvider(next));
+  writeDshSettings(next.model, next.baseUrl, effectiveSearchKey(next), resolveSearchProvider(next), next.reasoningEffort);
   return next;
 }
 
@@ -523,7 +524,7 @@ function resolveSearchProvider(cfg) {
 
 /* 把模型/API 地址/搜索服务写进 DSH 的 settings.yaml
    searchProvider 已解析：server（服务侧）/ free（端侧） */
-function writeDshSettings(model, baseUrl, searchApiKey, searchProvider) {
+function writeDshSettings(model, baseUrl, searchApiKey, searchProvider, reasoningEffort) {
   const modelId = String(model || DEFAULT_MODEL).trim();
   const base = normalizeBaseUrl(baseUrl);
   const esc = (s) => JSON.stringify(String(s)); // YAML 双引号字符串
@@ -594,11 +595,17 @@ function writeDshSettings(model, baseUrl, searchApiKey, searchProvider) {
     '          contextWindow: ' + modelContextWindow(modelId),
     '          maxTokens: 65536',
   ];
+  /* 思考强度（2026-09-27 子涵）：agent-default-model.reasoningEffort 是内核原生键，
+     每次请求按此档位发 thinking + output_config.effort。只在官方 DeepSeek 直连时写入——
+     第三方 OpenAI 兼容端点走 llm-pi-ai，其模型多数未声明 reasoning 能力，
+     带着 effort 会被内核以 UNSUPPORTED_REASONING_EFFORT 拒掉每一笔请求。 */
+  const effortLine = (isOfficialDeepSeek && ['off', 'low', 'high', 'max'].includes(String(reasoningEffort))) ? ['  reasoningEffort: ' + esc(String(reasoningEffort))] : [];
   const yaml = [
     '# 由 Academy 辩论教练 App 自动生成，请勿手改',
     'agent-default-model:',
     '  provider: ' + esc(isOfficialDeepSeek ? 'deepseek-official' : 'academy-gateway'),
     '  model: ' + esc(modelId),
+    ...effortLine,
     ...modelSection,
     ...searchSection,
     '',
@@ -731,6 +738,7 @@ function statusPayload() {
     stepsDisplay: cfg.stepsDisplay || 'standard',
     busyBehavior: cfg.busyBehavior || 'queue',
     sendHotkey: cfg.sendHotkey === 'enter' ? 'enter' : 'ctrlEnter',
+    reasoningEffort: cfg.reasoningEffort || 'high',
     port: actualPort || DEFAULT_PORT,
     memorySize: (() => { try { return fs.existsSync(MEMORY_FILE) ? fs.statSync(MEMORY_FILE).size : 0; } catch (_) { return 0; } })(),
   };
@@ -4351,7 +4359,7 @@ function handleRequest(req, res) {
       ensureDir(TASK_DIR);
       const taskFile = path.join(TASK_DIR, runId + '.md');
       fs.writeFileSync(taskFile, prompt, 'utf8');
-      writeDshSettings(cfg.model, cfg.baseUrl, effectiveSearchKey(cfg), resolveSearchProvider(cfg));
+      writeDshSettings(cfg.model, cfg.baseUrl, effectiveSearchKey(cfg), resolveSearchProvider(cfg), cfg.reasoningEffort);
       // 返工限流：同一辩题 60 秒内不重复起suggest（防连点风暴）
       {
         const problems = runPrecheck(cfg, prompt, { dedupKey: 'sug:' + sha16(topic) });
@@ -4434,7 +4442,7 @@ function handleRequest(req, res) {
       ensureDir(TASK_DIR);
       const taskFile = path.join(TASK_DIR, runId + '.md');
       fs.writeFileSync(taskFile, prompt, 'utf8');
-      writeDshSettings(cfg.model, cfg.baseUrl, effectiveSearchKey(cfg), resolveSearchProvider(cfg));
+      writeDshSettings(cfg.model, cfg.baseUrl, effectiveSearchKey(cfg), resolveSearchProvider(cfg), cfg.reasoningEffort);
       return new Promise((resolveRoute) => {
         queueRegister('verify', runId, prompt, () => {
           runDsh(runId, prompt, cfg, () => {}, { source: 'verify' }).then((info) => {
@@ -4688,7 +4696,7 @@ function handleRequest(req, res) {
       ensureDir(TASK_DIR);
       const taskFile = path.join(TASK_DIR, runId + '.md');
       fs.writeFileSync(taskFile, prompt, 'utf8');
-      writeDshSettings(cfg.model, cfg.baseUrl, effectiveSearchKey(cfg), resolveSearchProvider(cfg));
+      writeDshSettings(cfg.model, cfg.baseUrl, effectiveSearchKey(cfg), resolveSearchProvider(cfg), cfg.reasoningEffort);
       return new Promise((resolveRoute) => {
         queueRegister('verify', runId, prompt, () => {
           runDsh(runId, prompt, cfg, () => {}, { source: 'verify' }).then((info) => {
@@ -5175,6 +5183,7 @@ function handleRequest(req, res) {
         stepsDisplay: body.stepsDisplay !== undefined ? body.stepsDisplay : loadConfig().stepsDisplay,
         busyBehavior: body.busyBehavior !== undefined ? body.busyBehavior : loadConfig().busyBehavior,
         sendHotkey: body.sendHotkey !== undefined ? body.sendHotkey : loadConfig().sendHotkey,
+        reasoningEffort: body.reasoningEffort !== undefined ? body.reasoningEffort : loadConfig().reasoningEffort,
       });
       return sendJson(res, 200, {
         ok: true, hasKey: !!cfg.apiKey, keyMasked: maskKey(cfg.apiKey),
@@ -5184,6 +5193,7 @@ function handleRequest(req, res) {
         searchProvider: cfg.searchProvider || 'auto',
         searchMode: resolveSearchProvider(cfg), // server | free
         stepsDisplay: cfg.stepsDisplay, busyBehavior: cfg.busyBehavior, sendHotkey: cfg.sendHotkey,
+        reasoningEffort: cfg.reasoningEffort || 'high',
       });
     }).catch((e) => sendJson(res, 500, { ok: false, error: e.message }));
   }
@@ -5760,7 +5770,7 @@ function handleRequest(req, res) {
       const cliTask = (taskText && taskText.length <= INLINE_LIMIT)
         ? ('你是「逻敏」辩论教练。以下是本次任务的完整任务单，请直接严格执行其中的要求，并把最终答复全文写在你的最终回复里。\n\n' + taskText)
         : ('请先用文件工具读取工作区文件 data/tasks/' + runId + '.md 中的完整任务单（文件较长，下面只贴开头，务必先读文件）。\n\n任务单开头：\n' + (taskText || '').slice(0, 2000));
-      writeDshSettings(cfg.model, cfg.baseUrl, effectiveSearchKey(cfg), resolveSearchProvider(cfg));
+      writeDshSettings(cfg.model, cfg.baseUrl, effectiveSearchKey(cfg), resolveSearchProvider(cfg), cfg.reasoningEffort);
 
       res.writeHead(200, {
         'Content-Type': 'text/event-stream; charset=utf-8',
@@ -6070,7 +6080,7 @@ function startServer() {
     setImmediate(() => { runStartupMaintenance(); });
     try {
       const bootCfg = loadConfig();
-      writeDshSettings(bootCfg.model, bootCfg.baseUrl, effectiveSearchKey(bootCfg), resolveSearchProvider(bootCfg)); // 启动时同步搜索/模型配置
+      writeDshSettings(bootCfg.model, bootCfg.baseUrl, effectiveSearchKey(bootCfg), resolveSearchProvider(bootCfg), bootCfg.reasoningEffort); // 启动时同步搜索/模型配置
     } catch (_) {}
     console.log('');
     console.log('============================================');
@@ -6105,6 +6115,7 @@ module.exports = { memoryForget: forgetLongEntries, deliverShadow: { snapshot: s
   /* Phase 4 治理/队列内核（tools/phase4-driver.js 测试直调；require 会启动 listen，用完即 exit） */
   academyGovernance: { archiveMemoryFromOutput, appendMemory, memRejectedHit, rejectMemoryFingerprint, unrejectMemory, pushMemoryPending, removeMemoryPending, readJsonSafe, memFingerprint, selectLongMemory },
   academyConfig: { loadConfig, saveConfig, statusPayload },
+  academyEffort: { settingsFile: SETTINGS_FILE },
   academyQueue: { queueRegister, pumpQueue, queueWithdraw, queueWithdrawAll, preemptCurrentRun, queuePositionOf, runPrecheck, sha16, ledgerAppendRec, runsLedgerRecent, runQueue: () => runQueue,
     beginFakeRunForTest: (runId) => { currentRun = { runId, child: null, cancelled: false, startedAt: Date.now() }; },
     endFakeRunForTest: () => { currentRun = null; } } };

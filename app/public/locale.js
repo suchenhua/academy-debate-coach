@@ -685,6 +685,15 @@ const EN_EXTRA = {
 
   /* —— Phase 5.8d：工具页总览页残留 —— */
   "主页": "Home",
+
+  /* —— Phase 6.0：思考强度下拉 —— */
+  "思考": "Effort",
+  "标准": "Standard",
+  "轻量": "Light",
+  "最强": "Max",
+  "关闭": "Off",
+  "思考强度：控制模型推理深度（对话中随时切换，越强越慢越贵）": "Thinking effort: how deeply the model reasons (switchable mid-chat; stronger = slower & pricier)",
+
   "开始页": "Start",
   "E0 · 总览": "E0 · Overview",
   "备赛整合工作台": "Prep Suite Workbench",
@@ -1192,6 +1201,7 @@ const EN_RULES = [
   [/已保存到\s*(.+)/, "Saved to $1"],
   [/已复制\s*([\d,]+)\s*字/, "Copied $1 chars"],
   [/保存失败：\s*/, "Save failed: "],
+  [/思考强度：\s*/, "Thinking effort: "],
   [/论证方向\s*(\d+)/, "Argument direction $1"],
   [/自定义防守\s*(\d+)/, "Custom defense $1"],
   [/分论点(\d+)防守/, "Sub-argument $1 defense"],

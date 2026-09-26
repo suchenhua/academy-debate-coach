@@ -2,7 +2,7 @@
 /* Phase 5 内核驱动器：工作步骤展示 × 繁忙时的发送行为（DSH 移植），隔离数据目录直调（phase4-driver 同模式）。
    用法：node tools/phase5-driver.js <case> */
 const srv = require('../app/server.js');
-const C = srv.academyConfig, Q = srv.academyQueue;
+const C = srv.academyConfig, Q = srv.academyQueue, EFF = srv.academyEffort;
 const out = (v) => { process.stdout.write(JSON.stringify(v)); process.exit(0); };
 const kase = process.argv[2] || '';
 
@@ -37,6 +37,19 @@ const kase = process.argv[2] || '';
       withdrawn: ['p5-q1', 'p5-q2'].every((id) => recs.some((r) => r.runId === id && r.status === 'withdrawn'))
         && moved.length === 2,
     });
+  }
+
+  if (kase === 'effort') {
+    C.saveConfig({ reasoningEffort: 'low' });
+    const a = C.loadConfig();
+    const yaml = require('fs').readFileSync(EFF.settingsFile, 'utf8');
+    C.saveConfig({ reasoningEffort: 'bogus' });
+    const b = C.loadConfig();
+    const yaml2 = require('fs').readFileSync(EFF.settingsFile, 'utf8');
+    const st = C.statusPayload();
+    out({ lowOk: a.reasoningEffort === 'low', yamlLow: yaml.includes('reasoningEffort: "low"'),
+          normHigh: b.reasoningEffort === 'high', yamlHigh: yaml2.includes('reasoningEffort: "high"'),
+          echoOk: st.reasoningEffort === 'high' });
   }
 
   if (kase === 'send-hotkey') {
