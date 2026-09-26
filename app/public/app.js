@@ -1793,7 +1793,6 @@ async function refreshStatus() {
   } catch (e) {
     $('#statusPill').className = 'status-pill err';
     $('#statusPill').textContent = '服务异常';
-    $('#engineInfo').textContent = '无法连接本地服务';
   }
 }
 
@@ -1814,10 +1813,8 @@ function renderStatus() {
     pill.className = 'status-pill err';
     pill.innerHTML = ic('warn',12) + '引擎缺失';
   }
-  const providerLabel = s.searchMode === 'free' ? '免费端侧' : '服务侧';
-  // 本对话 Token 明细已常驻在输入框下方的统计栏里，这里不再重复拼接
-  const memoryText = (s.memorySize > 0) ? (' · 记忆 ' + s.memorySize.toLocaleString() + ' B') : '';
-  $('#engineInfo').textContent = 'DSH 内核: ' + (s.dsh ? '✅' : '❌') + ' · 内置 Node: ' + (s.node ? '✅' : '❌') + ' · API: ' + (s.baseUrl || '').replace(/^https?:\/\//, '') + ' · 搜索: ' + providerLabel + '✅' + memoryText;
+  /* 2026-09-27 子涵：左下角技术参数行（DSH 内核/Node/API/搜索/记忆）已移除——
+     是否可用看右上角状态徽章（绿点引擎就绪 / 红「服务异常」）即可。 */
 }
 
 function openSettings() {

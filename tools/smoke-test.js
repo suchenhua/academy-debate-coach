@@ -865,7 +865,7 @@ async function main() {
             && applyR('1,234 字') === '1,234 chars'
             && applyR('⏳ 排队第 1 位 · 对话').includes('Chat'));
           check('Phase5.4/5.5/5.7/5.8/5.9 缓存版本号已提升（locale v1.5.0 / app v3.37.0 / style 3.28.9 / ui 4.0.3）',
-            htmlSrc.includes('/locale.js?v=1.5.0') && htmlSrc.includes('/app.js?v=3.37.0')
+            htmlSrc.includes('/locale.js?v=1.5.0') && htmlSrc.includes('/app.js?v=3.38.0')
             && htmlSrc.includes('/style.css?v=3.28.9') && htmlSrc.includes('/ui.css?v=4.0.3'));
           check('Phase5.5 英文观察器同步执行且吞掉自触发记录（切模式不闪中文）',
             locSrc.includes('enObserver.takeRecords()')
