@@ -565,21 +565,22 @@ function applyEnglishUI() {
   });
   const t = (document.title || '').trim();
   if (EN_UI[t]) document.title = EN_UI[t];
+  // 本轮自己改出的节点变更不再触发观察者回调（英文值不命中中文键，本就会收敛，
+  // 但吞掉记录可以省掉一整轮空转的 TreeWalker）
+  try { if (enObserver) enObserver.takeRecords(); } catch (_) {}
 }
 
-let enWatcherArmed = false;
+let enObserver = null;
 function armEnglishWatcher() {
-  if (enWatcherArmed || !document || !document.body) return;
-  enWatcherArmed = true;
-  let timer = 0;
+  if (enObserver || !document || !document.body) return;
   try {
-    new MutationObserver(() => {
-      clearTimeout(timer);
-      timer = setTimeout(() => {
-        try { if (academyLocale() === 'en') applyEnglishUI(); } catch (_) {}
-      }, 120);
-    }).observe(document.body, { childList: true, subtree: true, characterData: true, attributes: true, attributeFilter: ['placeholder', 'title'] });
-  } catch (_) { enWatcherArmed = false; }
+    // 不加防抖：MutationObserver 回调是微任务，赶在浏览器绘制之前完成替换，
+    // 切模式/切语言时不会再「先画一帧中文」。英文值不命中中文键，天然收敛。
+    enObserver = new MutationObserver(() => {
+      try { if (academyLocale() === 'en') applyEnglishUI(); } catch (_) {}
+    });
+    enObserver.observe(document.body, { childList: true, subtree: true, characterData: true, attributes: true, attributeFilter: ['placeholder', 'title'] });
+  } catch (_) { enObserver = null; }
 }
 
 /* 应用语言到界面静态文本 */
