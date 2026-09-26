@@ -33,6 +33,25 @@ const DRY = process.argv.includes('--dry');
 const PRUNE_EXT = new Set(['.map', '.pdb', '.md', '.markdown', '.cc', '.hh', '.h']);
 const KEEP_RE = /^(license|licence|copying|notice|authors|contributors)/i;
 
+/* 目录级裁剪（相对 runtime/dsh）：整个包删掉。都是「DSH 捆绑、但本 App 明确不用」的
+   原生大件 —— 2026-09-27 实测 v2.3.0 包比 v2.2.0 胖 78.5MB，逐目录归因后定位：
+   - @deepseek-ai/libreoffice-kit-win32-x64：LibreOffice 整包载荷（bin/ 单文件 ~170MB），
+     服务于 DSH 的 dsh-skill-office / dsh-office-to-pdf。本 App 的 Word/Excel/PDF 转档
+     全部走自研链路（app/docx.js + xlsx-gen.js + Electron pdf-worker），且系统提示词
+     指示 Agent 用 DELIVER 协议块而非自己生成 Office 文件 —— 此 kit 为纯冗余。
+     skill 注册时不校验该 exe（只查 wrapper 包的 cli.js，保留），真被调用只会得到
+     一次干净的工具报错，不会崩内核。可逆：upgrade-dsh.js 重装完整内核。
+   - sherpa-onnx-win-x64：语音识别（SenseVoice）原生库，唯一消费者是
+     dsh-experimental-speech-to-text-sensevoice —— 本 App 无任何语音功能。
+   - @octokit/openapi-types / openapi-webhooks-types：纯 .d.ts 类型包（无一 .js），
+     运行时永不加载；现有的 TS 同名兄弟护栏反而会保住它们，这里按包名整删。 */
+const PRUNE_DIRS = [
+  'node_modules/@deepseek-ai/libreoffice-kit-win32-x64',
+  'node_modules/sherpa-onnx-win-x64',
+  'node_modules/@octokit/openapi-types',
+  'node_modules/@octokit/openapi-webhooks-types',
+].map((p) => path.join(DSH, p));
+
 /* 识别 TS 系文件（含 .d.ts / .d.mts / .d.cts），返回去掉后缀的词干 + 该词干应当存在的 JS 兄弟后缀。
    顺序很重要：.d.ts 必须先于 .ts 匹配。 */
 const TS_SUFFIXES = ['.d.ts', '.d.mts', '.d.cts', '.ts', '.mts', '.cts'];
@@ -73,7 +92,23 @@ function main() {
   let keptLicense = 0;
   const tsNoSibling = [];
 
+  // ---- 目录级裁剪（PRUNE_DIRS，见顶部注释）----
+  let dirPrunedBytes = 0, dirPrunedFiles = 0;
+  for (const dir of PRUNE_DIRS) {
+    if (!fs.existsSync(dir)) continue;
+    const files = [];
+    walk(dir, files);
+    const bytes = files.reduce((s, p) => { try { return s + fs.statSync(p).size; } catch (_) { return s; } }, 0);
+    if (DRY) { dirPrunedBytes += bytes; dirPrunedFiles += files.length; continue; }
+    try { fs.rmSync(dir, { recursive: true, force: true }); dirPrunedBytes += bytes; dirPrunedFiles += files.length; } catch (_) {}
+  }
+  if (dirPrunedFiles || DRY) {
+    console.log('目录级裁剪：' + dirPrunedFiles.toLocaleString() + ' 个文件 / ' + fmt(dirPrunedBytes) +
+      (DRY ? '（预演）' : ''));
+  }
+
   for (const p of all) {
+    if (dirPrunedFiles && !fs.existsSync(p)) continue; // 已随 PRUNE_DIRS 整目录删除
     const name = path.basename(p);
     if (KEEP_RE.test(name)) { keptLicense++; continue; }
     const ts = classifyTs(name);
