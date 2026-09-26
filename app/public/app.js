@@ -624,11 +624,8 @@ function renderWelcome() {
      示例词没浪费：每个模式第一句进了输入框 placeholder（见 updateModeUI），
      要问什么、该怎么起头，在真正要打字的地方给。 */
 
-  // 4) 底部提示
-  const foot = el('div', 'welcome-foot', '');
-  foot.innerHTML = '<span>本模式是<b>独立</b>的对话空间，切换模式不会把这段对话带过去。</span>'
-    + '<span class="wf-hint">' + (sendHotkeyMode() === 'enter' ? 'Enter 发送 · Ctrl + Enter 换行' : 'Ctrl + Enter 发送') + '</span>';
-  wrap.appendChild(foot);
+  /* 底部提示行（模式独立说明 + 发送热键）2026-09-27 应子涵要求去掉：
+     模式切换行为用了自然知道，热键提示输入框 placeholder 已带。 */
   return wrap;
 }
 
@@ -638,6 +635,7 @@ function renderMessages() {
   const wasStick = stickBottom;
   const prevTop = box.scrollTop;
   box.innerHTML = '';
+  box.classList.toggle('empty', !state.messages.length);
   if (!state.messages.length) {
     box.appendChild(renderWelcome());
     stickBottom = true;
