@@ -164,6 +164,15 @@ if (r.error) fail('无法启动 tar：' + r.error.message + '（需要 Windows 1
 if (r.status !== 0) fail('tar 打包失败，exit ' + r.status);
 log('✓ 打包完成，用时 ' + ((Date.now() - t0) / 1000).toFixed(1) + ' 秒');
 
+/* 2.5) 给非 ASCII 条目名补 UTF-8 标志（bit 11）。
+   bsdtar 打 zip 不设语言编码标志，中文名条目在旧 in-box .NET 机器上按 ANSI 解码，
+   UTF-8 字节是非法 GBK 序列 → 解码出 '?' → ZipFile.ExtractToDirectory 抛
+   「路径中具有非法字符。」（2026-09-26 第二台机器安装实测翻车）。 */
+const { fixZipUtf8Flags } = require('./zip-utf8-flag.js');
+const zr = fixZipUtf8Flags(ZIP);
+if (zr.invalidUtf8) fail('zip 里有 ' + zr.invalidUtf8 + ' 个非 UTF-8 文件名条目，请先检查来源文件名');
+log('✓ UTF-8 文件名标志：' + (zr.patched ? '补 ' + zr.patched + ' 条' : '无需补'));
+
 // 3) 校验：大小 + 条目数（报「找不到中央目录」= 没打完）
 const stat = fs.statSync(ZIP);
 if (stat.size < 50 * 1024 * 1024) fail('zip 异常小（' + (stat.size / 1024 / 1024).toFixed(1) + ' MB），可能打包不完整');

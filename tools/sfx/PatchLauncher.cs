@@ -44,6 +44,8 @@ namespace AcademyPatch
         internal static readonly byte[] Magic = Encoding.ASCII.GetBytes("ACADEMY-PATCH-OVERLAY-V1-9D4B7E3A15C8");
 
         internal static readonly string LogPath = Path.Combine(Path.GetTempPath(), "AcademyBianlunPatch.log");
+        // 最近一次解压失败的异常摘要（供 Fail 文案引用，避免只报「数据不完整」误导用户）
+        internal static string lastUnpackError;
         internal static readonly string DefaultInstallDir = Path.Combine(
             Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "AcademyDebateCoach");
 
@@ -81,7 +83,12 @@ namespace AcademyPatch
 
                 if (!Unpack(exePath, zipPath, workDir))
                 {
-                    return Fail(silent, "补丁数据不完整，请重新下载这个补丁文件。");
+                    // 解压失败多半是环境差异（如旧 .NET 解码 zip 文件名），只有一句
+                    // 「数据不完整」会误导用户去反复重下；带上异常类型 + 日志路径
+                    return Fail(silent, "补丁解压失败："
+                        + (Program.lastUnpackError ?? "补丁数据不完整，请重新下载这个补丁文件。")
+                        + Environment.NewLine + Environment.NewLine
+                        + "详细日志：" + Program.LogPath);
                 }
 
                 PatchInfo info = PatchInfo.Load(workDir);
@@ -206,6 +213,7 @@ namespace AcademyPatch
             }
             catch (Exception ex)
             {
+                lastUnpackError = ex.GetType().Name + ": " + ex.Message;
                 Log("unpack failed: " + ex);
                 return false;
             }

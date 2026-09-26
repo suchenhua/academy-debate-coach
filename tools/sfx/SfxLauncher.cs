@@ -42,12 +42,13 @@ namespace AcademySetup
             }
         }
 
+        internal static readonly string LogPath = Path.Combine(Path.GetTempPath(), "AcademyBianlunSetup.log");
+
         internal static void Log(string msg)
         {
             try
             {
-                File.AppendAllText(
-                    Path.Combine(Path.GetTempPath(), "AcademyBianlunSetup.log"),
+                File.AppendAllText(LogPath,
                     DateTime.Now.ToString("yyyy-MM-dd HH:mm:ss ") + msg + Environment.NewLine);
             }
             catch { }
@@ -487,7 +488,13 @@ namespace AcademySetup
                 Program.Log("ERROR: " + ex);
                 BeginInvoke((MethodInvoker)delegate
                 {
-                    MessageBox.Show(ex.Message, "Academy \u8FA9\u8BBA\u6559\u7EC3 \u5B89\u88C5\u5411\u5BFC", MessageBoxButtons.OK, MessageBoxIcon.Error);
+                    // 异常类型 + 日志路径一起给：只显示 Message 时（如「路径中具有非法字符。」）
+                    // 完全无法定位是哪一步、哪台机器环境出的差异，远程排查全靠猜
+                    MessageBox.Show(
+                        ex.GetType().Name + ": " + ex.Message + Environment.NewLine + Environment.NewLine +
+                        "\u8BE6\u7EC6\u4FE1\u606F\u5DF2\u5199\u5165\u65E5\u5FD7\uFF08Win+R \u8F93\u5165 %TEMP% \u56DE\u8F66\uFF0C\u6253\u5F00 AcademyBianlunSetup.log\uFF09\uFF1A" + Environment.NewLine +
+                        Program.LogPath,
+                        "Academy \u8FA9\u8BBA\u6559\u7EC3 \u5B89\u88C5\u5411\u5BFC", MessageBoxButtons.OK, MessageBoxIcon.Error);
                     finished = true;
                     Close();
                 });

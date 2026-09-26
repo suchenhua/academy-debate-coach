@@ -264,6 +264,12 @@ function main() {
   const rawZip = path.join(BUILD_DIR, 'patch.zip');
   makeZip(rawZip, BUILD_DIR, ['patch.txt', 'files.sha256', 'payload']);
 
+  // 4.5) 补 UTF-8 文件名标志（bsdtar 不设 bit 11，旧 .NET 机器解压中文名会翻车，同 pack.js）
+  const { fixZipUtf8Flags } = require('./zip-utf8-flag.js');
+  const zr = fixZipUtf8Flags(rawZip);
+  if (zr.invalidUtf8) fail('补丁包里有 ' + zr.invalidUtf8 + ' 个非 UTF-8 文件名条目，请先检查来源文件名');
+  if (zr.patched) log('  · UTF-8 文件名标志：补 ' + zr.patched + ' 条');
+
   // 5) 编译外壳 + 拼接
   const csc = findCsc();
   compileStub(csc);
