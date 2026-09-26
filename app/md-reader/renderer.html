@@ -33,5 +33,18 @@
   <div id="toast" class="toast">…</div>
   <script src="md-view.js"></script>
   <script src="reader.js"></script>
+<script src="../public/locale.js"></script>
+<script>
+/* 英文模式引导：同 tool-window（?lang= 或同源 localStorage） */
+(function () {
+  var q = '';
+  try { q = new URLSearchParams(location.search).get('lang') || ''; } catch (_) {}
+  var en = q === 'en' || (!q && (localStorage.getItem('academy.locale.v1') || '') === 'en');
+  if (en && typeof applyEnglishUI === 'function') {
+    applyEnglishUI();
+    if (typeof armEnglishWatcher === 'function') armEnglishWatcher();
+  }
+})();
+</script>
 </body>
 </html>

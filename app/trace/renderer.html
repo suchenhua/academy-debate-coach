@@ -37,5 +37,19 @@
   <div id="toast" class="toast">…</div>
   <script src="../research/md-view.js"></script>
   <script src="trace.js"></script>
+<script src="../public/locale.js"></script>
+<script>
+/* 英文模式引导：工具窗由主窗口 spawn 时传 ?lang=en（file:// 与主窗口不同源，localStorage 不通）；
+   直接以 http 打开时退回读同源 localStorage。 */
+(function () {
+  var q = '';
+  try { q = new URLSearchParams(location.search).get('lang') || ''; } catch (_) {}
+  var en = q === 'en' || (!q && (localStorage.getItem('academy.locale.v1') || '') === 'en');
+  if (en && typeof applyEnglishUI === 'function') {
+    applyEnglishUI();
+    if (typeof armEnglishWatcher === 'function') armEnglishWatcher();
+  }
+})();
+</script>
 </body>
 </html>

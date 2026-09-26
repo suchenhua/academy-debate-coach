@@ -2825,7 +2825,7 @@ function renderTools() {
         try {
           const ae = window.academyElectron;
           if (ae && ae.openToolWindow) {
-            const r = await ae.openToolWindow(tw.tool);
+            const r = await ae.openToolWindow(tw.tool, academyLocale() === 'en' ? 'en' : '');
             if (r && r.ok) { $('#toolsModal').classList.add('hidden'); return; }
             toast('打开失败：' + ((r && r.error) || ''));
           } else {

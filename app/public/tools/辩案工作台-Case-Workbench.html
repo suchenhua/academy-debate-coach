@@ -104,7 +104,7 @@ body.light .btn.gold { color: #fff; }
 </style>
 </head>
 <body class="light">
-<header><h1>备赛整合 · 标准化辩案工作台 <span class="step-label" id="step-label"></span></h1><span style="display:flex;gap:8px;align-items:center"><button id="theme-toggle" onclick="document.body.classList.toggle('light');this.textContent='界面颜色'" title="切换深色/浅色主题">界面颜色</button><button id="clear-data" onclick="if(confirm('确定清除所有填写数据？此操作不可恢复。')){localStorage.removeItem('estage_v2');location.reload();}" title="清除本地数据" style="color:var(--red)">清除数据</button></span></header>
+<header><h1>备赛整合 · 标准化辩案工作台 <span class="step-label" id="step-label"></span></h1><span style="display:flex;gap:8px;align-items:center"><button id="theme-toggle" onclick="document.body.classList.toggle('light');this.textContent='界面颜色'" title="切换深色/浅色主题">界面颜色</button><button id="clear-data" onclick="if(confirm(LT('确定清除所有填写数据？此操作不可恢复。', 'Clear all filled data? This cannot be undone.'))){localStorage.removeItem('estage_v2');location.reload();}" title="清除本地数据" style="color:var(--red)">清除数据</button></span></header>
 <main id="content"></main>
 <div style="padding:12px 20px;border-top:1px solid var(--border);flex-shrink:0;display:flex;justify-content:center;background:var(--card);align-items:center;position:relative">
   <button onclick="window.top.location.reload()" class="btn" style="padding:10px 12px;position:absolute;left:20px">主页</button>
@@ -556,8 +556,8 @@ async function sendToApp(target) {
   if (target==='chat') {
     try{
       localStorage.setItem('academy.handoff.v1',JSON.stringify({from:'辩案工作台',text:md,ts:Date.now()}));
-      alert('已发到主窗口输入框。到主窗口选「备赛」模式后直接发送即可。');
-    }catch(e){alert('发送失败：'+e.message);}
+      alert(LT('已发到主窗口输入框。到主窗口选「备赛」模式后直接发送即可。', 'Sent to the main window input. Switch to “Prep” in the main window and send it directly.'));
+    }catch(e){alert(LT('发送失败：', 'Send failed: ')+e.message);}
     return;
   }
   var api=target==='deliverable'?'/api/deliverables/save':'/api/library/upload';
@@ -567,13 +567,13 @@ async function sendToApp(target) {
     var j=await r.json().catch(function(){return{};});
     if(r.ok&&j.ok){
       alert(target==='deliverable'
-        ?'已存为产物：'+j.name+'\n回主窗口点「📦 产物」即可查看/转 Word/PDF'
-        :'已存入资料库：'+((j.item&&j.item.name)||fname+'.md')+'\n备赛时会自动召回');
+        ?LT('已存为产物：', 'Saved as deliverable: ')+j.name+LT('\n回主窗口点「📦 产物」即可查看/转 Word/PDF', '\nClick “📦 Deliverables” in the main window to view it / convert to Word/PDF')
+        :LT('已存入资料库：', 'Saved to library: ')+((j.item&&j.item.name)||fname+'.md')+LT('\n备赛时会自动召回', '\nAuto-recalled during prep'));
     }else{
-      alert('失败：'+(j.error||('HTTP '+r.status)));
+      alert(LT('失败：', 'Failed: ')+(j.error||('HTTP '+r.status)));
     }
   }catch(e){
-    alert('连不上主 App 服务（'+e.message+'）。\n工具页需要从主 App 的「🧰 工具箱」打开才能送回。');
+    alert(LT('连不上主 App 服务（', 'Cannot reach the main App service (')+e.message+LT('）。\n工具页需要从主 App 的「🧰 工具箱」打开才能送回。', ').\nOpen this page from the main App\u2019s \ud83e\uddf0 Toolbox to send things back.'));
   }
 }
 
@@ -592,8 +592,8 @@ async function doExport(fmt) {
     try{var C=Capacitor,FS=C.Plugins.Filesystem;
       var result=await FS.writeFile({path:'Debate-Coach/'+name,data:ext==='csv'?'﻿'+content:content,directory:'CACHE',recursive:true,encoding:'utf8'});
       try{var Share=C.Plugins.Share;if(Share&&Share.share)Share.share({title:'导出辩案',url:result.uri});}catch(e2){}
-      alert('已导出：'+name);return;
-    }catch(e){alert('导出失败：'+e.message);return;}
+      alert(LT('已导出：', 'Exported: ')+name);return;
+    }catch(e){alert(LT('导出失败：', 'Export failed: ')+e.message);return;}
   }
   var a=document.createElement('a');a.href=URL.createObjectURL(blob);
   a.download=name;a.click();URL.revokeObjectURL(a.href);
@@ -864,5 +864,18 @@ render();
     } catch (e) {}
   })();
   </script>
+<script src="/locale.js?v=1.5.0"></script>
+<script>
+/* 英文模式引导：与主 App 同源（http），直接读 localStorage */
+(function () {
+  var q = '';
+  try { q = new URLSearchParams(location.search).get('lang') || ''; } catch (_) {}
+  var en = q === 'en' || (!q && (localStorage.getItem('academy.locale.v1') || '') === 'en');
+  if (en && typeof applyEnglishUI === 'function') {
+    applyEnglishUI();
+    if (typeof armEnglishWatcher === 'function') armEnglishWatcher();
+  }
+})();
+</script>
 </body>
 </html>

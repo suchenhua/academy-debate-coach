@@ -20,6 +20,7 @@ const path = require('path');
 const TOOLS = {
   research: {
     title: '🔍 研究台 · Academy 辩论教练',
+    titleEn: '🔍 Research · Academy Debate Coach',
     dir: path.join(__dirname, 'research'),
     width: 1080, height: 780, minWidth: 720, minHeight: 480,
     defaults: { mode: 'server', lastTopic: '' },
@@ -33,6 +34,7 @@ const TOOLS = {
   },
   verify: {
     title: '🛡 证据检证 · Academy 辩论教练',
+    titleEn: '🛡 Evidence Verify · Academy Debate Coach',
     dir: path.join(__dirname, 'verify'),
     width: 860, height: 720,
     defaults: { lastInput: '' },
@@ -41,6 +43,7 @@ const TOOLS = {
   },
   trace: {
     title: '📚 资料溯源 · Academy 辩论教练',
+    titleEn: '📚 Source Tracing · Academy Debate Coach',
     dir: path.join(__dirname, 'trace'),
     width: 860, height: 720,
     defaults: { lastInput: '' },

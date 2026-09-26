@@ -39,6 +39,9 @@ if (!T) {
   app.quit();
 }
 
+/* 英文模式（主窗口 spawn 时传 --lang=en）：localStorage 不跨 file:// 源，
+   经 URL search 透传给渲染层，页面引导脚本据此调 applyEnglishUI */
+const LANG = (process.argv.find((a) => a.startsWith('--lang=')) || '').split('=')[1] || '';
 const R_HTML = path.join(T.dir, 'renderer.html');
 /* 主窗口 spawn 时会带 --port=（它知道自己 server 的确切端口）；
    没带才退回端口探测 —— 探测区间里有另一条线的服务时会连错。 */
@@ -126,7 +129,7 @@ function createWindow() {
     height: opts.height || T.height,
     minWidth: T.minWidth || 640,
     minHeight: T.minHeight || 480,
-    title: T.title,
+    title: LANG === 'en' && T.titleEn ? T.titleEn : T.title,
     autoHideMenuBar: true,
     icon: fs.existsSync(ICON) ? ICON : undefined,
     show: false,
@@ -138,7 +141,7 @@ function createWindow() {
       preload: path.join(__dirname, 'tool-preload.js'),
     },
   });
-  win.loadFile(R_HTML).catch(() => {});
+  win.loadFile(R_HTML, LANG === 'en' ? { search: 'lang=en' } : undefined).catch(() => {});
   win.once('ready-to-show', () => win.show());
   win.on('resize', () => {
     if (!win || win.isDestroyed() || win.isMinimized()) return;
@@ -167,7 +170,7 @@ ipcMain.handle('tool:init', async () => {
 ipcMain.handle('tool:saveOpts', (_e, patch) => { saveOpts(patch || {}); return { ok: true }; });
 ipcMain.handle('tool:proxy', (_e, payload) => proxyFetch(serverPort, payload || {}));
 ipcMain.handle('tool:copyText', (_e, text) => { clipboard.writeText(String(text || '')); return { ok: true }; });
-ipcMain.handle('tool:setTitle', (_e, t) => { if (win && !win.isDestroyed()) win.setTitle((t ? t + ' · ' : '') + T.title); return { ok: true }; });
+ipcMain.handle('tool:setTitle', (_e, t) => { if (win && !win.isDestroyed()) win.setTitle((t ? t + ' · ' : '') + (LANG === 'en' && T.titleEn ? T.titleEn : T.title)); return { ok: true }; });
 /* 工具窗之间互相跳转（研究台 → 检证 ↔ 溯源）：spawn 一个新的独立进程。
    本进程已经知道自己连的是哪个端口，一并带过去 ——
    不带的目标窗会退回盲探 8787~8792，双开时可能连到另一条线的 server（09-19 事故同款）。 */

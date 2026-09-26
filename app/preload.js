@@ -23,7 +23,7 @@ contextBridge.exposeInMainWorld('academyElectron', {
   showInFolder: (filePath) => ipcRenderer.invoke('shell:showItem', filePath),
   /* 打开独立工具窗：通用壳 tool-window.js 按 name 加载
      （research / verify / trace，清单见 app/tool-registry.js） */
-  openToolWindow: (name) => ipcRenderer.invoke('app:openTool', { name }),
+  openToolWindow: (name, lang) => ipcRenderer.invoke('app:openTool', { name, lang: lang || '' }),
   /* 选择备份文件并读取内容 */
   openBackupFile: () => ipcRenderer.invoke('backup:open'),
   /* 收到"用此 App 打开某文件"（文件关联双击）时触发 */

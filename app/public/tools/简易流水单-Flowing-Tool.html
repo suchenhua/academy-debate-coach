@@ -271,8 +271,8 @@ function renderStart(m,f){
 }
 
 function clearAllData(){
-  if(!confirm('确定清除全部比赛缓存数据？\n\n此操作将删除本地存储的所有简易流水单数据，包括当前比赛和历史比赛列表。\n此操作不可撤销。'))return;
-  if(!confirm('再次确认：真的要清除全部数据吗？'))return;
+  if(!confirm(LT('确定清除全部比赛缓存数据？\n\n此操作将删除本地存储的所有简易流水单数据，包括当前比赛和历史比赛列表。\n此操作不可撤销。', 'Clear all match cache data?\n\nThis deletes all Flowing-Tool data stored locally, including the current match and the saved-match list.\nThis cannot be undone.')))return;
+  if(!confirm(LT('再次确认：真的要清除全部数据吗？', 'Confirm again: really clear all data?')))return;
   // Clear all flowing-related keys
   try{
     var list=JSON.parse(localStorage.getItem(STORAGE_LIST_KEY)||'[]');
@@ -281,7 +281,7 @@ function clearAllData(){
   }catch(e){}
   localStorage.removeItem(STORAGE_KEY);
   M=null;VIEW=0;render();
-  alert('缓存已清除。');
+  alert(LT('缓存已清除。', 'Cache cleared.'));
 }
 
 function renderMatchList(){
@@ -311,8 +311,8 @@ function loadFromFile(input){
     try{
       var data=JSON.parse(e.target.result);
       if(data.rounds&&Array.isArray(data.rounds)){M=data;migrateData();M._updated=Date.now();save();saveToList();gotoLast();}
-      else{alert('无效的比赛文件格式');}
-    }catch(ex){alert('JSON解析失败：'+ex.message);}
+      else{alert(LT('无效的比赛文件格式', 'Invalid match file format'));}
+    }catch(ex){alert(LT('JSON解析失败：', 'JSON parse failed: ')+ex.message);}
   };
   reader.readAsText(input.files[0]);input.value='';
 }
@@ -322,7 +322,7 @@ function loadMatchByKey(key){
 }
 
 function deleteMatch(key,btn){
-  if(!confirm('删除这场比赛？'))return;
+  if(!confirm(LT('删除这场比赛？', 'Delete this match?')))return;
   localStorage.removeItem('flowing_v2_'+key);
   try{
     var list=JSON.parse(localStorage.getItem(STORAGE_LIST_KEY)||'[]');
@@ -466,7 +466,7 @@ function onRoundTypeChange(idx,sel){
   var val=sel.value;
   if(val==='选择'){M.rounds[idx].name='选择';save();render();return;}
   if(val==='其它'){
-    var custom=prompt('请输入自定义环节名称：','其它');
+    var custom=prompt(LT('请输入自定义环节名称：', 'Custom round name:'),LT('其它','Other'));
     if(custom&&custom.trim())val=custom.trim();else{M.rounds[idx].name='其它';sel.value='其它';save();return;}
   }
   M.rounds[idx].name=val;
@@ -484,7 +484,7 @@ function goPrev(idx){
 function goNext(idx,shouldConfirm){
   save();
   if(shouldConfirm){
-    if(!confirm('已是总结环节或汇总前最后一个环节，是否确认新增一个环节？'))return;
+    if(!confirm(LT('已是总结环节或汇总前最后一个环节，是否确认新增一个环节？', 'This is the closing round or the last round before summary — add another round anyway?')))return;
   }
   var nextIdx=idx+1;
   if(!M.rounds[nextIdx]){
@@ -494,8 +494,8 @@ function goNext(idx,shouldConfirm){
 }
 
 function deleteRound(idx){
-  if(idx===0){alert('立论环节不可删除');return;}
-  if(!confirm('确定删除「'+M.rounds[idx].name+'」环节？此操作不可撤销。'))return;
+  if(idx===0){alert(LT('立论环节不可删除', 'The constructive round cannot be deleted'));return;}
+  if(!confirm(LT('确定删除「', 'Delete round “')+M.rounds[idx].name+LT('」环节？此操作不可撤销。', '”? This cannot be undone.')))return;
   M.rounds.splice(idx,1);save();
   if(M.rounds.length<=1){goOpening();return;}
   if(roundIdx>=M.rounds.length)roundIdx=M.rounds.length-1;
@@ -705,8 +705,8 @@ async function doExport(content,mime,fname){
     try{var C=Capacitor,FS=C.Plugins.Filesystem;
       var result=await FS.writeFile({path:'Debate-Coach/'+fname,data:ext==='csv'?'﻿'+content:content,directory:'CACHE',recursive:true,encoding:'utf8'});
       try{var Share=C.Plugins.Share;if(Share&&Share.share)Share.share({title:'导出简易流水单',url:result.uri});}catch(e2){}
-      alert('已导出：'+fname);return;
-    }catch(e){alert('导出失败：'+e.message);return;}
+      alert(LT('已导出：', 'Exported: ')+fname);return;
+    }catch(e){alert(LT('导出失败：', 'Export failed: ')+e.message);return;}
   }
   var a=document.createElement('a');a.href=URL.createObjectURL(blob);
   a.download=fname;a.click();URL.revokeObjectURL(a.href);
@@ -714,7 +714,7 @@ async function doExport(content,mime,fname){
 
 async function exportTemplate(){
   if(!M)return;
-  var tplName=prompt('模板名称：',(M.title||'自定义赛制')+'模板');
+  var tplName=prompt(LT('模板名称：', 'Template name:'),(M.title||LT('自定义赛制','Custom format'))+LT('模板',' template'));
   if(!tplName)return;
   var tpl={type:'flowing_template',name:tplName,rounds:[]};
   M.rounds.forEach(function(r){tpl.rounds.push({name:r.name,type:r.type||null});});
@@ -731,8 +731,8 @@ async function sendToApp(target){
   if(target==='chat'){
     try{
       localStorage.setItem('academy.handoff.v1',JSON.stringify({from:'简易流水单',text:md,ts:Date.now()}));
-      alert('已发到主窗口输入框。到主窗口选「复盘」模式后直接发送即可。');
-    }catch(e){alert('发送失败：'+e.message);}
+      alert(LT('已发到主窗口输入框。到主窗口选「复盘」模式后直接发送即可。', 'Sent to the main window input. Switch to “Review” in the main window and send it directly.'));
+    }catch(e){alert(LT('发送失败：', 'Send failed: ')+e.message);}
     return;
   }
   var api=target==='deliverable'?'/api/deliverables/save':'/api/library/upload';
@@ -742,13 +742,13 @@ async function sendToApp(target){
     var j=await r.json().catch(function(){return{};});
     if(r.ok&&j.ok){
       alert(target==='deliverable'
-        ?'已存为产物：'+j.name+'\n回主窗口点「📦 产物」即可查看/转 Word/PDF'
-        :'已存入资料库：'+((j.item&&j.item.name)||fname+'.md')+'\n备赛/复盘时会自动召回');
+        ?LT('已存为产物：', 'Saved as deliverable: ')+j.name+LT('\n回主窗口点「📦 产物」即可查看/转 Word/PDF', '\nClick “📦 Deliverables” in the main window to view it / convert to Word/PDF')
+        :LT('已存入资料库：', 'Saved to library: ')+((j.item&&j.item.name)||fname+'.md')+LT('\n备赛/复盘时会自动召回', '\nAuto-recalled during prep and review'));
     }else{
-      alert('失败：'+(j.error||('HTTP '+r.status)));
+      alert(LT('失败：', 'Failed: ')+(j.error||('HTTP '+r.status)));
     }
   }catch(e){
-    alert('连不上主 App 服务（'+e.message+'）。\n工具页需要从主 App 的「🧰 工具箱」打开才能送回。');
+    alert(LT('连不上主 App 服务（', 'Cannot reach the main App service (')+e.message+LT('）。\n工具页需要从主 App 的「🧰 工具箱」打开才能送回。', ').\nOpen this page from the main App\u2019s \ud83e\uddf0 Toolbox to send things back.'));
   }
 }
 
@@ -758,7 +758,7 @@ function importTemplate(input){
   reader.onload=function(e){
     try{
       var tpl=JSON.parse(e.target.result);
-      if(tpl.type!=='flowing_template'||!tpl.rounds){alert('无效的赛制模板文件');return;}
+      if(tpl.type!=='flowing_template'||!tpl.rounds){alert(LT('无效的赛制模板文件', 'Invalid format template file'));return;}
       if(!M)M=newMatch();
       var opening=M.rounds[0];
       var newRounds=[opening];
@@ -769,9 +769,9 @@ function importTemplate(input){
         newRounds.push(existing||{name:tr.name||'选择',type:tr.type||null,proPlayer:'',conPlayer:'',proContent:'',conContent:'',mergedNote:''});
       });
       M.rounds=newRounds;save();
-      alert('模板「'+tpl.name+'」已导入（共'+newRounds.length+'个环节）');
+      alert(LT('模板「', 'Template “')+tpl.name+LT('」已导入（共', '” imported (')+newRounds.length+LT('个环节）', ' rounds)'));
       goOpening();
-    }catch(ex){alert('JSON解析失败：'+ex.message);}
+    }catch(ex){alert(LT('JSON解析失败：', 'JSON parse failed: ')+ex.message);}
   };
   reader.readAsText(input.files[0]);input.value='';
 }
@@ -871,5 +871,18 @@ function toggleTheme(){document.body.classList.toggle('light');}
     } catch (e) {}
   })();
   </script>
+<script src="/locale.js?v=1.5.0"></script>
+<script>
+/* 英文模式引导：与主 App 同源（http），直接读 localStorage */
+(function () {
+  var q = '';
+  try { q = new URLSearchParams(location.search).get('lang') || ''; } catch (_) {}
+  var en = q === 'en' || (!q && (localStorage.getItem('academy.locale.v1') || '') === 'en');
+  if (en && typeof applyEnglishUI === 'function') {
+    applyEnglishUI();
+    if (typeof armEnglishWatcher === 'function') armEnglishWatcher();
+  }
+})();
+</script>
 </body>
 </html>

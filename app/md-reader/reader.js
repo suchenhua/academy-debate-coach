@@ -90,7 +90,7 @@
         }
         if (r && r.conflict) {
           // 文件被别的程序改过：交给用户决定，不静默覆盖
-          var ok = confirm('这个文件在你编辑期间被其他程序修改过。\n\n覆盖它的修改（保留你现在的版本）？\n\n选「取消」则放弃这次保存，你的编辑仍留在窗口里。');
+          var ok = confirm(LT('这个文件在你编辑期间被其他程序修改过。\n\n覆盖它的修改（保留你现在的版本）？\n\n选「取消」则放弃这次保存，你的编辑仍留在窗口里。', 'This file was modified by another program while you were editing.\n\nOverwrite those changes (keep your version)?\n\nChoose Cancel to skip saving — your edits stay in the window.'));
           if (ok) return doSave({ force: true });
           showToast('已取消保存（外部修改未被覆盖）');
           return false;

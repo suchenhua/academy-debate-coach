@@ -855,8 +855,8 @@ async function main() {
           const sb = { console }; vmMod.createContext(sb); vmMod.runInContext(locSrc, sb);
           const merged = vmMod.runInContext('Object.assign({}, EN_EXTRA, EN_UI)', sb);
           const vals = Object.values(merged);
-          check('Phase5.4/5.7 英文补齐：EN_UI+EN_EXTRA ≥ 640 条且译文无汉字',
-            vals.length >= 640 && vals.every((v) => !/[\u4e00-\u9fff]/.test(v)));
+          check('Phase5.4/5.7/5.8 英文补齐：EN_UI+EN_EXTRA ≥ 1000 条且译文无汉字',
+            vals.length >= 1000 && vals.every((v) => !/[\u4e00-\u9fff]/.test(v)));
           const rules = vmMod.runInContext('EN_RULES', sb);
           const applyR = (s) => rules.reduce((acc, [re, val]) => (re.test(acc) ? acc.replace(re, val) : acc), s);
           check('Phase5.4 动态文案规则：排队/就绪/字数三类拼接串可译',
@@ -864,8 +864,8 @@ async function main() {
             && /^Engine ready · /.test(applyR('引擎就绪 · deepseek-chat'))
             && applyR('1,234 字') === '1,234 chars'
             && applyR('⏳ 排队第 1 位 · 对话').includes('Chat'));
-          check('Phase5.4/5.5/5.7 缓存版本号已提升（locale.js v1.4.0 / app.js v3.36.0）',
-            htmlSrc.includes('/locale.js?v=1.4.0') && htmlSrc.includes('/app.js?v=3.36.0'));
+          check('Phase5.4/5.5/5.7/5.8 缓存版本号已提升（locale.js v1.5.0 / app.js v3.36.0）',
+            htmlSrc.includes('/locale.js?v=1.5.0') && htmlSrc.includes('/app.js?v=3.36.0'));
           check('Phase5.5 英文观察器同步执行且吞掉自触发记录（切模式不闪中文）',
             locSrc.includes('enObserver.takeRecords()')
             && !/setTimeout\(\s*\(\)\s*=>\s*\{[^}]*applyEnglishUI/s.test(locSrc));
@@ -884,6 +884,23 @@ async function main() {
           check('Phase5.7 新规则：页脚版本号 / 资料库计数',
             applyR('Academy 辩论教练 v2.3.0') === 'Academy Debate Coach v2.3.0'
             && applyR('共 0 份') === '0 items');
+          // Phase 5.8：独立工具窗与页面工具英文模式
+          const need58 = ['证据检证 · Academy 辩论教练', '快速检证（约 20~40 秒）', '溯源报告',
+            '研究助手', '固有定义（域）', '战场', '标准 B0 防守', '辩论筑基 · 简易流水单',
+            '未命名', '💾 保存', '窗口常置顶（钉住）'];
+          check('Phase5.8 工具窗/页面工具词条已入英文词典', need58.every((k) => merged[k] && !/[\u4e00-\u9fff]/.test(merged[k])));
+          check('Phase5.8 工具窗动态规则：连接状态 / 检证限一条 / 已复制N字',
+            applyR('已连接主 App :8787').indexOf('Connected to main App: 8787') === 0
+            && /^Quick verify checks one at a time \(2 pending\)/.test(applyR('快速检证一次只查一条（ 2 条待检）。请删到只剩一条，或切「完整检证」。'))
+            && applyR('已复制 1,234 字') === 'Copied 1,234 chars');
+          check('Phase5.8 语言链路与页面接线（preload 透传 / registry titleEn / 五页挂 locale）',
+            locSrc.includes('window.LT')
+            && require('fs').readFileSync(path.join(ROOT, 'app', 'preload.js'), 'utf8').includes('lang')
+            && require('fs').readFileSync(path.join(ROOT, 'app', 'tool-registry.js'), 'utf8').includes('titleEn')
+            && require('fs').readFileSync(path.join(ROOT, 'app', 'tool-window.js'), 'utf8').includes("--lang=")
+            && ['app/research/renderer.html', 'app/verify/renderer.html', 'app/trace/renderer.html',
+                'app/md-reader/renderer.html'].every((f) => require('fs').readFileSync(path.join(ROOT, f), 'utf8').includes('applyEnglishUI'))
+            && ['app/public/tools/简易流水单-Flowing-Tool.html', 'app/public/tools/辩案工作台-Case-Workbench.html'].every((f) => require('fs').readFileSync(path.join(ROOT, f), 'utf8').includes('/locale.js?v=1.5.0')));
           const engLine = 'DSH 内核: ✅ \u00b7 内置 Node: ✅ \u00b7 API: 127.0.0.1:8790 \u00b7 搜索: 服务侧✅ \u00b7 记忆 1,492 B';
           const eng1 = applyR(engLine), eng2 = applyR(eng1);
           check('Phase5.6 引擎信息行整行可译且规则幂等',

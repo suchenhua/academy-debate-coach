@@ -21,6 +21,8 @@ const fs = require('fs');
 const ROOT = path.resolve(__dirname, '..');
 const DATA_DIR = path.join(ROOT, 'data');
 const R_HTML = path.join(__dirname, 'md-reader', 'renderer.html');
+/* 英文模式：主 App 侧未来 spawn 时可传 --lang=en（文件关联启动无语言上下文，默认中文） */
+const LANG = (process.argv.find(function (a) { return a.indexOf('--lang=') === 0; }) || '').split('=')[1] || '';
 const R_PRELOAD = path.join(__dirname, 'md-reader', 'preload.js');
 const ICON = path.join(ROOT, 'appicon.ico');
 const LOG_FILE = path.join(DATA_DIR, 'reader-launch.log');
@@ -155,7 +157,7 @@ function createReaderWindow(filePath, text, name) {
     if (!delivered && failTries < 2) {
       failTries += 1;
       log('reader 加载失败(code=' + code + ')，重试 ' + failTries + '/2');
-      win.loadFile(R_HTML).catch(() => {});
+      win.loadFile(R_HTML, LANG === 'en' ? { search: 'lang=en' } : undefined).catch(() => {});
     } else if (!delivered) {
       log('reader 页面加载失败: ' + desc + ' url=' + url);
     }
@@ -166,7 +168,7 @@ function createReaderWindow(filePath, text, name) {
     const msg = String(message || '');
     if (msg.indexOf('[reader]') === 0) log('渲染进程: ' + msg);
   });
-  win.loadFile(R_HTML).catch(() => {});
+  win.loadFile(R_HTML, LANG === 'en' ? { search: 'lang=en' } : undefined).catch(() => {});
   // 有未保存修改时关窗要拦一下，避免手滑丢内容
   win.on('close', (e) => {
     if (!dirtyMap.get(win.id)) return;
@@ -205,7 +207,7 @@ function openFiles(argv) {
     });
     mainWindow = win;
     win.removeMenu();
-    win.loadFile(R_HTML);
+    win.loadFile(R_HTML, LANG === 'en' ? { search: 'lang=en' } : undefined);
     win.webContents.once('did-finish-load', () => win.webContents.send('reader:empty'));
     return;
   }

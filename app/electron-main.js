@@ -510,6 +510,8 @@ ipcMain.handle('app:openTool', async (_evt, payload) => {
     const { spawn } = require('child_process');
     const args = [script, '--tool=' + name];
     if (serverPort > 0) args.push('--port=' + serverPort);
+    /* 英文模式下主窗口传 lang，工具窗标题与渲染层据此切英文（localStorage 不跨 file:// 源） */
+    if ((payload || {}).lang === 'en') args.push('--lang=en');
     spawn(exePath, args, { cwd: ROOT, windowsHide: false, stdio: 'ignore', detached: true }).unref();
     log('打开工具窗: ' + name);
     return { ok: true };
