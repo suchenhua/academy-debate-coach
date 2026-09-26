@@ -804,9 +804,17 @@ async function main() {
   const ip = run(['interrupt-preempt']);
   check('Phase5 插话让位：当前任务取消、等待队列清空且台账留痕',
     ip.killed === true && ip.queueEmpty === true && ip.withdrawn === true, JSON.stringify(ip));
+  const hk = run(['send-hotkey']);
+  check('Phase5.2 发送热键：enter 档往返生效、非法值归一 ctrlEnter、状态回显',
+    hk.enterOk === true && hk.normOk === true && hk.echoOk === true, JSON.stringify(hk));
   const srvSrc = fsMod.readFileSync(pathMod.join(ROOT, 'app', 'server.js'), 'utf8');
   const htmlSrc = fsMod.readFileSync(pathMod.join(ROOT, 'app', 'public', 'index.html'), 'utf8');
   const uiSrc = fsMod.readFileSync(pathMod.join(ROOT, 'app', 'public', 'app.js'), 'utf8');
+  check('Phase5.2 接线：后端 sendHotkey 归一 / 通用面板下拉 / 前端热键分支',
+    srvSrc.includes("sendHotkey = patch.sendHotkey === 'enter' ? 'enter' : 'ctrlEnter'")
+    && htmlSrc.includes('sendHotkeyChoices')
+    && uiSrc.includes('function sendHotkeyMode') && uiSrc.includes("sendHotkeyMode() === 'enter'")
+    && uiSrc.includes('e.isComposing || e.keyCode === 229'));
   check('Phase5 接线：后端枚举校验 / 通用面板两组选项 / 统一工具渲染器',
     srvSrc.includes("stepsDisplay: 'standard', busyBehavior: 'queue'") && srvSrc.includes('function preemptCurrentRun')
     && srvSrc.includes('function queueWithdrawAll') && srvSrc.includes('interrupt: !!preempted')

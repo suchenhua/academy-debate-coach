@@ -449,6 +449,8 @@ function defaultConfig() {
     memoryAutoLearn: true, memoryAutoCite: true, memoryReview: false,
     // DSH 移植：工作步骤展示档位（simple|standard|detailed|full）与繁忙时的发送行为（queue|interrupt）
     stepsDisplay: 'standard', busyBehavior: 'queue',
+    // 微信式发送热键：ctrlEnter = Ctrl+Enter 发送、Enter 换行；enter = Enter 发送、Ctrl/Shift+Enter 换行
+    sendHotkey: 'ctrlEnter',
     // 自定义搜索服务（学习 RikkaHub 的插件式思路）：
     // 内置的免费抓取（Bing/DDG）在部分网络下会被反爬返回无关结果，
     // 与其塞一个必然失败的免费通道，不如让用户接入自己可用的搜索服务。
@@ -496,6 +498,7 @@ function saveConfig(patch) {
   }
   if (patch.stepsDisplay !== undefined) next.stepsDisplay = ['simple', 'standard', 'detailed', 'full'].includes(patch.stepsDisplay) ? patch.stepsDisplay : 'standard';
   if (patch.busyBehavior !== undefined) next.busyBehavior = patch.busyBehavior === 'interrupt' ? 'interrupt' : 'queue';
+  if (patch.sendHotkey !== undefined) next.sendHotkey = patch.sendHotkey === 'enter' ? 'enter' : 'ctrlEnter';
   writeJsonAtomic(CONFIG_FILE, next);
   writeDshSettings(next.model, next.baseUrl, effectiveSearchKey(next), resolveSearchProvider(next));
   return next;
@@ -727,6 +730,7 @@ function statusPayload() {
     queueLen: runQueue.length,
     stepsDisplay: cfg.stepsDisplay || 'standard',
     busyBehavior: cfg.busyBehavior || 'queue',
+    sendHotkey: cfg.sendHotkey === 'enter' ? 'enter' : 'ctrlEnter',
     port: actualPort || DEFAULT_PORT,
     memorySize: (() => { try { return fs.existsSync(MEMORY_FILE) ? fs.statSync(MEMORY_FILE).size : 0; } catch (_) { return 0; } })(),
   };
@@ -5170,6 +5174,7 @@ function handleRequest(req, res) {
         memoryReview: body.memoryReview !== undefined ? body.memoryReview === true : loadConfig().memoryReview,
         stepsDisplay: body.stepsDisplay !== undefined ? body.stepsDisplay : loadConfig().stepsDisplay,
         busyBehavior: body.busyBehavior !== undefined ? body.busyBehavior : loadConfig().busyBehavior,
+        sendHotkey: body.sendHotkey !== undefined ? body.sendHotkey : loadConfig().sendHotkey,
       });
       return sendJson(res, 200, {
         ok: true, hasKey: !!cfg.apiKey, keyMasked: maskKey(cfg.apiKey),
@@ -5178,7 +5183,7 @@ function handleRequest(req, res) {
         searchEnabled: true,
         searchProvider: cfg.searchProvider || 'auto',
         searchMode: resolveSearchProvider(cfg), // server | free
-        stepsDisplay: cfg.stepsDisplay, busyBehavior: cfg.busyBehavior,
+        stepsDisplay: cfg.stepsDisplay, busyBehavior: cfg.busyBehavior, sendHotkey: cfg.sendHotkey,
       });
     }).catch((e) => sendJson(res, 500, { ok: false, error: e.message }));
   }

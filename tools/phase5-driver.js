@@ -39,5 +39,14 @@ const kase = process.argv[2] || '';
     });
   }
 
+  if (kase === 'send-hotkey') {
+    C.saveConfig({ sendHotkey: 'enter' });
+    const a = C.loadConfig();
+    C.saveConfig({ sendHotkey: 'bogus' });
+    const b = C.loadConfig();
+    const s = C.statusPayload();
+    out({ enterOk: a.sendHotkey === 'enter', normOk: b.sendHotkey === 'ctrlEnter', echoOk: typeof s.sendHotkey === 'string' });
+  }
+
   out({ error: 'unknown case: ' + kase });
 })().catch((e) => { process.stdout.write(JSON.stringify({ error: e.message })); process.exit(0); });

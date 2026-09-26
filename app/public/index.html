@@ -287,6 +287,16 @@
                   Agent 还在处理时再发消息：<b>排队发送</b>按先后顺序等待；<b>插话发送</b>先暂停当前任务、清空等待队列，让新消息优先开始。被打断/移开的任务不丢，任务记录里会标注原因。
                 </small>
               </div>
+              <div class="gen-row gen-row-wrap">
+                <span class="gen-label">发送消息</span>
+                <select class="gen-select" id="sendHotkeyChoices">
+                  <option value="ctrlEnter">Ctrl + Enter 发送</option>
+                  <option value="enter">Enter 发送</option>
+                </select>
+                <small class="field-hint">
+                  微信式发送热键：<b>Ctrl + Enter 发送</b>时按 Enter 换行；<b>Enter 发送</b>时换行改用 <b>Ctrl + Enter</b> 或 <b>Shift + Enter</b>。
+                </small>
+              </div>
             </div>
             <div class="general-section" style="margin-top:14px">
               <div class="set-step-title">记忆管理</div>

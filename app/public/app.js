@@ -619,7 +619,7 @@ function renderWelcome() {
   // 4) 底部提示
   const foot = el('div', 'welcome-foot', '');
   foot.innerHTML = '<span>本模式是<b>独立</b>的对话空间，切换模式不会把这段对话带过去。</span>'
-    + '<span class="wf-hint">Ctrl + Enter 发送</span>';
+    + '<span class="wf-hint">' + (sendHotkeyMode() === 'enter' ? 'Enter 发送 · Ctrl + Enter 换行' : 'Ctrl + Enter 发送') + '</span>';
   wrap.appendChild(foot);
   return wrap;
 }
@@ -1425,8 +1425,10 @@ function updateModeUI() {
      在真正要打字的地方给例子，比在半屏外的地方给更管用。
      各模式若显式写了 placeholder（如评判），仍以它为准。 */
   const mm = modeMeta[state.mode] || {};
-  const fallback = (mm.prompts && mm.prompts[0]) ? (mm.prompts[0] + '…') : (mm.title || '') + ' · 输入后 Ctrl+Enter 发送';
-  $('#input').placeholder = mm.placeholder || fallback;
+  const fallback = (mm.prompts && mm.prompts[0]) ? (mm.prompts[0] + '…') : (mm.title || '') + ' · 输入后 ' + sendHintShort();
+  let ph = mm.placeholder || fallback;
+  if (sendHotkeyMode() === 'enter') ph = ph.split('Ctrl+Enter 发送').join('Enter 发送'); // 评判等模式硬编码的快捷键提示随之切换
+  $('#input').placeholder = ph;
   const hs = document.querySelector('.side-head h3');
   if (hs) hs.innerHTML = ic('history',13) + '对话历史 · ' + esc(modeMeta[state.mode].title);
 }
@@ -1770,6 +1772,7 @@ async function refreshStatus() {
     state.status = s;
     if (STEPS_MODES.includes(s.stepsDisplay)) state.stepsDisplay = s.stepsDisplay;
     if (s.busyBehavior === 'interrupt' || s.busyBehavior === 'queue') state.busyBehavior = s.busyBehavior;
+    if (s.sendHotkey === 'enter' || s.sendHotkey === 'ctrlEnter') state.sendHotkey = s.sendHotkey;
     try { syncAgentChoices(); } catch (_) {}
     renderStatus();
     if (!s.hasKey) {
@@ -3260,6 +3263,10 @@ function switchDeliverTab(tab) {
 const STEPS_MODES = ['simple', 'standard', 'detailed', 'full'];
 const STEPS_LABELS = { simple: '简洁', standard: '标准', detailed: '详细', full: '完全展开' };
 
+/* 发送热键档位（微信式）：ctrlEnter = Ctrl+Enter 发送；enter = Enter 直发、修饰键+Enter 换行 */
+function sendHotkeyMode() { return state.sendHotkey === 'enter' ? 'enter' : 'ctrlEnter'; }
+function sendHintShort() { return sendHotkeyMode() === 'enter' ? 'Enter 发送' : 'Ctrl+Enter 发送'; }
+
 /* 工具步骤的唯一渲染口径：运行中气泡与重渲染共用，档位来自 设置 → 通用 → 工作步骤展示 */
 function toolsBoxHtml(tools) {
   if (!Array.isArray(tools) || !tools.length) return '';
@@ -3284,8 +3291,10 @@ function toolsBoxHtml(tools) {
 function syncAgentChoices() {
   const stepsSel = document.getElementById('stepsDisplayChoices');
   const busySel = document.getElementById('busyBehaviorChoices');
+  const sendSel = document.getElementById('sendHotkeyChoices');
   if (stepsSel) stepsSel.value = state.stepsDisplay;
   if (busySel) busySel.value = state.busyBehavior;
+  if (sendSel) sendSel.value = sendHotkeyMode();
 }
 
 async function loadAgentChoices() {
@@ -3294,6 +3303,7 @@ async function loadAgentChoices() {
     const c = (r && r.config) || {};
     if (STEPS_MODES.includes(c.stepsDisplay)) state.stepsDisplay = c.stepsDisplay;
     if (c.busyBehavior === 'interrupt' || c.busyBehavior === 'queue') state.busyBehavior = c.busyBehavior;
+    if (c.sendHotkey === 'enter' || c.sendHotkey === 'ctrlEnter') state.sendHotkey = c.sendHotkey;
     syncAgentChoices();
   } catch (_) {}
 }
@@ -3321,11 +3331,26 @@ async function setBusyBehavior(behavior) {
   } catch (e) { syncAgentChoices(); toast('设置失败：' + e.message); }
 }
 
+async function setSendHotkey(mode) {
+  if (mode !== 'enter' && mode !== 'ctrlEnter') return;
+  try {
+    const r = await fetchJSON('/api/config', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ sendHotkey: mode }) });
+    if (!r || !r.ok) throw new Error((r && r.error) || '保存失败');
+    state.sendHotkey = mode;
+    syncAgentChoices();
+    try { updateModeUI(); } catch (_) {}
+    try { renderMessages(); } catch (_) {}
+    toast(mode === 'enter' ? '发送热键：Enter 发送，Ctrl/Shift+Enter 换行' : '发送热键：Ctrl+Enter 发送，Enter 换行');
+  } catch (e) { syncAgentChoices(); toast('设置失败：' + e.message); }
+}
+
 function bindAgentChoices() {
   const stepsSel = document.getElementById('stepsDisplayChoices');
   if (stepsSel) stepsSel.onchange = () => setStepsDisplay(stepsSel.value);
   const busySel = document.getElementById('busyBehaviorChoices');
   if (busySel) busySel.onchange = () => setBusyBehavior(busySel.value);
+  const sendSel = document.getElementById('sendHotkeyChoices');
+  if (sendSel) sendSel.onchange = () => setSendHotkey(sendSel.value);
 }
 
 /* ================= 记忆治理：三个开关 + 否决清单 + 任务记录 ================= */
@@ -4957,7 +4982,11 @@ try { bindMemToggles(); } catch (_) {}
   const input = $('#input');
   input.addEventListener('input', () => { updateCharCount(); autoGrow(); });
   input.addEventListener('keydown', (e) => {
-    if (e.key === 'Enter' && (e.ctrlKey || e.metaKey)) {
+    if (e.key !== 'Enter' || e.isComposing || e.keyCode === 229) return; // 输入法选词中的回车不算数
+    if (sendHotkeyMode() === 'enter') {
+      // Enter 直发；带任意修饰键视为换行，交给 textarea 默认行为
+      if (!e.ctrlKey && !e.metaKey && !e.altKey && !e.shiftKey) { e.preventDefault(); sendMessage(); }
+    } else if (e.ctrlKey || e.metaKey) {
       e.preventDefault();
       sendMessage();
     }
