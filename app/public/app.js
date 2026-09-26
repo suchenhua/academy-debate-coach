@@ -3282,12 +3282,10 @@ function toolsBoxHtml(tools) {
 }
 
 function syncAgentChoices() {
-  document.querySelectorAll('#stepsDisplayChoices .gen-choice').forEach((b) => {
-    b.classList.toggle('active', b.dataset.stepsDisplayVal === state.stepsDisplay);
-  });
-  document.querySelectorAll('#busyBehaviorChoices .gen-choice').forEach((b) => {
-    b.classList.toggle('active', b.dataset.busyVal === state.busyBehavior);
-  });
+  const stepsSel = document.getElementById('stepsDisplayChoices');
+  const busySel = document.getElementById('busyBehaviorChoices');
+  if (stepsSel) stepsSel.value = state.stepsDisplay;
+  if (busySel) busySel.value = state.busyBehavior;
 }
 
 async function loadAgentChoices() {
@@ -3309,7 +3307,7 @@ async function setStepsDisplay(mode) {
     syncAgentChoices();
     renderMessages();
     toast('工作步骤展示：' + STEPS_LABELS[mode]);
-  } catch (e) { toast('设置失败：' + e.message); }
+  } catch (e) { syncAgentChoices(); toast('设置失败：' + e.message); }
 }
 
 async function setBusyBehavior(behavior) {
@@ -3320,16 +3318,14 @@ async function setBusyBehavior(behavior) {
     state.busyBehavior = behavior;
     syncAgentChoices();
     toast(behavior === 'interrupt' ? '繁忙时的发送行为：插话发送（新消息将暂停当前任务）' : '繁忙时的发送行为：排队发送（按先后等待）');
-  } catch (e) { toast('设置失败：' + e.message); }
+  } catch (e) { syncAgentChoices(); toast('设置失败：' + e.message); }
 }
 
 function bindAgentChoices() {
-  document.querySelectorAll('#stepsDisplayChoices .gen-choice').forEach((b) => {
-    b.onclick = () => setStepsDisplay(b.dataset.stepsDisplayVal);
-  });
-  document.querySelectorAll('#busyBehaviorChoices .gen-choice').forEach((b) => {
-    b.onclick = () => setBusyBehavior(b.dataset.busyVal);
-  });
+  const stepsSel = document.getElementById('stepsDisplayChoices');
+  if (stepsSel) stepsSel.onchange = () => setStepsDisplay(stepsSel.value);
+  const busySel = document.getElementById('busyBehaviorChoices');
+  if (busySel) busySel.onchange = () => setBusyBehavior(busySel.value);
 }
 
 /* ================= 记忆治理：三个开关 + 否决清单 + 任务记录 ================= */

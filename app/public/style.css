@@ -592,12 +592,21 @@ button.tool-link:hover { background: var(--primary-soft); }
 }
 .gen-choice:hover { border-color: var(--primary); color: var(--primary); }
 .gen-choice.active { background: var(--primary); color: #fff; border-color: var(--primary); }
+.gen-row-wrap { flex-wrap: wrap; }
+.gen-row-wrap .field-hint { display: block; width: 100%; margin-top: 4px; }
+.gen-select {
+  flex: 0 0 auto; min-width: 110px; padding: 5px 8px; font-size: 12.5px; cursor: pointer;
+  background: var(--panel); color: var(--text); border: 1px solid var(--border); border-radius: 8px;
+}
+.gen-select:hover { border-color: var(--primary); }
+.gen-select:focus { outline: none; border-color: var(--primary); }
 /* ── 深色模式：硬编码浅色的修正 ── */
 :root[data-theme="dark"] .provider-card:hover { background: #1e2637; }
 :root[data-theme="dark"] .field input[type="password"],
 :root[data-theme="dark"] .field input[type="text"],
 :root[data-theme="dark"] .field select,
 :root[data-theme="dark"] .model-select { background: #141b28; color: var(--text); }
+:root[data-theme="dark"] .gen-select { background: #141b28; color: var(--text); }
 :root[data-theme="dark"] .md code { background: #232c3e; }
 :root[data-theme="dark"] .md table th { background: #1e2637; }
 :root[data-theme="dark"] .md blockquote { color: #b9c4dc; }

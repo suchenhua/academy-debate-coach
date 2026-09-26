@@ -265,27 +265,27 @@
                   <button type="button" class="btn ghost small" id="btnShowWizard">重新查看引导</button>
                 </div>
               </div>
-              <div class="gen-row">
+              <div class="gen-row gen-row-wrap">
                 <span class="gen-label">工作步骤展示</span>
-                <div class="gen-choices" id="stepsDisplayChoices">
-                  <button type="button" class="gen-choice" data-steps-display-val="simple">简洁</button>
-                  <button type="button" class="gen-choice" data-steps-display-val="standard">标准</button>
-                  <button type="button" class="gen-choice" data-steps-display-val="detailed">详细</button>
-                  <button type="button" class="gen-choice" data-steps-display-val="full">完全展开</button>
-                  <small class="field-hint" style="display:block;width:100%;margin-top:4px">
-                    对话流里 Agent 工作步骤的展示粒度：<b>简洁</b>只显示正在走的这一步；<b>标准</b>列出每步名称；<b>详细</b>带上参数/结果摘要；<b>完全展开</b>参数与结果分行全展示。
-                  </small>
-                </div>
+                <select class="gen-select" id="stepsDisplayChoices">
+                  <option value="simple">简洁</option>
+                  <option value="standard">标准</option>
+                  <option value="detailed">详细</option>
+                  <option value="full">完全展开</option>
+                </select>
+                <small class="field-hint">
+                  对话流里 Agent 工作步骤的展示粒度：<b>简洁</b>只显示正在走的这一步；<b>标准</b>列出每步名称；<b>详细</b>带上参数/结果摘要；<b>完全展开</b>参数与结果分行全展示。
+                </small>
               </div>
-              <div class="gen-row">
+              <div class="gen-row gen-row-wrap">
                 <span class="gen-label">繁忙时的发送行为</span>
-                <div class="gen-choices" id="busyBehaviorChoices">
-                  <button type="button" class="gen-choice" data-busy-val="queue">排队发送</button>
-                  <button type="button" class="gen-choice" data-busy-val="interrupt">插话发送</button>
-                  <small class="field-hint" style="display:block;width:100%;margin-top:4px">
-                    Agent 还在处理时再发消息：<b>排队发送</b>按先后顺序等待；<b>插话发送</b>先暂停当前任务、清空等待队列，让新消息优先开始。被打断/移开的任务不丢，任务记录里会标注原因。
-                  </small>
-                </div>
+                <select class="gen-select" id="busyBehaviorChoices">
+                  <option value="queue">排队发送</option>
+                  <option value="interrupt">插话发送</option>
+                </select>
+                <small class="field-hint">
+                  Agent 还在处理时再发消息：<b>排队发送</b>按先后顺序等待；<b>插话发送</b>先暂停当前任务、清空等待队列，让新消息优先开始。被打断/移开的任务不丢，任务记录里会标注原因。
+                </small>
               </div>
             </div>
             <div class="general-section" style="margin-top:14px">
