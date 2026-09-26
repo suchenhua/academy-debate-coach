@@ -929,7 +929,6 @@ details > summary:hover { color: var(--c-text); }
 :root[data-theme="dark"] .brand-logo { background: linear-gradient(135deg, #12365c, #12301c); }
 :root[data-theme="dark"] .modal { background: rgba(0, 0, 0, .55); }
 :root[data-theme="dark"] .toast { background: rgba(58, 58, 60, .96); color: var(--c-text); }
-:root[data-theme="dark"] .qfud-watermarks .wm { color: rgba(120, 160, 255, .045); }
 :root[data-theme="dark"] .history-search input { background: #232325; border-color: #38383a; }
 :root[data-theme="dark"] .settings-nav { background: #232325; }
 :root[data-theme="dark"] .send-btn:disabled { background: #3a3a3c; color: #6e6e73; }
@@ -941,7 +940,6 @@ details > summary:hover { color: var(--c-text); }
 :root[data-theme="dark"] .md blockquote { color: var(--c-text-2); }
 :root[data-theme="dark"] .welcome-note { color: var(--c-success); }
 
-.qfud-watermarks .wm { color: color-mix(in srgb, var(--c-accent) 6%, transparent); }
 
 /* ══════════════════════════════════════════════════════════════════════════
    10. 响应式

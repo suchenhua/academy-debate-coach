@@ -778,6 +778,43 @@ async function main() {
   try { fsMod.rmSync(testDir, { recursive: true, force: true }); } catch (_) {}
 }
 
+        // 7b9. DSH 移植：工作步骤展示 × 繁忙时的发送行为（档位校验、状态回显、插话让位、接线检查）
+{
+  const pathMod = require('path');
+  const fsMod = require('fs');
+  const testDir = pathMod.join(ROOT, 'data', '_smoke_phase5');
+  try { fsMod.rmSync(testDir, { recursive: true, force: true }); } catch (_) {}
+  fsMod.mkdirSync(testDir, { recursive: true });
+  const envT = Object.assign({}, process.env, { ACADEMY_DATA_DIR: testDir, ACADEMY_NO_OPEN: '1' });
+  const run = (args) => {
+    const r = spawnSync(process.execPath, [pathMod.join(ROOT, 'tools', 'phase5-driver.js')].concat(args),
+      { cwd: ROOT, encoding: 'utf8', windowsHide: true, timeout: 30000, env: envT });
+    const lines = String(r.stdout || '').trim().split('\n');
+    try { return JSON.parse(lines[lines.length - 1]); } catch (_) { return { error: String(r.stdout || r.stderr || '').slice(0, 300) }; }
+  };
+  const cf = run(['cfg-roundtrip']);
+  check('Phase5 档位配置：stepsDisplay/busyBehavior 往返生效',
+    cf.detailedOk === true && cf.interruptOk === true, JSON.stringify(cf));
+  const nz = run(['normalize']);
+  check('Phase5 非法值归一：坏档位回 standard、坏行为回 queue',
+    nz.stepsStandard === true && nz.busyQueue === true, JSON.stringify(nz));
+  const st = run(['status-echo']);
+  check('Phase5 状态回显：/api/status 携带 stepsDisplay 与 busyBehavior',
+    st.hasSteps === true && st.hasBusy === true, JSON.stringify(st));
+  const ip = run(['interrupt-preempt']);
+  check('Phase5 插话让位：当前任务取消、等待队列清空且台账留痕',
+    ip.killed === true && ip.queueEmpty === true && ip.withdrawn === true, JSON.stringify(ip));
+  const srvSrc = fsMod.readFileSync(pathMod.join(ROOT, 'app', 'server.js'), 'utf8');
+  const htmlSrc = fsMod.readFileSync(pathMod.join(ROOT, 'app', 'public', 'index.html'), 'utf8');
+  const uiSrc = fsMod.readFileSync(pathMod.join(ROOT, 'app', 'public', 'app.js'), 'utf8');
+  check('Phase5 接线：后端枚举校验 / 通用面板两组选项 / 统一工具渲染器',
+    srvSrc.includes("stepsDisplay: 'standard', busyBehavior: 'queue'") && srvSrc.includes('function preemptCurrentRun')
+    && srvSrc.includes('function queueWithdrawAll') && srvSrc.includes('interrupt: !!preempted')
+    && htmlSrc.includes('stepsDisplayChoices') && htmlSrc.includes('busyBehaviorChoices')
+    && uiSrc.includes('function toolsBoxHtml') && uiSrc.includes('bindAgentChoices'));
+  try { fsMod.rmSync(testDir, { recursive: true, force: true }); } catch (_) {}
+}
+
 // 7c. 清空全部记忆：长期 + 流水都应清掉（含每日文件删除）；清空前应自动留快照
         {
           const fsMod = require('fs');

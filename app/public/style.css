@@ -1,10 +1,3 @@
-.qfud-watermarks {
-  position: fixed; inset: 0; pointer-events: none; overflow: hidden; z-index: 9999;
-}
-.qfud-watermarks .wm {
-  position: absolute; color: rgba(31, 94, 255, .06); font-size: 20px; font-weight: 800;
-  letter-spacing: 3px; white-space: nowrap; user-select: none;
-}
 /* 桌面壳里「文本可选」策略：UI 骨架（按钮/标题/导航等）默认不可选中，
    只有内容区（对话、正文、输入框、列表、弹窗正文）允许选中复制，
    避免 Ctrl+A 或拖选把整个界面的字都框进去。表单控件不受影响。 */
@@ -20,10 +13,6 @@ input::selection, textarea::selection, .md ::selection {
   background: #b3d4ff; color: inherit;
 }
 :root[data-theme="dark"] .md ::selection { background: #2b4a7a; }
-.qfud-watermarks .wm1 { top: 14%; left: -4%; transform: rotate(-24deg); }
-.qfud-watermarks .wm2 { top: 46%; left: 8%; transform: rotate(18deg); }
-.qfud-watermarks .wm3 { top: 74%; left: 2%; transform: rotate(-14deg); }
-.qfud-watermarks .wm4 { top: 30%; right: -6%; transform: rotate(22deg); }
 
 /* ── 深色主题（data-theme="dark"）── */
 :root[data-theme="dark"] {
@@ -112,6 +101,7 @@ button { font-family: inherit; cursor: pointer; }
 }
 .brand-text h1 { margin: 0; font-size: 17px; letter-spacing: .3px; }
 .brand-text p { margin: 1px 0 0; font-size: 12px; color: var(--muted); }
+.by-qfud { color: var(--muted); opacity: .65; font-size: 11px; margin-left: 6px; letter-spacing: .5px; }
 .topbar-actions { display: flex; gap: 8px; align-items: center; }
 
 .status-pill {
@@ -1205,3 +1195,5 @@ body.sidebar-collapsed .sidebar-toggle { left: 54px; transform: translate(50%, -
 .runs-state { color: #555; }
 .runs-meta { color: #777; }
 
+/* DSH 移植：完全展开档位的参数行 */
+.tool-detail.tool-args { opacity: .68; }

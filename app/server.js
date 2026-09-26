@@ -272,6 +272,10 @@ function ledgerFinishRun(rec, info, usage) {
   ledgerAppendRec(rec);
 }
 
+function ledgerWithdrawRun(runId, reason) {
+  ledgerAppendRec({ runId, finishedAt: Date.now(), status: 'withdrawn', withdrawReason: reason || 'withdrawn' });
+}
+
 function queueRegister(source, runId, taskText, startFn) {
   if (runQueue.length >= RUN_QUEUE_MAX) {
     const err = new Error('排队已满（' + RUN_QUEUE_MAX + ' 个）：请等前面的任务完成后再提交。');
@@ -296,6 +300,22 @@ function pumpQueue() {
 
 function queuePositionOf(runId) {
   return runQueue.findIndex((q) => q && q.runId === runId);
+}
+
+/* 插话发送（DSH 移植）：暂停当前任务、清空等待队列，新任务立即上跑道。
+   被移开的任务不丢：台账里记为 withdrawn，可在任务记录中看到。 */
+function preemptCurrentRun(reason) {
+  if (!currentRun) return null;
+  const id = currentRun.runId;
+  currentRun.cancelled = true;   // 运行结束时会由 runDsh 落账为 cancelled，这里不再重复记账
+  killTree(currentRun.child);
+  return id;
+}
+
+function queueWithdrawAll(reason) {
+  const moved = runQueue.splice(0, runQueue.length);
+  for (const it of moved) { it.cancelled = true; ledgerWithdrawRun(it.runId, reason); }
+  return moved.map((it) => it.runId);
 }
 
 function queueWithdraw(runId) {
@@ -427,6 +447,8 @@ function defaultConfig() {
     // 记忆治理：自动学习（协议块归档/蒸馏晋升）与自动引用（注入任务单）分别可控；
     // 审阅开启后，Agent 的记忆候选先进「待审阅」，由用户在记忆中心批准或否决。
     memoryAutoLearn: true, memoryAutoCite: true, memoryReview: false,
+    // DSH 移植：工作步骤展示档位（simple|standard|detailed|full）与繁忙时的发送行为（queue|interrupt）
+    stepsDisplay: 'standard', busyBehavior: 'queue',
     // 自定义搜索服务（学习 RikkaHub 的插件式思路）：
     // 内置的免费抓取（Bing/DDG）在部分网络下会被反爬返回无关结果，
     // 与其塞一个必然失败的免费通道，不如让用户接入自己可用的搜索服务。
@@ -472,6 +494,8 @@ function saveConfig(patch) {
   for (const kb of ['libraryEnabled', 'extendedTools', 'memoryAutoLearn', 'memoryAutoCite', 'memoryReview']) {
     if (patch[kb] !== undefined) next[kb] = patch[kb] === true;   // 布尔开关严格化，防字符串 "false" 当假写入
   }
+  if (patch.stepsDisplay !== undefined) next.stepsDisplay = ['simple', 'standard', 'detailed', 'full'].includes(patch.stepsDisplay) ? patch.stepsDisplay : 'standard';
+  if (patch.busyBehavior !== undefined) next.busyBehavior = patch.busyBehavior === 'interrupt' ? 'interrupt' : 'queue';
   writeJsonAtomic(CONFIG_FILE, next);
   writeDshSettings(next.model, next.baseUrl, effectiveSearchKey(next), resolveSearchProvider(next));
   return next;
@@ -701,6 +725,8 @@ function statusPayload() {
     searchMode: resolveSearchProvider(cfg), // server | free
     busy: currentRun ? true : false,
     queueLen: runQueue.length,
+    stepsDisplay: cfg.stepsDisplay || 'standard',
+    busyBehavior: cfg.busyBehavior || 'queue',
     port: actualPort || DEFAULT_PORT,
     memorySize: (() => { try { return fs.existsSync(MEMORY_FILE) ? fs.statSync(MEMORY_FILE).size : 0; } catch (_) { return 0; } })(),
   };
@@ -5142,6 +5168,8 @@ function handleRequest(req, res) {
         memoryAutoLearn: body.memoryAutoLearn !== undefined ? body.memoryAutoLearn === true : loadConfig().memoryAutoLearn,
         memoryAutoCite: body.memoryAutoCite !== undefined ? body.memoryAutoCite === true : loadConfig().memoryAutoCite,
         memoryReview: body.memoryReview !== undefined ? body.memoryReview === true : loadConfig().memoryReview,
+        stepsDisplay: body.stepsDisplay !== undefined ? body.stepsDisplay : loadConfig().stepsDisplay,
+        busyBehavior: body.busyBehavior !== undefined ? body.busyBehavior : loadConfig().busyBehavior,
       });
       return sendJson(res, 200, {
         ok: true, hasKey: !!cfg.apiKey, keyMasked: maskKey(cfg.apiKey),
@@ -5150,6 +5178,7 @@ function handleRequest(req, res) {
         searchEnabled: true,
         searchProvider: cfg.searchProvider || 'auto',
         searchMode: resolveSearchProvider(cfg), // server | free
+        stepsDisplay: cfg.stepsDisplay, busyBehavior: cfg.busyBehavior,
       });
     }).catch((e) => sendJson(res, 500, { ok: false, error: e.message }));
   }
@@ -5787,6 +5816,11 @@ function handleRequest(req, res) {
         try { stream('error', { runId, message: '服务内部错误：' + e.message }); } catch (_) {}
         res.end();
       });
+      let preempted = null;
+      if (cfg.busyBehavior === 'interrupt' && (currentRun || runQueue.length)) {
+        preempted = preemptCurrentRun('interrupted');
+        queueWithdrawAll('preempted');
+      }
       queueRegister('chat', runId, taskText, () => {
         startedAt = Date.now();
         stream('start', { runId, mode, label: MODE_META[mode].label, model: cfg.model, baseUrl: cfg.baseUrl, queuePos: 0 });
@@ -5797,7 +5831,7 @@ function handleRequest(req, res) {
         beginRun();
       });
       const pos = queuePositionOf(runId);
-      if (pos >= 0) stream('queued', { runId, pos: pos + 1, total: runQueue.length });
+      if (pos >= 0) stream('queued', { runId, pos: pos + 1, total: runQueue.length, interrupt: !!preempted });
       return undefined;
     }).catch((e) => sendJson(res, 400, { ok: false, error: e.message }));
   }
@@ -6065,7 +6099,8 @@ function startServer() {
 module.exports = { memoryForget: forgetLongEntries, deliverShadow: { snapshot: snapshotDeliverables, list: snapshotList, restore: snapshotRestore }, ensureWriteGatePlugin, WRITE_GATE_PLUGIN,
   /* Phase 4 治理/队列内核（tools/phase4-driver.js 测试直调；require 会启动 listen，用完即 exit） */
   academyGovernance: { archiveMemoryFromOutput, appendMemory, memRejectedHit, rejectMemoryFingerprint, unrejectMemory, pushMemoryPending, removeMemoryPending, readJsonSafe, memFingerprint, selectLongMemory },
-  academyQueue: { queueRegister, pumpQueue, queueWithdraw, queuePositionOf, runPrecheck, sha16, ledgerAppendRec, runsLedgerRecent, runQueue: () => runQueue,
+  academyConfig: { loadConfig, saveConfig, statusPayload },
+  academyQueue: { queueRegister, pumpQueue, queueWithdraw, queueWithdrawAll, preemptCurrentRun, queuePositionOf, runPrecheck, sha16, ledgerAppendRec, runsLedgerRecent, runQueue: () => runQueue,
     beginFakeRunForTest: (runId) => { currentRun = { runId, child: null, cancelled: false, startedAt: Date.now() }; },
     endFakeRunForTest: () => { currentRun = null; } } };
 

@@ -11,19 +11,13 @@
   <link rel="icon" href="data:image/svg+xml,<svg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 100 100%22><text y=%22.9em%22 font-size=%2290%22>🎓</text></svg>" />
 </head>
 <body>
-  <div class="qfud-watermarks" aria-hidden="true">
-    <span class="wm wm1">QFUD · 驻青四校联合辩论培训计划</span>
-    <span class="wm wm2">逻敏 · Academy 辩论教练</span>
-    <span class="wm wm3">备赛 / 复盘 / 评判 全链路</span>
-    <span class="wm wm4">QFUD · 驻青四校联合辩论培训计划</span>
-  </div>
   <div id="app">
     <header class="topbar">
       <div class="brand">
         <span class="brand-logo"><svg class="ic" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><use href="#i-book"></use></svg></span>
         <div class="brand-text">
           <h1>逻敏 · Academy 辩论教练</h1>
-          <p>华语辩论全链路 AI 教练 · 备赛 / 复盘 / 评判</p>
+          <p>华语辩论全链路 AI 教练 · 备赛 / 复盘 / 评判 <span class="by-qfud">By QFUD</span></p>
         </div>
       </div>
       <div class="topbar-actions">
@@ -269,6 +263,28 @@
                 <span class="gen-label">新手引导</span>
                 <div class="gen-choices">
                   <button type="button" class="btn ghost small" id="btnShowWizard">重新查看引导</button>
+                </div>
+              </div>
+              <div class="gen-row">
+                <span class="gen-label">工作步骤展示</span>
+                <div class="gen-choices" id="stepsDisplayChoices">
+                  <button type="button" class="gen-choice" data-steps-display-val="simple">简洁</button>
+                  <button type="button" class="gen-choice" data-steps-display-val="standard">标准</button>
+                  <button type="button" class="gen-choice" data-steps-display-val="detailed">详细</button>
+                  <button type="button" class="gen-choice" data-steps-display-val="full">完全展开</button>
+                  <small class="field-hint" style="display:block;width:100%;margin-top:4px">
+                    对话流里 Agent 工作步骤的展示粒度：<b>简洁</b>只显示正在走的这一步；<b>标准</b>列出每步名称；<b>详细</b>带上参数/结果摘要；<b>完全展开</b>参数与结果分行全展示。
+                  </small>
+                </div>
+              </div>
+              <div class="gen-row">
+                <span class="gen-label">繁忙时的发送行为</span>
+                <div class="gen-choices" id="busyBehaviorChoices">
+                  <button type="button" class="gen-choice" data-busy-val="queue">排队发送</button>
+                  <button type="button" class="gen-choice" data-busy-val="interrupt">插话发送</button>
+                  <small class="field-hint" style="display:block;width:100%;margin-top:4px">
+                    Agent 还在处理时再发消息：<b>排队发送</b>按先后顺序等待；<b>插话发送</b>先暂停当前任务、清空等待队列，让新消息优先开始。被打断/移开的任务不丢，任务记录里会标注原因。
+                  </small>
                 </div>
               </div>
             </div>

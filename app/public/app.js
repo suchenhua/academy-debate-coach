@@ -859,12 +859,7 @@ function renderMessage(idx, m) {
   if (Array.isArray(m.tools) && m.tools.length) {
     const toolsBox = el('div', 'tool-log');
     toolsBox.id = 'toolsBox' + idx;
-    toolsBox.innerHTML = m.tools.map((t) => (
-      '<div class="tool-item ' + (t.done ? 'done' : 'active') + '">' +
-      ic(t.done ? 'check' : 'plugin',13) + ' <b>' + esc(t.name) + '</b>' +
-      (t.detail ? '<span class="tool-detail">' + esc(t.detail) + '</span>' : '') +
-      '</div>'
-    )).join('');
+    toolsBox.innerHTML = toolsBoxHtml(m.tools);
     bubble.appendChild(toolsBox);
   }
 
@@ -1166,15 +1161,7 @@ function updateRunningMessage(patch) {
         const think = document.getElementById('thinkBox' + idx);
         bubble.insertBefore(box, think || status || null);
       }
-      if (box) {
-        const tools = patch.tools || [];
-        box.innerHTML = tools.map((t) => (
-          '<div class="tool-item ' + (t.done ? 'done' : 'active') + '">' +
-          ic(t.done ? 'check' : 'plugin',13) + ' <b>' + esc(t.name) + '</b>' +
-          (t.detail ? '<span class="tool-detail">' + esc(t.detail) + '</span>' : '') +
-          '</div>'
-        )).join('');
-      }
+      if (box) box.innerHTML = toolsBoxHtml(patch.tools || []);
     }
     if (patch.reasoning !== undefined) {
       let details = document.getElementById('thinkBox' + idx);
@@ -1781,6 +1768,9 @@ async function refreshStatus() {
   try {
     const s = await fetchJSON('/api/status');
     state.status = s;
+    if (STEPS_MODES.includes(s.stepsDisplay)) state.stepsDisplay = s.stepsDisplay;
+    if (s.busyBehavior === 'interrupt' || s.busyBehavior === 'queue') state.busyBehavior = s.busyBehavior;
+    try { syncAgentChoices(); } catch (_) {}
     renderStatus();
     if (!s.hasKey) {
       $('#keyBanner').classList.remove('hidden');
@@ -1840,6 +1830,7 @@ function openSettings() {
   loadProfilesUI();
   try { loadExtToolsToggle(); } catch (_) {}
   try { loadMemToggles(); loadMemRejectList(); } catch (_) {}
+    try { loadAgentChoices(); } catch (_) {}
   setTimeout(() => { const i = $('#apiKeyInput'); if (i) i.focus(); }, 50);
 }
 
@@ -2359,7 +2350,7 @@ function startTurn(text) {
   streamChat(state.mode, text, history, (event, data) => {
     const runningMsg = () => state.messages.find((x) => x.running);
     if (event === 'queued') {
-      lastStatus = '前方还有 ' + data.pos + ' 个任务，排队等待中…';
+      lastStatus = data.interrupt ? '已插话：正在暂停当前任务，你的消息马上开始…' : ('已排队第 ' + data.pos + ' 位，等待前面的任务完成…');
       updateRunningMessage({ statusText: lastStatus });
     } else if (event === 'start') {
       lastStatus = '引擎已启动，正在加载知识库…';
@@ -2381,7 +2372,7 @@ function startTurn(text) {
       if (m) {
         if (!Array.isArray(m.tools)) m.tools = [];
         if (data.state === 'start') {
-          m.tools.push({ callId: data.callId, name: data.name || '工具', detail: data.detail || '', done: false });
+          m.tools.push({ callId: data.callId, name: data.name || '工具', detail: data.detail || '', detailStart: data.detail || '', done: false });
         } else {
           const t = m.tools.find((x) => x.callId && data.callId && x.callId === data.callId) || m.tools.find((x) => !x.done && x.name === data.name);
           if (t) { t.done = true; if (data.detail) t.detail = data.detail; }
@@ -3263,6 +3254,82 @@ function switchDeliverTab(tab) {
   if (deliverState.tab === 'stars') renderDeliverStars();
   if (deliverState.tab === 'cases') loadCases();
 }
+}
+
+/* ================= DSH 移植：工作步骤展示 × 繁忙时的发送行为 ================= */
+const STEPS_MODES = ['simple', 'standard', 'detailed', 'full'];
+const STEPS_LABELS = { simple: '简洁', standard: '标准', detailed: '详细', full: '完全展开' };
+
+/* 工具步骤的唯一渲染口径：运行中气泡与重渲染共用，档位来自 设置 → 通用 → 工作步骤展示 */
+function toolsBoxHtml(tools) {
+  if (!Array.isArray(tools) || !tools.length) return '';
+  const mode = STEPS_MODES.includes(state.stepsDisplay) ? state.stepsDisplay : 'standard';
+  if (mode === 'simple') {
+    const active = tools.filter((t) => !t.done);
+    const cur = active.length ? active[active.length - 1] : tools[tools.length - 1];
+    return '<div class="tool-item ' + (active.length ? 'active' : 'done') + '">' +
+      ic(active.length ? 'plugin' : 'check', 13) + ' <b>' + esc(cur.name) + '</b>' +
+      '<span class="tool-detail">' + (active.length ? '进行中' : '已完成') + ' · 共 ' + tools.length + ' 步</span></div>';
+  }
+  const showDetail = mode === 'detailed' || mode === 'full';
+  return tools.map((t) => {
+    const args = mode === 'full' && t.detailStart && t.detailStart !== t.detail
+      ? '<span class="tool-detail tool-args">参数 ' + esc(t.detailStart) + '</span>' : '';
+    const detail = showDetail && t.detail ? '<span class="tool-detail">' + esc(t.detail) + '</span>' : '';
+    return '<div class="tool-item ' + (t.done ? 'done' : 'active') + '">' +
+      ic(t.done ? 'check' : 'plugin', 13) + ' <b>' + esc(t.name) + '</b>' + args + detail + '</div>';
+  }).join('');
+}
+
+function syncAgentChoices() {
+  document.querySelectorAll('#stepsDisplayChoices .gen-choice').forEach((b) => {
+    b.classList.toggle('active', b.dataset.stepsDisplayVal === state.stepsDisplay);
+  });
+  document.querySelectorAll('#busyBehaviorChoices .gen-choice').forEach((b) => {
+    b.classList.toggle('active', b.dataset.busyVal === state.busyBehavior);
+  });
+}
+
+async function loadAgentChoices() {
+  try {
+    const r = await fetchJSON('/api/config');
+    const c = (r && r.config) || {};
+    if (STEPS_MODES.includes(c.stepsDisplay)) state.stepsDisplay = c.stepsDisplay;
+    if (c.busyBehavior === 'interrupt' || c.busyBehavior === 'queue') state.busyBehavior = c.busyBehavior;
+    syncAgentChoices();
+  } catch (_) {}
+}
+
+async function setStepsDisplay(mode) {
+  if (!STEPS_MODES.includes(mode)) return;
+  try {
+    const r = await fetchJSON('/api/config', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ stepsDisplay: mode }) });
+    if (!r || !r.ok) throw new Error((r && r.error) || '保存失败');
+    state.stepsDisplay = mode;
+    syncAgentChoices();
+    renderMessages();
+    toast('工作步骤展示：' + STEPS_LABELS[mode]);
+  } catch (e) { toast('设置失败：' + e.message); }
+}
+
+async function setBusyBehavior(behavior) {
+  if (behavior !== 'queue' && behavior !== 'interrupt') return;
+  try {
+    const r = await fetchJSON('/api/config', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ busyBehavior: behavior }) });
+    if (!r || !r.ok) throw new Error((r && r.error) || '保存失败');
+    state.busyBehavior = behavior;
+    syncAgentChoices();
+    toast(behavior === 'interrupt' ? '繁忙时的发送行为：插话发送（新消息将暂停当前任务）' : '繁忙时的发送行为：排队发送（按先后等待）');
+  } catch (e) { toast('设置失败：' + e.message); }
+}
+
+function bindAgentChoices() {
+  document.querySelectorAll('#stepsDisplayChoices .gen-choice').forEach((b) => {
+    b.onclick = () => setStepsDisplay(b.dataset.stepsDisplayVal);
+  });
+  document.querySelectorAll('#busyBehaviorChoices .gen-choice').forEach((b) => {
+    b.onclick = () => setBusyBehavior(b.dataset.busyVal);
+  });
 }
 
 /* ================= 记忆治理：三个开关 + 否决清单 + 任务记录 ================= */
@@ -4771,6 +4838,7 @@ function bindEvents() {
   bindDeliverables();
   bindExtTools();
 try { bindMemToggles(); } catch (_) {}
+  try { bindAgentChoices(); } catch (_) {}
 { const br = document.getElementById('btnRunsRefresh'); if (br) br.onclick = () => loadRunsPane(); }
   try { bindCustomSearch(); } catch (_) {}
   // 重新查看新手引导
