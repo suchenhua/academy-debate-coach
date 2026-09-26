@@ -899,7 +899,9 @@ async function main() {
             require('fs').readFileSync(path.join(ROOT, 'app', 'server.js'), 'utf8').includes("next.reasoningEffort = ['off', 'low', 'high', 'max'].includes(patch.reasoningEffort)")
             && require('fs').readFileSync(path.join(ROOT, 'app', 'server.js'), 'utf8').includes("reasoningEffort: ' + esc(String(reasoningEffort))")
             && htmlSrc.includes('composerEffortSelect') && htmlSrc.includes('思考强度：控制模型推理深度')
-            && require('fs').readFileSync(path.join(ROOT, 'app', 'public', 'app.js'), 'utf8').includes('syncComposerEffortSelect'));
+            && require('fs').readFileSync(path.join(ROOT, 'app', 'public', 'app.js'), 'utf8').includes('syncComposerEffortSelect')
+            && require('fs').readFileSync(path.join(ROOT, 'app', 'server.js'), 'utf8').includes("'            max: high',")
+            && !require('fs').readFileSync(path.join(ROOT, 'app', 'server.js'), 'utf8').includes('isOfficialDeepSeek && ['));
           check('Phase5.8 语言链路与页面接线（preload 透传 / registry titleEn / 五页挂 locale）',
             locSrc.includes('window.LT')
             && require('fs').readFileSync(path.join(ROOT, 'app', 'preload.js'), 'utf8').includes('lang')

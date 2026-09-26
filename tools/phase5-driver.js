@@ -47,9 +47,15 @@ const kase = process.argv[2] || '';
     const b = C.loadConfig();
     const yaml2 = require('fs').readFileSync(EFF.settingsFile, 'utf8');
     const st = C.statusPayload();
+    // 第三方端点：llm-pi-ai 路由也要声明 reasoningEfforts + 写 effort
+    C.saveConfig({ baseUrl: 'https://api.siliconflow.cn/v1', reasoningEffort: 'max' });
+    const yaml3 = require('fs').readFileSync(EFF.settingsFile, 'utf8');
+    C.saveConfig({ baseUrl: 'https://api.deepseek.com', reasoningEffort: 'high' });
     out({ lowOk: a.reasoningEffort === 'low', yamlLow: yaml.includes('reasoningEffort: "low"'),
           normHigh: b.reasoningEffort === 'high', yamlHigh: yaml2.includes('reasoningEffort: "high"'),
-          echoOk: st.reasoningEffort === 'high' });
+          echoOk: st.reasoningEffort === 'high',
+          piDeclared: yaml3.includes('reasoningEfforts:') && yaml3.includes('max: high'),
+          piEffort: yaml3.includes('reasoningEffort: "max"') });
   }
 
   if (kase === 'send-hotkey') {

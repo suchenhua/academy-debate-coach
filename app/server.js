@@ -594,12 +594,17 @@ function writeDshSettings(model, baseUrl, searchApiKey, searchProvider, reasonin
     '          name: ' + esc(modelId),
     '          contextWindow: ' + modelContextWindow(modelId),
     '          maxTokens: 65536',
+    '          reasoningEfforts:',
+    '            low: low',
+    '            high: high',
+    '            max: high',
   ];
   /* 思考强度（2026-09-27 子涵）：agent-default-model.reasoningEffort 是内核原生键，
-     每次请求按此档位发 thinking + output_config.effort。只在官方 DeepSeek 直连时写入——
-     第三方 OpenAI 兼容端点走 llm-pi-ai，其模型多数未声明 reasoning 能力，
-     带着 effort 会被内核以 UNSUPPORTED_REASONING_EFFORT 拒掉每一笔请求。 */
-  const effortLine = (isOfficialDeepSeek && ['off', 'low', 'high', 'max'].includes(String(reasoningEffort))) ? ['  reasoningEffort: ' + esc(String(reasoningEffort))] : [];
+     每次请求按此档位发 effort。第三方走 llm-pi-ai：模型条目声明 reasoningEfforts
+     （off 不发、low/high 直发、max 折算 high）后，内核会把档位转成各协议的
+     reasoning_effort 字段——与 DSH 自己「profile 作者声明能力」的设计一致。
+     注意：个别严格端点若拒绝 reasoning_effort 字段会报错，属端点兼容性问题。 */
+  const effortLine = ['off', 'low', 'high', 'max'].includes(String(reasoningEffort)) ? ['  reasoningEffort: ' + esc(String(reasoningEffort))] : [];
   const yaml = [
     '# 由 Academy 辩论教练 App 自动生成，请勿手改',
     'agent-default-model:',
