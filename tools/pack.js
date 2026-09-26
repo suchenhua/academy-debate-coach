@@ -155,11 +155,19 @@ const missing = ITEMS.filter((item) => !fs.existsSync(path.join(ROOT, item)));
 if (missing.length) fail('以下待打包内容缺失: ' + missing.join(', '));
 log('✓ 待打包内容完整（' + ITEMS.length + ' 项）');
 
+/* 显式用 Windows 自带 bsdtar（System32	ar.exe）：
+   Git Bash 环境下 PATH 里 GNU tar 在前，会把 "E:\..." 当远程主机名
+   （tar: Cannot connect to E: resolve failed），打包必炸。 */
+function systemTar() {
+  const wintar = path.join(process.env.SystemRoot || 'C:\Windows', 'System32', 'tar.exe');
+  return fs.existsSync(wintar) ? wintar : 'tar';
+}
+
 // 2) tar -a -cf 输出.zip -C ROOT item1 item2 ...（bsdtar 处理深路径）
 log('正在打包（约 200~400MB 内容，需要几分钟，请勿关闭窗口）…');
 const args = ['-a', '-cf', ZIP, '-C', ROOT].concat(ITEMS);
 const t0 = Date.now();
-const r = spawnSync('tar', args, { cwd: ROOT, stdio: 'inherit', windowsHide: true });
+const r = spawnSync(systemTar(), args, { cwd: ROOT, stdio: 'inherit', windowsHide: true });
 if (r.error) fail('无法启动 tar：' + r.error.message + '（需要 Windows 10/11 自带 bsdtar）');
 if (r.status !== 0) fail('tar 打包失败，exit ' + r.status);
 log('✓ 打包完成，用时 ' + ((Date.now() - t0) / 1000).toFixed(1) + ' 秒');
@@ -176,7 +184,7 @@ log('✓ UTF-8 文件名标志：' + (zr.patched ? '补 ' + zr.patched + ' 条' 
 // 3) 校验：大小 + 条目数（报「找不到中央目录」= 没打完）
 const stat = fs.statSync(ZIP);
 if (stat.size < 50 * 1024 * 1024) fail('zip 异常小（' + (stat.size / 1024 / 1024).toFixed(1) + ' MB），可能打包不完整');
-const list = spawnSync('tar', ['-tf', ZIP], { encoding: 'utf8', windowsHide: true, maxBuffer: 64 * 1024 * 1024 });
+const list = spawnSync(systemTar(), ['-tf', ZIP], { encoding: 'utf8', windowsHide: true, maxBuffer: 64 * 1024 * 1024 });
 if (list.status !== 0) fail('zip 校验失败：无法读取中央目录（' + String(list.stderr || '').slice(0, 200) + '）');
 const count = String(list.stdout || '').split(/\r?\n/).filter(Boolean).length;
 if (count < 5000) fail('zip 条目数异常（' + count + '），打包不完整');

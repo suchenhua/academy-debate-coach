@@ -196,10 +196,18 @@ function compileStub(csc) {
   log('  ✓ 外壳已编译（' + fs.statSync(STUB).size + ' 字节）');
 }
 
+/* 显式用 Windows 自带 bsdtar（System32	ar.exe）：
+   Git Bash 环境下 PATH 里 GNU tar 在前，会把 "E:\..." 当远程主机名
+   （tar: Cannot connect to E: resolve failed），打包必炸。 */
+function systemTar() {
+  const wintar = path.join(process.env.SystemRoot || 'C:\Windows', 'System32', 'tar.exe');
+  return fs.existsSync(wintar) ? wintar : 'tar';
+}
+
 // ---------- 打 zip（复用 Windows 自带 bsdtar，与 pack.js 一致） ----------
 function makeZip(zipPath, cwd, items) {
   if (fs.existsSync(zipPath)) fs.rmSync(zipPath, { force: true });
-  const r = spawnSync('tar', ['-a', '-cf', zipPath, '-C', cwd].concat(items), {
+  const r = spawnSync(systemTar(), ['-a', '-cf', zipPath, '-C', cwd].concat(items), {
     cwd, stdio: 'inherit', windowsHide: true,
   });
   if (r.error) fail('无法启动 tar：' + r.error.message + '（需要 Windows 10/11 自带 bsdtar）');
@@ -301,7 +309,7 @@ function main() {
   fs.writeFileSync(backZip, inner);
   const verifyDir = path.join(BUILD_DIR, '__verify');
   fs.mkdirSync(verifyDir, { recursive: true });
-  const un = spawnSync('tar', ['-xf', backZip, '-C', verifyDir], { windowsHide: true });
+  const un = spawnSync(systemTar(), ['-xf', backZip, '-C', verifyDir], { windowsHide: true });
   if (un.status !== 0) fail('自检失败：无法解出叠加的 zip');
   const backList = fs.readFileSync(path.join(verifyDir, 'files.sha256'), 'utf8')
     .split(/\r?\n/).filter(Boolean);
