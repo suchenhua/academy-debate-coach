@@ -1181,3 +1181,27 @@ body.sidebar-collapsed .sidebar-toggle { left: 54px; transform: translate(50%, -
 .input-modal-field input:focus,
 .input-modal-field textarea:focus { border-color: var(--primary); outline: none; }
 .input-modal-actions { margin-top: 18px; }
+
+/* ---- 记忆治理：待审阅候选 / 否决清单 ---- */
+.mem-pending-box { border: 1px solid var(--line, #e2e2e6); border-radius: 10px; padding: 10px 12px; margin: 8px 0 14px; }
+.mem-pending-head { font-weight: 600; margin-bottom: 8px; }
+.mem-pending-card { display: grid; grid-template-columns: auto 1fr; gap: 4px 8px; padding: 8px 0; border-top: 1px dashed var(--line, #e2e2e6); }
+.mem-pending-kind { font-size: 12px; color: #888; border: 1px solid var(--line, #ddd); border-radius: 6px; padding: 1px 6px; height: fit-content; }
+.mem-pending-text { white-space: pre-wrap; font-size: 13px; }
+.mem-pending-acts { grid-column: 2; display: flex; gap: 8px; margin-top: 4px; }
+.mem-reject-list { margin-top: 10px; }
+.mem-reject-title { font-size: 12px; color: #888; margin-bottom: 6px; }
+.mem-reject-row { display: flex; align-items: center; gap: 10px; padding: 4px 0; border-top: 1px dashed var(--line, #eee); font-size: 12px; }
+.mem-reject-text { flex: 1; color: #666; }
+
+/* ---- 任务记录面板 ---- */
+.runs-now { width: 100%; display: flex; flex-direction: column; gap: 6px; }
+.runs-now-item { display: flex; align-items: center; gap: 10px; font-size: 13px; }
+.runs-now-item.dim { color: #999; }
+.runs-table { display: flex; flex-direction: column; }
+.runs-row { display: grid; grid-template-columns: 88px 80px 70px 1fr auto; gap: 8px; align-items: center; padding: 6px 0; border-top: 1px dashed var(--line, #eee); font-size: 12px; }
+.runs-time { color: #888; font-variant-numeric: tabular-nums; }
+.runs-src { font-weight: 600; }
+.runs-state { color: #555; }
+.runs-meta { color: #777; }
+

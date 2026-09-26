@@ -1804,7 +1804,7 @@ function renderStatus() {
   const pill = $('#statusPill');
   if (s.busy) {
     pill.className = 'status-pill busy';
-    pill.innerHTML = ic('sparkle',12) + 'Agent 运行中…';
+    pill.innerHTML = ic('sparkle',12) + 'Agent 运行中' + (s.queueLen ? ' · 排队 ' + s.queueLen : '') + '…';
   } else if (!s.hasKey) {
     pill.className = 'status-pill err';
     pill.textContent = '未配置 API Key';
@@ -1839,6 +1839,7 @@ function openSettings() {
   // 载入/刷新多配置档案（编辑当前生效的配置）
   loadProfilesUI();
   try { loadExtToolsToggle(); } catch (_) {}
+  try { loadMemToggles(); loadMemRejectList(); } catch (_) {}
   setTimeout(() => { const i = $('#apiKeyInput'); if (i) i.focus(); }, 50);
 }
 
@@ -1847,6 +1848,7 @@ function switchSettingsPane(pane) {
   document.querySelectorAll('.settings-nav-item').forEach((b) => b.classList.toggle('active', b.dataset.settingsPane === pane));
   document.querySelectorAll('.settings-pane').forEach((p) => p.classList.toggle('active', p.dataset.settingsPane === pane));
   if (pane === 'stats') { try { renderStatsPane(); } catch (_) {} }
+  if (pane === 'runs') { try { loadRunsPane(); } catch (_) {} }
   if (pane === 'skills') { try { loadSkillsUI(); } catch (_) {} }
   if (pane === 'about') { try { renderAboutPane(); } catch (_) {} }
 }
@@ -2356,7 +2358,10 @@ function startTurn(text) {
 
   streamChat(state.mode, text, history, (event, data) => {
     const runningMsg = () => state.messages.find((x) => x.running);
-    if (event === 'start') {
+    if (event === 'queued') {
+      lastStatus = '前方还有 ' + data.pos + ' 个任务，排队等待中…';
+      updateRunningMessage({ statusText: lastStatus });
+    } else if (event === 'start') {
       lastStatus = '引擎已启动，正在加载知识库…';
     } else if (event === 'status') {
       if (data.stage === 'launching') lastStatus = data.message || lastStatus;
@@ -3260,6 +3265,118 @@ function switchDeliverTab(tab) {
 }
 }
 
+/* ================= 记忆治理：三个开关 + 否决清单 + 任务记录 ================= */
+const MEM_TOGGLES = [
+  { key: 'memoryAutoLearn', input: 'memAutoLearnToggle', label: 'memAutoLearnLabel' },
+  { key: 'memoryAutoCite', input: 'memAutoCiteToggle', label: 'memAutoCiteLabel' },
+  { key: 'memoryReview', input: 'memReviewToggle', label: 'memReviewLabel' },
+];
+async function loadMemToggles() {
+  try {
+    const r = await fetchJSON('/api/config');
+    const c = (r && r.config) || {};
+    for (const t of MEM_TOGGLES) {
+      const inp = document.getElementById(t.input);
+      const lab = document.getElementById(t.label);
+      if (!inp || !lab) continue;
+      const on = c[t.key] !== false;
+      inp.checked = on;
+      lab.textContent = on ? '开（默认）' : '关';
+    }
+  } catch (_) {}
+}
+async function saveMemToggle(t) {
+  const inp = document.getElementById(t.input);
+  const lab = document.getElementById(t.label);
+  const want = !!(inp && inp.checked);
+  try {
+    const body = {}; body[t.key] = want;
+    const r = await fetchJSON('/api/config', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
+    if (r && r.ok) { if (lab) lab.textContent = want ? '开（默认）' : '关'; toast(want ? '已开启（下一条消息起生效）' : '已关闭'); }
+    else toast('设置失败：' + ((r && r.error) || ''));
+  } catch (e) { toast('设置失败：' + e.message); }
+}
+function bindMemToggles() {
+  for (const t of MEM_TOGGLES) {
+    const inp = document.getElementById(t.input);
+    if (inp) inp.onchange = () => saveMemToggle(t);
+  }
+}
+async function loadMemRejectList() {
+  const box = document.getElementById('memRejectList');
+  if (!box) return;
+  box.innerHTML = '';
+  try {
+    const r = await fetchJSON('/api/memory');
+    const list = r.rejected || [];
+    if (!list.length) return;
+    box.appendChild(el('div', 'mem-reject-title', '否决清单（' + list.length + ' 条，同内容不再入库/注入）'));
+    for (const x of list) {
+      const row = el('div', 'mem-reject-row');
+      row.appendChild(el('span', 'mem-reject-text', String(x.text || '').slice(0, 60) + ((x.text || '').length > 60 ? '…' : '')));
+      const b = el('button', 'btn ghost small', '撤销否决'); b.type = 'button';
+      b.onclick = async () => {
+        const rr = await libApi('/api/memory/rejected/remove', { fp: x.fp });
+        if (rr && rr.ok) { toast('已撤销'); loadMemRejectList(); } else toast('失败：' + ((rr && rr.error) || ''));
+      };
+      row.appendChild(b);
+      box.appendChild(row);
+    }
+  } catch (_) {}
+}
+
+/* ---- 任务记录面板（设置 → 任务记录） ---- */
+const RUN_SRC_LABEL = { chat: '对话', suggest: '搜索建议', verify: '证据检证', trace: '资料溯源' };
+const RUN_ST_LABEL = { ok: '✅ 完成', error: '❌ 失败', cancelled: '⏹ 取消', timeout: '⏰ 超时', running: '▶ 运行中' };
+async function loadRunsPane() {
+  const now = document.getElementById('runsNowPane');
+  const table = document.getElementById('runsTable');
+  if (!table) return;
+  try {
+    const r = await fetchJSON('/api/runs/recent?limit=30');
+    if (now) {
+      now.innerHTML = '';
+      const cur = r.current
+        ? el('div', 'runs-now-item', '▶ 正在运行：' + (RUN_SRC_LABEL[(r.runs.find(x => x.runId === r.current.runId) || {}).source] || '任务') + ' · ' + fmtElapsed(Date.now() - r.current.startedAt))
+        : el('div', 'runs-now-item dim', '当前空闲');
+      now.appendChild(cur);
+      for (const q of (r.queued || [])) {
+        const row = el('div', 'runs-now-item');
+        row.appendChild(document.createTextNode('⏳ 排队第 ' + q.pos + ' 位 · ' + (RUN_SRC_LABEL[q.source] || q.source)));
+        const b = el('button', 'btn ghost small', '撤回'); b.type = 'button';
+        b.onclick = async () => {
+          const rr = await libApi('/api/queue/withdraw', { runId: q.runId });
+          if (rr && rr.ok) { toast('已撤回'); loadRunsPane(); } else toast('撤回失败：' + ((rr && rr.error) || ''));
+        };
+        row.appendChild(b);
+        now.appendChild(row);
+      }
+    }
+    table.innerHTML = '';
+    const runs = r.runs || [];
+    if (!runs.length) { table.appendChild(el('div', 'mem-empty', '还没有运行记录。')); return; }
+    for (const x of runs) {
+      const row = el('div', 'runs-row');
+      const dt = x.startedAt ? new Date(x.startedAt) : null;
+      row.appendChild(el('span', 'runs-time', dt ? (dt.getMonth() + 1) + '/' + dt.getDate() + ' ' + String(dt.getHours()).padStart(2, '0') + ':' + String(dt.getMinutes()).padStart(2, '0') : '—'));
+      row.appendChild(el('span', 'runs-src', RUN_SRC_LABEL[x.source] || x.source || '—'));
+      row.appendChild(el('span', 'runs-state', RUN_ST_LABEL[x.status] || x.status || '—'));
+      row.appendChild(el('span', 'runs-meta', (x.elapsedMs ? fmtElapsed(x.elapsedMs) : '—') + (x.usage ? ' · in ' + (x.usage.input || 0) + ' / out ' + (x.usage.output || 0) : '')));
+      const b = el('button', 'btn ghost small', '取消'); b.type = 'button';
+      b.style.display = x.status === 'running' ? '' : 'none';
+      b.onclick = async () => {
+        const rr = await libApi('/api/queue/withdraw', { runId: x.runId });
+        if (rr && rr.ok) { toast('已取消'); loadRunsPane(); } else toast('取消失败：' + ((rr && rr.error) || ''));
+      };
+      row.appendChild(b);
+      table.appendChild(row);
+    }
+  } catch (e) {
+    table.innerHTML = '';
+    table.appendChild(el('div', 'mem-empty', '读取失败：' + e.message));
+  }
+}
+
 /* ================= 扩展工具：文档处理开关 ================= */
 function extToolsLabel(want) { return want ? '开' : '关（默认）'; }
 async function loadExtToolsToggle() {
@@ -3638,8 +3755,16 @@ function memEntryCard(e, scope, date) {
   // 编辑工具条（平时不占位，hover 显示）
   const acts = el('div', 'mem-entry-acts');
   const bEdit = el('button', 'mem-act-btn', ic('edit',12) + '编辑'); bEdit.type = 'button';
+  const bVeto = el('button', 'mem-act-btn', ic('shield',12) + '不再引用'); bVeto.type = 'button';
+  bVeto.title = '加入否决清单：这条内容以后不再注入上下文（条目本身保留）';
+  bVeto.onclick = async () => {
+    if (!confirm('把这条记忆加入否决清单？\n条目本身保留在文件里，但以后不再注入到任务上下文；同内容也不会再被自动归档。')) return;
+    const r = await libApi('/api/memory/reject', { text: e.body || e.title || '' });
+    if (r && r.ok) { toast('已加入否决清单'); await openMemory(); try { loadMemRejectList(); } catch (_) {} }
+    else toast('操作失败：' + ((r && r.error) || ''));
+  };
   const bDel = el('button', 'mem-act-btn danger', ic('trash',12) + '删除'); bDel.type = 'button';
-  acts.appendChild(bEdit); acts.appendChild(bDel);
+  acts.appendChild(bEdit); acts.appendChild(bVeto); acts.appendChild(bDel);
   head.appendChild(acts);
   d.appendChild(head);
 
@@ -3794,6 +3919,33 @@ function renderMemoryViews(j) {
   const longPanel = $('#memoryLongPanel');
   longPanel.innerHTML = '';
   longPanel.appendChild(memPanelBar('long', '＋ 新增长期记忆'));
+
+  // 待审阅候选（候选审阅开启时 Agent 的记忆提案先进这里，由用户批准/否决）
+  const pending = j.pending || [];
+  if (pending.length) {
+    const box = el('div', 'mem-pending-box');
+    box.appendChild(el('div', 'mem-pending-head', (j.reviewOn ? '🔍 待审阅候选 · ' + pending.length + ' 条（审阅模式开启中）' : '🔍 待审阅候选 · ' + pending.length + ' 条')));
+    for (const p of pending) {
+      const card = el('div', 'mem-pending-card');
+      card.appendChild(el('span', 'mem-pending-kind', p.kind === 'daily' ? '流水' : '长期'));
+      card.appendChild(el('div', 'mem-pending-text', p.text || ''));
+      const acts = el('div', 'mem-pending-acts');
+      const bOk = el('button', 'btn primary small', '批准入库'); bOk.type = 'button';
+      const bNo = el('button', 'btn ghost small danger', '否决'); bNo.type = 'button';
+      bOk.onclick = async () => {
+        const r = await libApi('/api/memory/pending/decide', { fp: p.fp, action: 'approve' });
+        if (r && r.ok) { toast('已批准入库'); openMemory(); } else toast('失败：' + ((r && r.error) || ''));
+      };
+      bNo.onclick = async () => {
+        const r = await libApi('/api/memory/pending/decide', { fp: p.fp, action: 'reject' });
+        if (r && r.ok) { toast('已否决（进入否决清单，同文不再入库/注入）'); openMemory(); try { loadMemRejectList(); } catch (_) {} } else toast('失败：' + ((r && r.error) || ''));
+      };
+      acts.append(bOk, bNo);
+      card.appendChild(acts);
+      box.appendChild(card);
+    }
+    longPanel.appendChild(box);
+  }
   const longEntries = (j.long && j.long.entries) || [];
   if (!longEntries.length) {
     longPanel.appendChild(el('div', 'mem-empty', '暂无长期记忆。Agent 在对话中发现值得长期记住的内容（判准、偏好、基准等）时，会自动以「长期记忆」归档到这里。也可以直接告诉它「记住…」，或点上方「＋ 新增长期记忆」手动添加。'));
@@ -4618,6 +4770,8 @@ function bindEvents() {
   bindSkillsUI();
   bindDeliverables();
   bindExtTools();
+try { bindMemToggles(); } catch (_) {}
+{ const br = document.getElementById('btnRunsRefresh'); if (br) br.onclick = () => loadRunsPane(); }
   try { bindCustomSearch(); } catch (_) {}
   // 重新查看新手引导
   const btnWiz = $('#btnShowWizard');

@@ -130,6 +130,7 @@
           <button type="button" class="settings-nav-item" data-settings-pane="backup"><svg class="ic" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><use href="#i-save"></use></svg>数据备份</button>
           <button type="button" class="settings-nav-item" data-settings-pane="skills"><svg class="ic" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><use href="#i-plugin"></use></svg>技能 / 插件</button>
           <button type="button" class="settings-nav-item" data-settings-pane="stats"><svg class="ic" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><use href="#i-chart"></use></svg>使用统计</button>
+          <button type="button" class="settings-nav-item" data-settings-pane="runs"><svg class="ic" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><use href="#i-history"></use></svg>任务记录</button>
           <button type="button" class="settings-nav-item" data-settings-pane="about"><svg class="ic" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><use href="#i-info"></use></svg>关于应用</button>
         </nav>
 
@@ -271,6 +272,38 @@
                 </div>
               </div>
             </div>
+            <div class="general-section" style="margin-top:14px">
+              <div class="set-step-title">记忆管理</div>
+              <div class="gen-row">
+                <span class="gen-label">自动学习</span>
+                <div class="gen-choices">
+                  <label class="lib-switch"><input type="checkbox" id="memAutoLearnToggle" /><span id="memAutoLearnLabel">开（默认）</span></label>
+                  <small class="field-hint" style="display:block;width:100%;margin-top:4px">
+                    开启后，教练会自动把对话里「值得长期记住」的内容归档进记忆，并把近期流水中有价值的段落晋升为长期记忆。关闭后只有你手动添加的记忆。
+                  </small>
+                </div>
+              </div>
+              <div class="gen-row">
+                <span class="gen-label">自动引用</span>
+                <div class="gen-choices">
+                  <label class="lib-switch"><input type="checkbox" id="memAutoCiteToggle" /><span id="memAutoCiteLabel">开（默认）</span></label>
+                  <small class="field-hint" style="display:block;width:100%;margin-top:4px">
+                    开启后，每次任务会自动把相关记忆注入上下文。关闭后记忆仍然保留、可在记忆中心查看，但不再影响回答。
+                  </small>
+                </div>
+              </div>
+              <div class="gen-row">
+                <span class="gen-label">候选审阅</span>
+                <div class="gen-choices">
+                  <label class="lib-switch"><input type="checkbox" id="memReviewToggle" /><span id="memReviewLabel">关（默认）</span></label>
+                  <small class="field-hint" style="display:block;width:100%;margin-top:4px">
+                    开启后，教练提出的记忆候选<b>先进「待审阅」</b>，你在记忆中心逐条<b>批准或否决</b>，不再自动入库。
+                    被否决的内容会进否决清单，以后同样的内容不再入库也不再注入。
+                  </small>
+                </div>
+              </div>
+              <div id="memRejectList" class="mem-reject-list"></div>
+            </div>
           </div>
 
           <!-- 面板：联网搜索 -->
@@ -392,6 +425,24 @@
               </div>
             </div>
           </div>
+          <!-- 面板：任务记录（受管队列 + 运行账本） -->
+          <div class="settings-pane" data-settings-pane="runs">
+            <div class="general-section">
+              <div class="gen-row" style="border-top:none">
+                <span class="gen-label">当前与排队</span>
+                <div class="gen-choices" style="flex-direction:column;align-items:flex-start;gap:6px;width:100%">
+                  <div id="runsNowPane" class="runs-now">—</div>
+                  <button type="button" class="btn ghost small" id="btnRunsRefresh">刷新</button>
+                </div>
+              </div>
+              <small class="field-hint" style="display:block">排队上限 3 个；排队中的任务可撤回。运行记录保留最近 200 条。</small>
+            </div>
+            <div class="general-section" style="margin-top:14px">
+              <div class="set-step-title">最近运行</div>
+              <div id="runsTable" class="runs-table"><div class="mem-empty">（尚未加载）</div></div>
+            </div>
+          </div>
+
           <!-- 面板：数据备份 -->
           <div class="settings-pane" data-settings-pane="backup">
             <div class="general-section">

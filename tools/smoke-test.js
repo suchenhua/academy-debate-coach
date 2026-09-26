@@ -724,7 +724,61 @@ async function main() {
           check('C档 还原不存在的快照明确报错', s5.o && s5.o.ok === false && !!s5.o.error);
           try { fsMod.rmSync(testDir, { recursive: true, force: true }); } catch (_) {}
         }
-        // 7c. 清空全部记忆：长期 + 流水都应清掉（含每日文件删除）；清空前应自动留快照
+        // 7b8. Phase 4 治理：受管子任务（队列/台账/预检/撤销）+ 记忆双开关/候选审阅/否决
+{
+  const pathMod = require('path');
+  const fsMod = require('fs');
+  const testDir = pathMod.join(ROOT, 'data', '_smoke_phase4');
+  try { fsMod.rmSync(testDir, { recursive: true, force: true }); } catch (_) {}
+  fsMod.mkdirSync(testDir, { recursive: true });
+  const envT = Object.assign({}, process.env, { ACADEMY_DATA_DIR: testDir, ACADEMY_NO_OPEN: '1' });
+  const run = (args) => {
+    const r = spawnSync(process.execPath, [pathMod.join(ROOT, 'tools', 'phase4-driver.js')].concat(args),
+      { cwd: ROOT, encoding: 'utf8', windowsHide: true, timeout: 30000, env: envT });
+    const lines = String(r.stdout || '').trim().split('\n');
+    try { return JSON.parse(lines[lines.length - 1]); } catch (_) { return { error: String(r.stdout || r.stderr || '').slice(0, 200) }; }
+  };
+  const gov = run(['govern-basic']);
+  check('Phase4 审阅候选：干净输出零候选；MEMORY/NOTE 入 pending 且不直接落库',
+    gov.cleanNoBlock === true && gov.inPending === true && gov.notInLong === true, JSON.stringify(gov));
+  check('Phase4 自动学习关：协议块剥离但不入候选', gov.offSkip === true && gov.archived1 === true, JSON.stringify(gov));
+  const rej = run(['reject-e2e']);
+  check('Phase4 否决：注入→否决→双指纹命中→不再注入/搜不到；撤销后恢复注入',
+    rej.injectedBefore === true && rej.hit === true && rej.notInjectedAfter === true && rej.dedup === true
+    && rej.unrejectOk === true && rej.reinjected === true, JSON.stringify(rej));
+  const pl = run(['pending-lifecycle']);
+  check('Phase4 候选同指纹去重、removePending 移除',
+    pl.oneCopy === true && pl.removed === true && pl.gone === true, JSON.stringify(pl));
+  const qd = run(['queue-dup']);
+  check('Phase4 预检：60 秒内重复提交拦 DUP', qd.firstClean === true && qd.dupBlocked === true, JSON.stringify(qd));
+  const qc = run(['queue-cap']);
+  check('Phase4 受管队列：上限 3、超限 QUEUE_FULL、清空归零',
+    qc.threwAt4 === true && qc.len === 3 && qc.cleared === true, JSON.stringify(qc));
+  const qw = run(['queue-withdraw']);
+  check('Phase4 任务撤下：withdraw 区分 queued/running 并重排队列',
+    qw.was === true && qw.pos1 === true && qw.was2 === true && qw.goneAfter === true && qw.emptyAfter === true,
+    JSON.stringify(qw));
+  const lg = run(['ledger']);
+  check('Phase4 运行台账：先追加后裁剪、最新在前、状态可终态化',
+    lg.appended === true && lg.latestFirst === true && Array.isArray(lg.statuses)
+    && lg.statuses.includes('ok') && lg.statuses.includes('running'), JSON.stringify(lg));
+  const srvSrc = fsMod.readFileSync(pathMod.join(ROOT, 'app', 'server.js'), 'utf8');
+  check('Phase4 后端接线：FIFO 队列 / 台账路由 / 候选决策路由 / 双开关默认值 / 冷启动预检',
+    srvSrc.includes('function queueRegister') && srvSrc.includes('/api/runs/recent')
+    && srvSrc.includes('/api/memory/pending/decide') && srvSrc.includes('memoryReview: false')
+    && srvSrc.includes('memoryAutoLearn: true') && srvSrc.includes('memoryAutoCite: true')
+    && srvSrc.includes('function runPrecheck') && srvSrc.includes('ledgerFinishRun'));
+  const htmlSrc = fsMod.readFileSync(pathMod.join(ROOT, 'app', 'public', 'index.html'), 'utf8');
+  const uiSrc = fsMod.readFileSync(pathMod.join(ROOT, 'app', 'public', 'app.js'), 'utf8');
+  check('Phase4 UI 接线：双开关+审阅 UI、任务记录面板、不再引用按钮、排队 SSE',
+    htmlSrc.includes('memAutoLearnToggle') && htmlSrc.includes('memAutoCiteToggle') && htmlSrc.includes('memReviewToggle')
+    && htmlSrc.includes('data-settings-pane="runs"')
+    && uiSrc.includes('loadMemToggles') && uiSrc.includes('loadRunsPane') && uiSrc.includes('不再引用')
+    && uiSrc.includes("event === 'queued'"));
+  try { fsMod.rmSync(testDir, { recursive: true, force: true }); } catch (_) {}
+}
+
+// 7c. 清空全部记忆：长期 + 流水都应清掉（含每日文件删除）；清空前应自动留快照
         {
           const fsMod = require('fs');
           const abDir = path.join(ROOT, 'data', '_auto_backup');

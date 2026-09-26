@@ -224,6 +224,109 @@ const DELIVER_DIR = path.join(DATA_DIR, 'deliverables');   // 产物空间：Age
 const CASE_INDEX = path.join(DATA_DIR, 'cases.json');
 const DELIVER_MAX_FILE = 30 * 1024 * 1024;                 // 单份产物读取上限
 
+/* ---------------- 受管任务队列与运行账本（借鉴 DSH-SEP「受管子任务」思路） ----------------
+   内核同时只跑一个任务（端口与额度都只有一份），但后来的请求不再直接吃 409：
+   进 FIFO 队列按序执行（排队上限 QUEUE_MAX）。启动前统一过预检
+   runPrecheck（Key/引擎/输入规模/重复提交），每次运行落一行账到
+   data/runs-ledger.jsonl —— 启动即失败也有记录，供「任务记录」面板追溯。 */
+const RUN_QUEUE_MAX = 3;
+const RUN_LEDGER_FILE = path.join(DATA_DIR, 'runs-ledger.jsonl');
+const RUN_LEDGER_MAX_LINES = 200;
+const runQueue = [];
+const recentLaunch = new Map();   // dedupKey -> 最近启动时间（返工限流）
+
+/* ---------------- 工具函数 ---------------- */
+function sha16(s) {
+  return crypto.createHash('sha1').update(String(s || '')).digest('hex').slice(0, 16);
+}
+
+function ledgerAppendRec(rec) {
+  try {
+    ensureDir(DATA_DIR);
+    fs.appendFileSync(RUN_LEDGER_FILE, JSON.stringify(rec) + '\n', 'utf8');
+    let lines = fs.readFileSync(RUN_LEDGER_FILE, 'utf8').split('\n').filter((s) => s.trim());
+    if (lines.length > RUN_LEDGER_MAX_LINES) lines = lines.slice(lines.length - RUN_LEDGER_MAX_LINES);
+    fs.writeFileSync(RUN_LEDGER_FILE, lines.join('\n') + '\n', 'utf8');
+  } catch (_) {}
+}
+
+function runsLedgerRecent(limit) {
+  let lines = [];
+  try { lines = fs.readFileSync(RUN_LEDGER_FILE, 'utf8').split('\n'); } catch (_) { return []; }
+  const recs = [];
+  for (let i = lines.length - 1; i >= 0 && recs.length < limit; i--) {
+    const t = lines[i].trim();
+    if (!t) continue;
+    try { recs.push(JSON.parse(t)); } catch (_) {}
+  }
+  return recs;
+}
+
+function ledgerFinishRun(rec, info, usage) {
+  rec.finishedAt = Date.now();
+  rec.elapsedMs = rec.finishedAt - (rec.startedAt || rec.finishedAt);
+  rec.code = info.code;
+  rec.status = info.cancelled ? 'cancelled' : info.timedOut ? 'timeout' : info.code === 0 ? 'ok' : 'error';
+  if (usage) rec.usage = usage;
+  if (rec.status === 'error') rec.errorTail = String(info.stderr || '').slice(-200);
+  ledgerAppendRec(rec);
+}
+
+function queueRegister(source, runId, taskText, startFn) {
+  if (runQueue.length >= RUN_QUEUE_MAX) {
+    const err = new Error('排队已满（' + RUN_QUEUE_MAX + ' 个）：请等前面的任务完成后再提交。');
+    err.code = 'QUEUE_FULL';
+    throw err;
+  }
+  const item = { source, runId, chars: String(taskText || '').length, enqueuedAt: Date.now(), startFn, cancelled: false };
+  runQueue.push(item);
+  pumpQueue();
+  return item;
+}
+
+function pumpQueue() {
+  if (currentRun) return;
+  while (runQueue.length) {
+    const item = runQueue.shift();
+    if (item.cancelled) continue;
+    try { item.startFn(); } catch (e) { try { console.log('[queue] 启动失败 ' + item.runId + ': ' + e.message); } catch (_) {} }
+    return;
+  }
+}
+
+function queuePositionOf(runId) {
+  return runQueue.findIndex((q) => q && q.runId === runId);
+}
+
+function queueWithdraw(runId) {
+  const i = queuePositionOf(runId);
+  if (i >= 0) { const [it] = runQueue.splice(i, 1); it.cancelled = true; return 'queued'; }
+  if (currentRun && currentRun.runId === runId) {
+    currentRun.cancelled = true;
+    killTree(currentRun.child);
+    return 'running';
+  }
+  return null;
+}
+
+function runPrecheck(cfg, text, opts) {
+  const problems = [];
+  if (!cfg || !(cfg.apiKey && String(cfg.apiKey).trim())) problems.push('NO_KEY：还没有可用的 API Key，请先在设置中填写。');
+  if (!engineReady()) problems.push('NO_ENGINE：Agent 内核缺失（runtime/dsh 或 runtime/node 不存在），请重新解压完整安装包。');
+  const t = String(text || '').trim();
+  if (!t) problems.push('EMPTY：任务内容为空。');
+  if (opts && opts.dedupKey) {
+    const last = recentLaunch.get(opts.dedupKey) || 0;
+    if (Date.now() - last < 60 * 1000) problems.push('DUP：相同的任务 60 秒内已经运行过，如果确要重跑请稍候几秒再提交。');
+    else recentLaunch.set(opts.dedupKey, Date.now());
+  }
+  if (recentLaunch.size > 400) {
+    const cut = Date.now() - 120 * 1000;
+    for (const [k, v] of recentLaunch) if (v < cut) recentLaunch.delete(k);
+  }
+  return problems;
+}
+
 /* ---------------- 工具函数 ---------------- */
 function ensureDir(dir) {
   try { fs.mkdirSync(dir, { recursive: true }); } catch (_) { /* ignore */ }
@@ -321,6 +424,9 @@ function defaultConfig() {
     apiKey: '', model: DEFAULT_MODEL, baseUrl: DEFAULT_BASE_URL,
     searchProvider: 'server', searchApiKey: '', timeoutMs: DEFAULT_TIMEOUT_MS,
     libraryEnabled: true, extendedTools: false,
+    // 记忆治理：自动学习（协议块归档/蒸馏晋升）与自动引用（注入任务单）分别可控；
+    // 审阅开启后，Agent 的记忆候选先进「待审阅」，由用户在记忆中心批准或否决。
+    memoryAutoLearn: true, memoryAutoCite: true, memoryReview: false,
     // 自定义搜索服务（学习 RikkaHub 的插件式思路）：
     // 内置的免费抓取（Bing/DDG）在部分网络下会被反爬返回无关结果，
     // 与其塞一个必然失败的免费通道，不如让用户接入自己可用的搜索服务。
@@ -363,6 +469,9 @@ function saveConfig(patch) {
   next.model = String(next.model || DEFAULT_MODEL).trim();
   if (patch.searchApiKey !== undefined) next.searchApiKey = String(next.searchApiKey || '').trim();
   if (patch.searchProvider !== undefined) next.searchProvider = ['server', 'free'].includes(patch.searchProvider) ? patch.searchProvider : 'server';
+  for (const kb of ['libraryEnabled', 'extendedTools', 'memoryAutoLearn', 'memoryAutoCite', 'memoryReview']) {
+    if (patch[kb] !== undefined) next[kb] = patch[kb] === true;   // 布尔开关严格化，防字符串 "false" 当假写入
+  }
   writeJsonAtomic(CONFIG_FILE, next);
   writeDshSettings(next.model, next.baseUrl, effectiveSearchKey(next), resolveSearchProvider(next));
   return next;
@@ -591,6 +700,7 @@ function statusPayload() {
     searchProvider: cfg.searchProvider || 'auto',
     searchMode: resolveSearchProvider(cfg), // server | free
     busy: currentRun ? true : false,
+    queueLen: runQueue.length,
     port: actualPort || DEFAULT_PORT,
     memorySize: (() => { try { return fs.existsSync(MEMORY_FILE) ? fs.statSync(MEMORY_FILE).size : 0; } catch (_) { return 0; } })(),
   };
@@ -726,12 +836,21 @@ function memoryEntryText(title, body) {
   return (title ? '## ' + title + '\n\n' : '') + b;
 }
 
+function memRejectedFps() {
+  const set = new Set();
+  for (const r of readJsonSafe(MEMORY_REJECTED_FILE, [])) {
+    if (r && r.fp) set.add(r.fp);
+  }
+  return set;
+}
+
 /**
  * 按需挑选长期记忆：最近 MEM_CORE_ENTRIES 条常驻 + 与当前问题相关的 top-N。
  * 返回 { text, shown, total, fps }；fps 是「本轮真正注入」条目的指纹，供下游判重。
  */
 function selectLongMemory(text) {
-  const entries = parseMemoryEntries(readTextFile(MEMORY_FILE));
+  const rejectedFps = memRejectedFps();
+  const entries = parseMemoryEntries(readTextFile(MEMORY_FILE)).filter((e) => !memRejectedByFps(e.body, e.title, rejectedFps));
   const total = entries.length;
   if (!total) return { text: '', shown: 0, total: 0, fps: new Set() };
 
@@ -745,6 +864,7 @@ function selectLongMemory(text) {
     const cap = MEM_CORE_ENTRIES + MEM_RECALL_ENTRIES;
     for (const h of memorySearch(String(text || ''), cap, { onlyLong: true })) {
       if (picked.length >= cap) break;
+      if (memRejectedByFps(h.body, h.title, rejectedFps)) continue;
       const fp = memFingerprint(h.body);
       if (pickedFps.has(fp)) continue;
       pickedFps.add(fp);
@@ -944,7 +1064,87 @@ function forgetLongEntries(keyword) {
   return { removed: gone.length };
 }
 
-/* ---- 归档：<!-- MEMORY: x --> 走长期；<!-- NOTE: x --> 走当日流水；<!-- FORGET: x --> 软撤回 ---- */
+/* ---- 记忆治理：自动学习 / 自动引用开关 + 待审阅候选 + 否决清单 ----
+   memory.md / memory/ 仍是唯一事实源；pending-review.json 与 rejected.json
+   只是治理侧车（否决清单按内容指纹在注入与召回处生效）。 */
+const MEMORY_PENDING_FILE = path.join(DATA_DIR, 'memory-pending.json');
+const MEMORY_REJECTED_FILE = path.join(DATA_DIR, 'memory-rejected.json');
+const MEM_PENDING_MAX = 50;
+
+function readJsonSafe(fp, dflt) {
+  try {
+    const v = JSON.parse(fs.readFileSync(fp, 'utf8'));
+    return Array.isArray(v) ? v : dflt;
+  } catch (_) { return dflt; }
+}
+
+/** 否决记录命中判断：正文指纹 + 序列化块指纹（含「## 标题」行）双口径 */
+function memRejectFpsOf(r) {
+  const set = new Set();
+  if (r && r.fp) set.add(r.fp);
+  if (r && r.fpBlock) set.add(r.fpBlock);
+  return set;
+}
+function memRejectedFps() {
+  const set = new Set();
+  for (const r of readJsonSafe(MEMORY_REJECTED_FILE, [])) for (const f of memRejectFpsOf(r)) set.add(f);
+  return set;
+}
+/** 条目是否命中否决清单：正文指纹或「## 标题+正文」序列化块指纹任一即算 */
+function memRejectedByFps(body, title, fps) {
+  const set = fps || memRejectedFps();
+  if (!body) return false;
+  if (set.has(memFingerprint(body))) return true;
+  if (title && set.has(memFingerprint(memoryEntryText(title, body)))) return true;
+  return false;
+}
+/** 候选/条目是否已被用户否决（正文或序列化块任一指纹命中即算） */
+function memRejectedHit(text) {
+  const fpv = memFingerprint(text);
+  if (!fpv) return null;
+  const list = readJsonSafe(MEMORY_REJECTED_FILE, []);
+  return list.find((r) => r && (memFingerprint(r.text) === fpv || r.fp === fpv || r.fpBlock === fpv)) || null;
+}
+
+function rejectMemoryFingerprint(text, source) {
+  if (!text) return;
+  const fpv = memFingerprint(text);
+  // 长期记忆注入时是「## <title>\n\n<body>」整块，条目 body 与原始 text 不同形 —— 两个指纹都记
+  const fpBlock = memFingerprint('## ' + (source === 'long-entry' ? String(text).split('\n')[0] : '') + '\n\n' + text);
+  const list = readJsonSafe(MEMORY_REJECTED_FILE, []);
+  if (list.some((r) => r && (memFingerprint(r.text) === fpv || r.fp === fpv))) return;
+  list.push({ fp: fpv, fpBlock, text: String(text).slice(0, 2000), time: now(), source: source || 'user' });
+  while (list.length > 100) list.shift();
+  writeJsonAtomic(MEMORY_REJECTED_FILE, list);
+}
+
+function unrejectMemory(fpOrId) {
+  const list = readJsonSafe(MEMORY_REJECTED_FILE, []);
+  const nextList = list.filter((r) => r && r.fp !== fpOrId && r.fpBlock !== fpOrId);
+  writeJsonAtomic(MEMORY_REJECTED_FILE, nextList);
+  return list.length !== nextList.length;
+}
+
+function pushMemoryPending(rec) {
+  const list = readJsonSafe(MEMORY_PENDING_FILE, []);
+  const fpv = memFingerprint(rec.text);
+  // 同指纹候选只留最新一条（Agent 反复提同一句不该刷屏）
+  const kept = list.filter((p) => p && memFingerprint(p.text) !== fpv);
+  kept.push(Object.assign({ fp: fpv }, rec));
+  while (kept.length > MEM_PENDING_MAX) kept.shift();
+  writeJsonAtomic(MEMORY_PENDING_FILE, kept);
+}
+
+function removeMemoryPending(fpOrId) {
+  const list = readJsonSafe(MEMORY_PENDING_FILE, []);
+  const nextList = list.filter((p) => p && p.fp !== fpOrId);
+  writeJsonAtomic(MEMORY_PENDING_FILE, nextList);
+  return list.length - nextList.length;
+}
+
+/* ---- 归档：<!-- MEMORY: x --> 走长期；<!-- NOTE: x --> 走当日流水；<!-- FORGET: x --> 软撤回 ----
+   自动学习关闭 → 只剥离协议块不入库；审阅开启 → MEMORY/NOTE 候选进待审阅，
+   由用户在记忆中心批准（正式入库）或否决（进否决清单，今后同文不再入库/注入）。 ---- */
 function archiveMemoryFromOutput(stdout) {
   const reMem = /<!--\s*MEMORY:\s*([\s\S]*?)-->/g;
   const reNote = /<!--\s*NOTE:\s*([\s\S]*?)-->/g;
@@ -962,12 +1162,22 @@ function archiveMemoryFromOutput(stdout) {
         : '⚠️ 未匹配到可撤回的长期记忆：「' + kw + '」');
     } catch (e) { forgetNotes.push('❌ 撤回失败（「' + kw + '」）：' + e.message); }
   }
+  const mc = loadConfig();
+  const reviewMode = !!(mc.memoryAutoLearn && mc.memoryReview);
   while ((m = reMem.exec(stdout)) !== null) {
-    total += appendMemory(m[1], { long: true });
+    const t = String(m[1]).trim();
+    if (mc.memoryAutoLearn && t) {
+      if (reviewMode && !memRejectedHit(t)) { pushMemoryPending({ kind: 'long', text: t, time: now() }); total += t.length; }
+      else if (!reviewMode) total += appendMemory(t, { long: true });
+    }
     cleaned = cleaned.replace(m[0], '');
   }
   while ((m = reNote.exec(stdout)) !== null) {
-    total += appendMemory(m[1], { long: false });
+    const t = String(m[1]).trim();
+    if (mc.memoryAutoLearn && t) {
+      if (reviewMode && !memRejectedHit(t)) { pushMemoryPending({ kind: 'daily', text: t, time: now() }); total += t.length; }
+      else if (!reviewMode) total += appendMemory(t, { long: false });
+    }
     cleaned = cleaned.replace(m[0], '');
   }
   if (forgetNotes.length) cleaned = cleaned.replace(/\s+$/, '') + '\n\n---\n**记忆撤回**\n' + forgetNotes.join('\n');
@@ -1004,13 +1214,16 @@ function memoryScopeLabel(scope, file) {
 }
 
 function memoryKeywordRecall(text, history, excludeFps) {
+  if (loadConfig().memoryAutoCite === false) return [];
   try {
     const srcText = String(text || '') + ' ' + (Array.isArray(history) && history.length ? String(history[history.length - 1].text || '') : '');
     if (!srcText.trim()) return [];
     const hits = memorySearch(srcText, 6, { skipRecentDays: 2 });
+    const rejectedFps = memRejectedFps();
     const out = [];
     for (const h of hits) {
       if (excludeFps && excludeFps.has(memFingerprint(h.body))) continue;
+      if (memRejectedByFps(h.body, h.title, rejectedFps)) continue;
       const head = '（来自 ' + memoryScopeLabel(h.scope, h.file)
         + (h.time ? ' · ' + h.time.slice(0, 16) : '') + '）';
       const title = h.title && !/^##\s*\d{4}/.test(h.title) ? '【' + h.title.replace(/^#+\s*/, '') + '】' : '';
@@ -1035,6 +1248,7 @@ const MEM_PROMOTE_KWS = ['判准', '基准', '记住', '始终', '下次', '偏�
 const MEM_PROMOTE_MIN_CHARS = 12;
 const MEM_PROMOTE_DENY = /连通性测试|链路自检|第\s*\d+\s*轮|待命|空转|本次测试|测试消息|联调/;
 function distillRecentNotes() {
+  if (loadConfig().memoryAutoLearn === false) return;
   try {
     ensureDir(MEMORY_DIR);
     const now = Date.now();
@@ -2542,8 +2756,10 @@ function buildTaskInBudget(runId, mode, text, history, opts = {}) {
     { historyRounds: 0, historyItemLimit: 0, skipDaily: true, libraryKeep: 2, snippetChars: 200, deliverablesKeep: 3 },
   ];
   // 这些输入与裁剪档位无关，只算一次（原先每档都要重读记忆/流水/召回/技能，最多 5 遍）
-  const longSel = selectLongMemory(text);
-  const dailySel = selectRecentDaily(2, longSel.fps, MEM_DAILY_MAX);
+  const mc = loadConfig();
+  const citeOn = mc.memoryAutoCite !== false;
+  const longSel = citeOn ? selectLongMemory(text) : { text: '', shown: 0, total: 0, fps: new Set() };
+  const dailySel = citeOn ? selectRecentDaily(2, longSel.fps, MEM_DAILY_MAX) : { text: '', skipped: 0 };
   const pre = {
     memory: longSel.text,
     memoryTotal: longSel.total,
@@ -2748,8 +2964,12 @@ function buildTaskFile(runId, mode, text, history, opts = {}) {
   }
   lines.push('8. 输出使用中文 Markdown；给用户看的最终答复要完整、结构清晰。');
   lines.push('9. 单次输出有 token 上限：写一辩稿/长报告等长篇交付时，优先保证「正稿主体完整」，过程性说明（加载了哪些文件、搜索过程等）尽量一句话带过，避免因输出超长被截断导致任务失败。');
+  if (loadConfig().memoryAutoLearn === false) {
+    lines.push('10. 记忆：用户已关闭自动学习。不要输出 <!-- MEMORY: --> / <!-- NOTE: --> 协议块；用户明确要求「记住」时，改用普通文字说明你记住了什么，由服务端/用户处理。');
+  } else {
   lines.push('10. 记忆：若本次对话中有「值得长期记住」的内容（你的常用判准、辩题笔记、资料索引、用户偏好、基准结论等），在最终回复末尾单独附加 HTML 注释块 `<!-- MEMORY: 要记住的内容 -->`（服务端归档到长期记忆）；若只是「短期观察/可复用的过程信息」，用 `<!-- NOTE: 内容 -->`（归档到当日流水）。用户要求忘记/撤回某条长期记忆时，附 `<!-- FORGET: 关键词 -->`（关键词须出现在原条目中；命中条目会被移入归档，不再常驻）；更正某条记忆 = FORGET 旧关键词 + MEMORY 新内容。绝不把密钥、API Key、密码、token 写进记忆（服务端也会拦截）。不要修改任何文件，不要重复已存在于「长程记忆」段落的内容。');
   if (memoryGuard.memoryTalkIntent(text)) lines.push('    ※ 注意：用户当前消息疑似涉及「撤回/更正记忆」。若确认此意，务必在最终回复中输出对应的 FORGET / MEMORY 协议块，而不要只口头答应。');
+  }
   if (Array.isArray(opts.library) && opts.library.length) {
     lines.push('11. 本次任务已附带「个人资料库」召回片段：这些是用户自己的备赛资料，优先级高于通用知识。引用其中的数据、口径、话术时直接采用；需要更多细节时用文件工具读取片段后给出的全文路径。资料库里没有的内容，不要说成来自资料库。');
   }
@@ -3018,9 +3238,19 @@ function drainSessionWatcher(w) {
   return events;
 }
 
-function runDsh(runId, taskText, cfg, stream) {
+function runDsh(runId, taskText, cfg, stream, meta) {
   return new Promise((resolve) => {
     const startedAt = Date.now();
+    // 运行账本：启动即落账（launch 失败也有记录），settle 时补终态
+    const ledgerRec = { runId, source: (meta && meta.source) || 'unknown', mode: (meta && meta.mode) || '', model: String(cfg && cfg.model || ''), time: new Date(startedAt).toISOString(), startedAt, status: 'running', inputChars: String(taskText || '').length };
+    ledgerAppendRec(ledgerRec);
+    const ledgerComplete = (info2) => {
+      try {
+        let usage;
+        try { const u = extractFinalUsage(startedAt, cfg && cfg.model); if (u) usage = { input: u.inputTokens, output: u.outputTokens }; } catch (_) {}
+        ledgerFinishRun(ledgerRec, info2, usage);
+      } catch (_) {}
+    };
     const bin = dshBin();
     const node = bundledNode();
     migrateZstdSessions();
@@ -3098,7 +3328,9 @@ function runDsh(runId, taskText, cfg, stream) {
         } catch (_) {}
       }
       // 自动蒸馏：把较早流水中的有价值段落晋升到长期记忆，并清理过期流水
-      try { distillRecentNotes(); } catch (_) {}
+      if (loadConfig().memoryAutoLearn !== false) { try { distillRecentNotes(); } catch (_) {} }
+      ledgerComplete(info);
+      setImmediate(pumpQueue);
       resolve(info);
     };
 
@@ -4062,7 +4294,7 @@ function handleRequest(req, res) {
   // 研究台：按 7 种主动搜索触发条件，为当前辩题生成建议搜索词。
   // 用 DSH 内核跑一次极小任务（复用现有 runDsh 管线），返回结构化建议。
   if (req.method === 'POST' && p === '/api/research/suggest') {
-    if (currentRun) return sendJson(res, 409, { ok: false, error: 'BUSY', message: '有一个任务正在运行，请稍后再试。' });
+    if (runQueue.length >= RUN_QUEUE_MAX) return sendJson(res, 409, { ok: false, error: 'BUSY', message: '排队已满（' + RUN_QUEUE_MAX + ' 个），请等前面的任务完成后再试。' });
     return readBody(req, 64 * 1024).then((raw) => {
       let body;
       try { body = JSON.parse(raw || '{}'); } catch (_) { return sendJson(res, 400, { ok: false, error: 'JSON 解析失败' }); }
@@ -4090,8 +4322,17 @@ function handleRequest(req, res) {
       const taskFile = path.join(TASK_DIR, runId + '.md');
       fs.writeFileSync(taskFile, prompt, 'utf8');
       writeDshSettings(cfg.model, cfg.baseUrl, effectiveSearchKey(cfg), resolveSearchProvider(cfg));
-      return runDsh(runId, prompt, cfg, () => {}).then((info) => {
-        const out = String(info.stdout || '').trim();
+      // 返工限流：同一辩题 60 秒内不重复起suggest（防连点风暴）
+      {
+        const problems = runPrecheck(cfg, prompt, { dedupKey: 'sug:' + sha16(topic) });
+        const dup = problems.find((s) => s.startsWith('DUP'));
+        if (dup) return sendJson(res, 429, { ok: false, error: 'DUP', message: dup });
+      }
+      return new Promise((resolveRoute) => {
+        queueRegister('suggest', runId, prompt, () => {
+          runDsh(runId, prompt, cfg, () => {}, { source: 'suggest' }).then((info) => {
+            const out = String(info.stdout || '').trim();
+            resolveRoute();
         // 从回复里抠 JSON（模型可能裹在代码块里）
         const m = out.match(/\{[\s\S]*\}/);
         if (!m) return sendJson(res, 200, { ok: true, topic, hits: [], raw: out.slice(0, 400) });
@@ -4100,6 +4341,8 @@ function handleRequest(req, res) {
           const hits = Array.isArray(j.hits) ? j.hits.filter((h) => h && h.query) : [];
           return sendJson(res, 200, { ok: true, topic, hits });
         } catch (_) { return sendJson(res, 200, { ok: true, topic, hits: [], raw: out.slice(0, 400) }); }
+          }).catch((e) => { resolveRoute(); sendJson(res, 500, { ok: false, error: e.message }); });
+        });
       }).catch((e) => sendJson(res, 500, { ok: false, error: e.message }));
     }).catch((e) => sendJson(res, 500, { ok: false, error: e.message }));
   }
@@ -4108,7 +4351,7 @@ function handleRequest(req, res) {
   // 是否真实存在、是否被曲解/断章取义、口径与时效、以及引用时的注意事项。
   // 内核自带 web_search 代理（/internal/web-search/*），可边推理边联网检索。
   if (req.method === 'POST' && p === '/api/research/verify') {
-    if (currentRun) return sendJson(res, 409, { ok: false, error: 'BUSY', message: '有一个任务正在运行，请等待完成后再试。' });
+    if (runQueue.length >= RUN_QUEUE_MAX) return sendJson(res, 409, { ok: false, error: 'BUSY', message: '排队已满（' + RUN_QUEUE_MAX + ' 个），请等前面的任务完成后再试。' });
     return readBody(req, 256 * 1024).then((raw) => {
       let body;
       try { body = JSON.parse(raw || '{}'); } catch (_) { return sendJson(res, 400, { ok: false, error: 'JSON 解析失败' }); }
@@ -4162,10 +4405,15 @@ function handleRequest(req, res) {
       const taskFile = path.join(TASK_DIR, runId + '.md');
       fs.writeFileSync(taskFile, prompt, 'utf8');
       writeDshSettings(cfg.model, cfg.baseUrl, effectiveSearchKey(cfg), resolveSearchProvider(cfg));
-      return runDsh(runId, prompt, cfg, () => {}).then((info) => {
-        const out = String(info.stdout || '').trim();
-        if (!out) return sendJson(res, 500, { ok: false, error: '内核没有返回内容，请重试。' });
-        return sendJson(res, 200, { ok: true, claim, report: out, elapsedMs: info.timedOut ? -1 : 0 });
+      return new Promise((resolveRoute) => {
+        queueRegister('verify', runId, prompt, () => {
+          runDsh(runId, prompt, cfg, () => {}, { source: 'verify' }).then((info) => {
+            const out = String(info.stdout || '').trim();
+            resolveRoute();
+            if (!out) return sendJson(res, 500, { ok: false, error: '内核没有返回内容，请重试。' });
+            return sendJson(res, 200, { ok: true, claim, report: out, elapsedMs: info.timedOut ? -1 : 0 });
+          }).catch((e) => { resolveRoute(); sendJson(res, 500, { ok: false, error: e.message }); });
+        });
       }).catch((e) => sendJson(res, 500, { ok: false, error: e.message }));
     }).catch((e) => sendJson(res, 500, { ok: false, error: e.message }));
   }
@@ -4355,7 +4603,7 @@ function handleRequest(req, res) {
   // 工具箱：资料溯源 · 深度版（内核多轮检索，1~5 分钟）。
   // 结构同 /api/research/verify：走内核 Agent 循环，可边推理边多轮联网检索。
   if (req.method === 'POST' && p === '/api/research/trace') {
-    if (currentRun) return sendJson(res, 409, { ok: false, error: 'BUSY', message: '有一个任务正在运行，请等待完成后再试。' });
+    if (runQueue.length >= RUN_QUEUE_MAX) return sendJson(res, 409, { ok: false, error: 'BUSY', message: '排队已满（' + RUN_QUEUE_MAX + ' 个），请等前面的任务完成后再试。' });
     return readBody(req, 256 * 1024).then((raw) => {
       let body;
       try { body = JSON.parse(raw || '{}'); } catch (_) { return sendJson(res, 400, { ok: false, error: 'JSON 解析失败' }); }
@@ -4411,10 +4659,15 @@ function handleRequest(req, res) {
       const taskFile = path.join(TASK_DIR, runId + '.md');
       fs.writeFileSync(taskFile, prompt, 'utf8');
       writeDshSettings(cfg.model, cfg.baseUrl, effectiveSearchKey(cfg), resolveSearchProvider(cfg));
-      return runDsh(runId, prompt, cfg, () => {}).then((info) => {
-        const out = String(info.stdout || '').trim();
-        if (!out) return sendJson(res, 500, { ok: false, error: '内核没有返回内容，请重试。' });
-        return sendJson(res, 200, { ok: true, claim, report: out, elapsedMs: info.timedOut ? -1 : 0 });
+      return new Promise((resolveRoute) => {
+        queueRegister('verify', runId, prompt, () => {
+          runDsh(runId, prompt, cfg, () => {}, { source: 'verify' }).then((info) => {
+            const out = String(info.stdout || '').trim();
+            resolveRoute();
+            if (!out) return sendJson(res, 500, { ok: false, error: '内核没有返回内容，请重试。' });
+            return sendJson(res, 200, { ok: true, claim, report: out, elapsedMs: info.timedOut ? -1 : 0 });
+          }).catch((e) => { resolveRoute(); sendJson(res, 500, { ok: false, error: e.message }); });
+        });
       }).catch((e) => sendJson(res, 500, { ok: false, error: e.message }));
     }).catch((e) => sendJson(res, 500, { ok: false, error: e.message }));
   }
@@ -4685,6 +4938,11 @@ function handleRequest(req, res) {
         dailyFiles: dailyEntries.length,
         totalBytes: longSize + dailyEntries.reduce((t, d) => t + d.size, 0),
       },
+      reviewOn: loadConfig().memoryReview === true,
+      autoLearn: loadConfig().memoryAutoLearn !== false,
+      autoCite: loadConfig().memoryAutoCite !== false,
+      pending: readJsonSafe(MEMORY_PENDING_FILE, []).slice(-20).reverse(),
+      rejected: readJsonSafe(MEMORY_REJECTED_FILE, []).slice(-10).reverse(),
     });
   }
 
@@ -4881,6 +5139,9 @@ function handleRequest(req, res) {
         searchProvider: typeof body.searchProvider === 'string' ? body.searchProvider : loadConfig().searchProvider,
         libraryEnabled: body.libraryEnabled !== undefined ? body.libraryEnabled !== false : loadConfig().libraryEnabled,
         extendedTools: body.extendedTools !== undefined ? body.extendedTools === true : loadConfig().extendedTools,
+        memoryAutoLearn: body.memoryAutoLearn !== undefined ? body.memoryAutoLearn === true : loadConfig().memoryAutoLearn,
+        memoryAutoCite: body.memoryAutoCite !== undefined ? body.memoryAutoCite === true : loadConfig().memoryAutoCite,
+        memoryReview: body.memoryReview !== undefined ? body.memoryReview === true : loadConfig().memoryReview,
       });
       return sendJson(res, 200, {
         ok: true, hasKey: !!cfg.apiKey, keyMasked: maskKey(cfg.apiKey),
@@ -5403,25 +5664,44 @@ function handleRequest(req, res) {
   }
 
   if (req.method === 'POST' && p === '/api/cancel') {
-    if (currentRun) {
-      currentRun.cancelled = true;
-      killTree(currentRun.child);
-      return sendJson(res, 200, { ok: true });
-    }
-    return sendJson(res, 200, { ok: false, error: '没有正在运行的任务' });
+    return readBody(req, 8 * 1024).then((raw) => {
+      let body = {};
+      try { body = JSON.parse(raw || '{}'); } catch (_) {}
+      const runId = String(body.runId || '').trim();
+      if (runId) {
+        const was = queueWithdraw(runId);
+        if (was) return sendJson(res, 200, { ok: true, was });
+        return sendJson(res, 200, { ok: false, error: '队列与运行中都找不到这个任务' });
+      }
+      if (currentRun) {
+        currentRun.cancelled = true;
+        killTree(currentRun.child);
+        return sendJson(res, 200, { ok: true, was: 'running' });
+      }
+      return sendJson(res, 200, { ok: false, error: '没有正在运行的任务' });
+    }).catch((e) => sendJson(res, 500, { ok: false, error: e.message }));
   }
 
   if (req.method === 'POST' && p === '/api/chat/stream') {
     const cfg = loadConfig();
     if (!cfg.apiKey) return sendJson(res, 400, { ok: false, error: 'NO_KEY', message: '请先在设置中填写 API Key。' });
     if (!engineReady()) return sendJson(res, 500, { ok: false, error: 'NO_ENGINE', message: 'Agent 内核缺失（runtime/dsh 或 runtime/node 不存在）。请重新解压完整压缩包。' });
-    if (currentRun) return sendJson(res, 409, { ok: false, error: 'BUSY', message: '有一个任务正在运行，请等待完成或点击停止。' });
+    // 受管队列：忙不再吃 409，后来的请求按 FIFO 排队（上限 RUN_QUEUE_MAX）
+    if (runQueue.length >= RUN_QUEUE_MAX) return sendJson(res, 409, { ok: false, error: 'BUSY', message: '排队已满（' + RUN_QUEUE_MAX + ' 个），请等前面的任务完成后再发。' });
 
-    return readBody(req, MAX_BODY).then((raw) => {
+    return readBody(req, MAX_BODY).then(async (raw) => {
       let body;
       try { body = JSON.parse(raw || '{}'); } catch (_) { return sendJson(res, 400, { ok: false, error: 'JSON 解析失败' }); }
       const text = String(body.text || '').trim();
       if (!text) return sendJson(res, 400, { ok: false, error: '请输入内容。' });
+      // 运行前预检：统一口径（Key/引擎/输入规模）；任务单超长由 buildTaskInBudget 分级裁剪兜底
+      {
+        const problems = runPrecheck(cfg, text, {});
+        if (text.length > 100000) problems.push('输入过长（' + text.length + ' 字符），请把大文件放进资料库后引用，不要整段粘贴。');
+        problems.length = problems.length; // noop keep
+        const hard = problems.filter((s) => !s.startsWith('DUP'));
+        if (hard.length) return sendJson(res, 400, { ok: false, error: 'PRECHECK', message: hard.join(' ') });
+      }
 
       const runId = 'task-' + Date.now().toString(36) + '-' + crypto.randomBytes(3).toString('hex');
       const mode = MODE_META[body.mode] ? body.mode : 'free';
@@ -5459,14 +5739,9 @@ function handleRequest(req, res) {
         if (event === 'delta' && typeof data?.text === 'string') streamedText += data.text;
         try { res.write('event: ' + event + '\ndata: ' + JSON.stringify(data) + '\n\n'); } catch (_) {}
       };
-      stream('start', { runId, mode, label: MODE_META[mode].label, model: cfg.model, baseUrl: cfg.baseUrl });
-      stream('status', { stage: 'launching', message: '正在启动 Agent 内核（首次启动约 10~30 秒）…' });
-      if (libHits.length) {
-        stream('library', { items: libHits.map((h) => ({ id: h.id, name: h.name, charCount: h.charCount, score: h.score })) });
-      }
-
-      const startedAt = Date.now();
-      return runDsh(runId, cliTask, cfg, stream).then((info) => {
+      let startedAt = Date.now();
+      let item = null;
+      const beginRun = () => runDsh(runId, cliTask, cfg, stream, { source: 'chat', mode }).then((info) => {
         let finalText = String(info.stdout || '').trim();
         const ok = !info.cancelled && !info.timedOut && info.code === 0 && (finalText.length > 0 || streamedText.length > 0);
         // DELIVER 协议：解析并自动转档，成功信息并入回复
@@ -5512,7 +5787,107 @@ function handleRequest(req, res) {
         try { stream('error', { runId, message: '服务内部错误：' + e.message }); } catch (_) {}
         res.end();
       });
+      queueRegister('chat', runId, taskText, () => {
+        startedAt = Date.now();
+        stream('start', { runId, mode, label: MODE_META[mode].label, model: cfg.model, baseUrl: cfg.baseUrl, queuePos: 0 });
+        stream('status', { stage: 'launching', message: '正在启动 Agent 内核（首次启动约 10~30 秒）…' });
+        if (libHits.length) {
+          stream('library', { items: libHits.map((h) => ({ id: h.id, name: h.name, charCount: h.charCount, score: h.score })) });
+        }
+        beginRun();
+      });
+      const pos = queuePositionOf(runId);
+      if (pos >= 0) stream('queued', { runId, pos: pos + 1, total: runQueue.length });
+      return undefined;
     }).catch((e) => sendJson(res, 400, { ok: false, error: e.message }));
+  }
+
+  /* ---------------- 受管任务：队列状态 / 运行账本 / 撤回 ---------------- */
+  if (req.method === 'GET' && p === '/api/queue') {
+    return sendJson(res, 200, {
+      ok: true,
+      current: currentRun ? { runId: currentRun.runId, startedAt: currentRun.startedAt } : null,
+      queued: runQueue.map((q, i) => ({ runId: q.runId, source: q.source, pos: i + 1, chars: q.chars, enqueuedAt: q.enqueuedAt })),
+      max: RUN_QUEUE_MAX,
+    });
+  }
+
+  if (req.method === 'GET' && p === '/api/runs/recent') {
+    let u = 30;
+    try { u = Number(new URL(req.url, 'http://x').searchParams.get('limit')) || 30; } catch (_) {}
+    u = Math.min(100, Math.max(1, u));
+    return sendJson(res, 200, {
+      ok: true,
+      runs: runsLedgerRecent(u),
+      current: currentRun ? { runId: currentRun.runId, startedAt: currentRun.startedAt } : null,
+      queued: runQueue.map((q, i) => ({ runId: q.runId, source: q.source, pos: i + 1 })),
+      max: RUN_QUEUE_MAX,
+    });
+  }
+
+  if (req.method === 'POST' && p === '/api/queue/withdraw') {
+    return readBody(req, 8 * 1024).then((raw) => {
+      let body;
+      try { body = JSON.parse(raw || '{}'); } catch (_) { return sendJson(res, 400, { ok: false, error: 'JSON 解析失败' }); }
+      const runId = String(body.runId || '').trim();
+      if (!runId) return sendJson(res, 400, { ok: false, error: '缺少 runId' });
+      const r = queueWithdraw(runId);
+      if (!r) return sendJson(res, 404, { ok: false, error: '队列与运行中都找不到这个任务（可能已完成）' });
+      return sendJson(res, 200, { ok: true, was: r });
+    }).catch((e) => sendJson(res, 500, { ok: false, error: e.message }));
+  }
+
+  /* ---------------- 记忆治理：待审阅候选 / 否决清单 ---------------- */
+  if (req.method === 'POST' && p === '/api/memory/reject') {
+    return readBody(req, 64 * 1024).then((raw) => {
+      let body;
+      try { body = JSON.parse(raw || '{}'); } catch (_) { return sendJson(res, 400, { ok: false, error: 'JSON 解析失败' }); }
+      const scope = body.scope === 'daily' ? 'daily' : 'long';
+      const text = String(body.text || '').trim();
+      if (text) {
+        rejectMemoryFingerprint(text, 'card');
+        return sendJson(res, 200, { ok: true, mode: 'text' });
+      }
+      const fpv = String(body.fp || '').trim();
+      const list = readJsonSafe(MEMORY_REJECTED_FILE, []);
+      const hit = list.find((x) => x && x.fp === fpv);
+      if (!hit) return sendJson(res, 404, { ok: false, error: '缺少 text/fp，且否决清单中没有这个指纹' });
+      rejectMemoryFingerprint(hit.text || '', 'card');   // 复用归一化口径补录
+      return sendJson(res, 200, { ok: true, mode: 'fp' });
+    }).catch((e) => sendJson(res, 500, { ok: false, error: e.message }));
+  }
+
+  if (req.method === 'POST' && p === '/api/memory/rejected/remove') {
+    return readBody(req, 8 * 1024).then((raw) => {
+      let body;
+      try { body = JSON.parse(raw || '{}'); } catch (_) { return sendJson(res, 400, { ok: false, error: 'JSON 解析失败' }); }
+      const ok = unrejectMemory(String(body.fp || '').trim());
+      return sendJson(res, ok ? 200 : 404, { ok, error: ok ? undefined : '否决清单中没有这个指纹' });
+    }).catch((e) => sendJson(res, 500, { ok: false, error: e.message }));
+  }
+
+  if (req.method === 'POST' && p === '/api/memory/pending/decide') {
+    return readBody(req, 8 * 1024).then((raw) => {
+      let body;
+      try { body = JSON.parse(raw || '{}'); } catch (_) { return sendJson(res, 400, { ok: false, error: 'JSON 解析失败' }); }
+      const fpv = String(body.fp || '').trim();
+      const action = body.action === 'approve' ? 'approve' : body.action === 'reject' ? 'reject' : '';
+      if (!fpv || !action) return sendJson(res, 400, { ok: false, error: '缺少 fp 或 action' });
+      const list = readJsonSafe(MEMORY_PENDING_FILE, []);
+      const cand = list.find((p) => p && p.fp === fpv);
+      if (!cand) return sendJson(res, 404, { ok: false, error: '候选不存在（可能已被处理）' });
+      if (action === 'approve') {
+        // 批准时再过一次守卫与否决清单：审阅期间内容标准可能已变
+        const blocked = memoryGuard.blockReason(cand.text);
+        if (blocked) return sendJson(res, 400, { ok: false, error: '记忆守卫拦截：' + blocked });
+        if (memRejectedHit(cand.text)) return sendJson(res, 409, { ok: false, error: '这条内容在否决清单里，请先撤销否决再批准。' });
+        appendMemory(cand.text, { long: cand.kind !== 'daily' });
+      } else {
+        rejectMemoryFingerprint(cand.text, 'review');
+      }
+      removeMemoryPending(fpv);
+      return sendJson(res, 200, { ok: true, action });
+    }).catch((e) => sendJson(res, 500, { ok: false, error: e.message }));
   }
 
   if (req.method === 'GET' || req.method === 'HEAD') {
@@ -5687,6 +6062,11 @@ function startServer() {
 
 /* 测试专用导出：tools/memory-forget-driver.js 直调 FORGET 撤回内核。
    require 本文件会启动 listen，调用方用完必须立刻 process.exit。 */
-module.exports = { memoryForget: forgetLongEntries, deliverShadow: { snapshot: snapshotDeliverables, list: snapshotList, restore: snapshotRestore }, ensureWriteGatePlugin, WRITE_GATE_PLUGIN };
+module.exports = { memoryForget: forgetLongEntries, deliverShadow: { snapshot: snapshotDeliverables, list: snapshotList, restore: snapshotRestore }, ensureWriteGatePlugin, WRITE_GATE_PLUGIN,
+  /* Phase 4 治理/队列内核（tools/phase4-driver.js 测试直调；require 会启动 listen，用完即 exit） */
+  academyGovernance: { archiveMemoryFromOutput, appendMemory, memRejectedHit, rejectMemoryFingerprint, unrejectMemory, pushMemoryPending, removeMemoryPending, readJsonSafe, memFingerprint, selectLongMemory },
+  academyQueue: { queueRegister, pumpQueue, queueWithdraw, queuePositionOf, runPrecheck, sha16, ledgerAppendRec, runsLedgerRecent, runQueue: () => runQueue,
+    beginFakeRunForTest: (runId) => { currentRun = { runId, child: null, cancelled: false, startedAt: Date.now() }; },
+    endFakeRunForTest: () => { currentRun = null; } } };
 
 startServer();
