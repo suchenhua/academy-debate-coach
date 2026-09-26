@@ -716,11 +716,11 @@ button.tool-link:hover { background: var(--primary-soft); }
   transition: left .2s;
 }
 .sidebar-toggle:hover { border-color: var(--primary); color: var(--primary); }
-body.sidebar-collapsed .sidebar { width: 54px; padding: 14px 8px 10px; }
-body.sidebar-collapsed .sidebar .modes { gap: 8px; }
-/* 2026-09-27 子涵：收起/展开时四个模式图标位置要一致——
-   展开态图标左缘 = 侧栏 padding 12 + 按钮内边距 12 = 25px；收起态同值（8 + 17） */
-body.sidebar-collapsed .mode-btn { justify-content: flex-start; padding: 9px 0 9px 16px; }
+body.sidebar-collapsed .sidebar { width: 54px; padding: 12px 8px 8px; }
+/* 2026-09-27 子涵：收起/展开时四个模式图标 x/y 都要一致——
+   收起态几何与展开态完全对齐（顶距 12、按钮竖向 7、行距 2），图标横向上居中 */
+body.sidebar-collapsed .sidebar .modes { gap: 2px; }
+body.sidebar-collapsed .mode-btn { justify-content: center; padding: 7px 0; }
 body.sidebar-collapsed .mode-btn div,
 body.sidebar-collapsed .side-section,
 body.sidebar-collapsed .history-section,
