@@ -855,8 +855,8 @@ async function main() {
           const sb = { console }; vmMod.createContext(sb); vmMod.runInContext(locSrc, sb);
           const merged = vmMod.runInContext('Object.assign({}, EN_EXTRA, EN_UI)', sb);
           const vals = Object.values(merged);
-          check('Phase5.4 英文补齐：EN_UI+EN_EXTRA ≥ 430 条且译文无汉字',
-            vals.length >= 430 && vals.every((v) => !/[\u4e00-\u9fff]/.test(v)));
+          check('Phase5.4/5.7 英文补齐：EN_UI+EN_EXTRA ≥ 640 条且译文无汉字',
+            vals.length >= 640 && vals.every((v) => !/[\u4e00-\u9fff]/.test(v)));
           const rules = vmMod.runInContext('EN_RULES', sb);
           const applyR = (s) => rules.reduce((acc, [re, val]) => (re.test(acc) ? acc.replace(re, val) : acc), s);
           check('Phase5.4 动态文案规则：排队/就绪/字数三类拼接串可译',
@@ -864,14 +864,26 @@ async function main() {
             && /^Engine ready · /.test(applyR('引擎就绪 · deepseek-chat'))
             && applyR('1,234 字') === '1,234 chars'
             && applyR('⏳ 排队第 1 位 · 对话').includes('Chat'));
-          check('Phase5.4/5.5 缓存版本号已提升（locale.js v1.2.0 / app.js v3.36.0）',
-            htmlSrc.includes('/locale.js?v=1.3.0') && htmlSrc.includes('/app.js?v=3.36.0'));
+          check('Phase5.4/5.5/5.7 缓存版本号已提升（locale.js v1.4.0 / app.js v3.36.0）',
+            htmlSrc.includes('/locale.js?v=1.4.0') && htmlSrc.includes('/app.js?v=3.36.0'));
           check('Phase5.5 英文观察器同步执行且吞掉自触发记录（切模式不闪中文）',
             locSrc.includes('enObserver.takeRecords()')
             && !/setTimeout\(\s*\(\)\s*=>\s*\{[^}]*applyEnglishUI/s.test(locSrc));
           // Phase 5.6：截图残留中文补齐（模式副标题 / 产物·记忆按钮 / 欢迎页脚 / 用量条 / 工具描述 / 引擎信息行）
           const need56 = ['任何辩论问题', '立论 \u00b7 质询 \u00b7 攻防', '文字稿逐帧纠偏', '三票制 \u00b7 述票', '产物', '记忆', '本对话 Token', '暂无用量（发消息后显示）', 'MD 阅读器', '九步法构建完整辩案', '比赛攻防流水记录', '快照还原'];
           check('Phase5.6 残留中文串已入英文词典', need56.every((k) => merged[k] && !/[\u4e00-\u9fff]/.test(merged[k])));
+          // Phase 5.7：真页面扫盲（向导/帮助长文/关于·许可/面板提示）+ 空白归一化查找 + 新规则
+          const need57 = ['这串 Key 就像一张「充值卡号」——', '第 1 步：申请一个 API Key',
+            '知识共享署名-非商业性使用-相同方式共享 4.0 国际（CC BY-NC-SA 4.0）',
+            '还没有配置，点「＋ 新建」添加第一套。',
+            '每次对话开始前自动存档产物空间。还原＝把整个产物目录回滚到那次对话开始前（还原前会自动保存当前状态，可再还原回去）。',
+            '打开产物目录文件夹', '同义词（让「AI」也能召回「人工智能」的资料）'];
+          check('Phase5.7 向导/许可/面板长文已入英文词典', need57.every((k) => merged[k] && !/\u4e00-\u9fff/.test(merged[k])));
+          check('Phase5.7 空白归一化索引（applyEnglishUI._enMap）在用',
+            locSrc.includes('applyEnglishUI._enMap') && locSrc.includes("s.replace(/\\s+/g, ' ')"));
+          check('Phase5.7 新规则：页脚版本号 / 资料库计数',
+            applyR('Academy 辩论教练 v2.3.0') === 'Academy Debate Coach v2.3.0'
+            && applyR('共 0 份') === '0 items');
           const engLine = 'DSH 内核: ✅ \u00b7 内置 Node: ✅ \u00b7 API: 127.0.0.1:8790 \u00b7 搜索: 服务侧✅ \u00b7 记忆 1,492 B';
           const eng1 = applyR(engLine), eng2 = applyR(eng1);
           check('Phase5.6 引擎信息行整行可译且规则幂等',

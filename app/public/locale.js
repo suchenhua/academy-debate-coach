@@ -511,11 +511,238 @@ const EN_EXTRA = {
   "九步法构建完整辩案": "Build a full case with the nine-step method",
   "比赛攻防流水记录": "Play-by-play record of match clashes",
   "填自己的 OpenAI 兼容地址": "Use your own OpenAI-compatible URL",
-  "快照还原": "Snapshot restore"
+  "快照还原": "Snapshot restore",
+
+  /* —— Phase 5.7（2026-09-27）：真页面扫盲补齐 —— 首次配置向导 / 设置帮助长文 /
+     关于·许可 / 技能 / 资料库 / 记忆·产物 / MD 阅读器；碎片键经空白归一化命中，
+     值按 DOM 顺序拼接成完整英文句。有意保留中文：简体/繁體（语言切换器母语名）、
+     品牌字「逻」、示例提问、同义词示例内容。 */
+  "Word 文档（.docx）": "Word document (.docx)",
+  "PDF 文档": "PDF document",
+  "还没配置 DeepSeek API Key，": "DeepSeek API Key not configured yet —",
+  "配置一套「服务商 + Key + 模型」并保存，可保存多套随时切换。": "Set up a provider + Key + model profile and save it — you can keep several and switch anytime.",
+  "还没有配置，点「＋ 新建」添加第一套。": "Nothing configured yet — click “＋ New” to add the first one.",
+  "还没有 Key？点这里 → 手把手教你从 DeepSeek 拿到（不会电脑也能照着做）": "No Key yet? Click here → hands-on guide to getting one from DeepSeek (beginner-proof)",
+  "不点「获取模型」也行，直接手输模型名。": "Skipping “Fetch Models” is fine — type the model name by hand.",
+  "时按 Enter 换行；": " — press Enter for a new line;",
+  "时换行改用": " — for a new line use ",
+  "或": " or ",
+  "，不再自动入库。 被否决的内容会进否决清单，以后同样的内容不再入库也不再注入。": " won't be stored automatically. Rejected content goes to the veto list — the same content won't be stored or injected again.",
+  "⭐ 深度检索（推荐）": "⭐ Deep search (recommended)",
+  "：用当前模型提供商的联网搜索，结果更准、覆盖更全，会消耗当前模型的额度。": ": uses the current model provider's web search — more accurate, broader coverage, uses your model quota.",
+  "⚡ 基础检索": "⚡ Basic search",
+  "：不花钱，本地抓取 Bing/DuckDuckGo。但覆盖有限， 部分网络下免费搜索源会被限制，": ": free — scrapes Bing/DuckDuckGo locally. Limited coverage; on some networks the free sources get throttled ",
+  "可能搜不到相关结果": "and may return nothing",
+  "（届时会明确提示你切回深度检索）。": " (the app will clearly tell you when to switch back to Deep search).",
+  "建议保持「深度检索」": "We recommend keeping “Deep search”",
+  "——辩论备赛要查的多是学术概念、法条、新闻数据， 这些靠免费抓取往往找不到；选便宜的反而容易白忙。": " — debate prep mostly needs academic concepts, statutes and news data, which free scraping often can't find; going cheap often means wasted effort.",
+  "此设置决定 Agent 任务内联网用的通道；研究台面板可单独切换。": "This setting picks the channel for the Agent's in-task web searches; the Research panel can switch separately.",
+  "切换后立即生效，无需额外填 Key。": "Takes effect immediately — no extra Key needed.",
+  "一般不用改：选服务商时已自动填好。手填到域名或 /v1 即可，程序会自动补 /chat/completions。": "Usually leave as is — auto-filled when you pick a provider. Enter up to the domain or /v1; the app appends /chat/completions automatically.",
+  "默认关闭。开启后，教练可以按你的要求": "Off by default. When on, the coach can, at your request, ",
+  "读写你指定的文件夹": "read and write folders you specify",
+  "——比如把整份备赛资料整理成 Word / Excel / PDF，直接存到你选好的位置。": " — e.g. organizing a whole prep pack into Word / Excel / PDF, saved straight where you choose.",
+  "⚠️ 开启等于让教练能动你电脑上的文件， 开之前请想清楚、重要文件先备份。": "⚠️ Turning this on lets the coach touch files on your computer. Think it through, and back up important files first.",
+  "内置的「基础检索」是免费抓取网页，部分网络下会被限制、搜不到东西。": "The built-in “Basic search” scrapes pages for free; on some networks it gets throttled and finds nothing.",
+  "如果你有可用的搜索服务（Tavily / SearXNG / Brave 等），在这里接上， 「基础检索」就会优先用它，结果会可靠得多。": "If you have a search service (Tavily / SearXNG / Brave etc.), connect it here — “Basic search” will prefer it, and results get far more reliable.",
+  "不填也不影响使用——那就继续用深度检索。": "Leaving it empty is fine too — Deep search keeps working.",
+  "选择预设（只是帮你填好格式，之后都能改）": "Pick a preset (it only pre-fills the format — everything stays editable)",
+  "Tavily（AI 搜索，有免费额度）": "Tavily (AI search, free tier)",
+  "SearXNG（自建/公共实例，完全免费）": "SearXNG (self-hosted / public instance, fully free)",
+  "Brave Search API（有免费额度）": "Brave Search API (free tier)",
+  "自定义（任何返回 JSON 的搜索服务）": "Custom (any search service that returns JSON)",
+  "名称（随便起，只用于显示）": "Name (anything — for display only)",
+  "用": "Use ",
+  "表示关键词（会自动做 URL 编码）。例：": " for the keyword (URL-encoded automatically). E.g.:",
+  "保存在本机": "Stored locally in ",
+  "。请求头里用": ". In headers, use ",
+  "引用，没写的话会自动加": " as a reference; if omitted, the app adds ",
+  "请求头（每行一个，可留空）": "Headers (one per line, optional)",
+  "请求体模板（POST 时用，JSON）": "Body template (for POST, JSON)",
+  "是未编码的原始关键词。": " is the raw, unencoded keyword.",
+  "从返回的 JSON 里取哪些字段": "Which fields to take from the returned JSON",
+  "用点号表示层级，如 Brave 的结果在": "Dots mark nesting — e.g. Brave returns results under ",
+  "里就填": ", so enter ",
+  "把": "Pack ",
+  "对话历史、记忆、模型配置": "chat history, memory and model settings",
+  "打包成一个文件，换电脑时在新电脑上「导入」即可全部恢复。": " into one file; on a new computer, “Import” restores everything.",
+  "所有个人数据都保存在程序目录的": "All personal data lives in the ",
+  "文件夹里（": " folder in the app directory (",
+  "对话、": " = chats, ",
+  "记忆、": " = memory, ",
+  "配置）。 整个文件夹复制走就等于完整备份；也可以用上面的按钮生成单文件备份。": " = settings). Copying the whole folder makes a full backup; or use the button above for a single-file backup.",
+  "⚠️ 备份文件包含你的 API Key，请只保存在自己的设备或网盘，不要发给别人。": "⚠️ The backup contains your API Key — keep it on your own devices or cloud drive only; never send it to others.",
+  "技能 = 一份带说明的": "A skill = an ",
+  "指令文件（YAML frontmatter 含": " instruction file (YAML frontmatter with ",
+  "与": " and ",
+  "）。 装上后，备赛 / 复盘等任务会提示 Agent 按需加载它。存放在本机": "). Once installed, prep / review tasks prompt the Agent to load it on demand. Stored locally in",
+  "，随包分发不会覆盖，重装不丢。": " — shipped with the app, never overwritten, survives reinstalls.",
+  "导入技能文件": "Import skill file",
+  "＋ 新建（粘贴）": "＋ New (paste)",
+  "新建技能": "New Skill",
+  "# --- # name: my-skill # description: 一句话说清何时用 # --- 正文…": "# --- # name: my-skill # description: when to use it, in one line # --- body…",
+  "我的技能（": "My Skills (",
+  "）": ")",
+  "内置技能（只读，随 App 分发）": "Built-in skills (read-only, shipped with the app)",
+  "💡 想装别人的技能？把": "💡 Want someone else's skill? Put the",
+  "技能文件放进": "skill file into",
+  "，或在这里点「导入技能文件」。": " or click “Import skill file” here.",
+  "少": "Few",
+  "多": "Many",
+  "本应用的知识库采用": "The knowledge base of this app is licensed under",
+  "知识共享署名-非商业性使用-相同方式共享 4.0 国际（CC BY-NC-SA 4.0）": "Creative Commons Attribution-NonCommercial-ShareAlike 4.0 International (CC BY-NC-SA 4.0)",
+  "许可协议。": "license.",
+  "署名（BY）": "Attribution (BY)",
+  "：允许复制、分发、展示本作品，但必须按原作品指定方式署名。": ": you may copy, distribute and display this work, but must credit it as the original requires.",
+  "非商业性使用（NC）": "NonCommercial (NC)",
+  "：允许非商业性使用，但不得用于商业目的。": ": non-commercial use only; commercial use is not allowed.",
+  "相同方式共享（SA）": "ShareAlike (SA)",
+  "：允许演绎，但演绎作品必须采用相同许可协议发布。": ": adaptations are allowed, but must be released under the same license.",
+  "（驻青四校联合辩论培训计划）": "(Qingdao Four-School Joint Debate Training Program)",
+  "查看完整许可声明（LICENSE.md）": "View the full license (LICENSE.md)",
+  "访问 CC 官方协议文本": "Read the official CC license text",
+  "方法论体系改编自开源项目": "Methodology adapted from the open-source project",
+  "《辩论筑基》": "Debate Foundations",
+  "（精靈 Moon 著）": "(by Jingling Moon)",
+  "教练质询协议改编自": "Coach cross-examination protocol adapted from",
+  "PDF 文字提取使用": "PDF text extraction uses",
+  "），副本与许可全文见": "); copies and full license text in",
+  "内容均为公开赛事 / 出版物 / 开源项目整理改编；文中辩手、评委姓名及赛事信息 均来自公开渠道，仅用于方法论说明，不代表本人立场，亦不构成对任何个体的评价。": "All content is adapted from public tournaments / publications / open-source projects; the debater, judge and tournament names all come from public sources, for methodology illustration only — they neither represent anyone's stance nor judge any individual.",
+  "使用问题、报 bug、提建议都欢迎进群说。群里也会同步版本更新。": "Questions, bug reports and suggestions are all welcome in the user group; version updates get posted there too.",
+  "微信搜索「QFUD」关注公众号，同步赛事与版本动态。": "Search “QFUD” on WeChat for tournament and version updates.",
+  "API Key 仅保存在本机，通过子进程环境变量传递，": "The API Key is stored locally only and passed via subprocess environment variables,",
+  "不上传任何云端": "never uploaded to any cloud",
+  "对话记录、个人资料库、产物文件都只存在本机数据目录。": "Chat records, the personal library and deliverables live only in the local data directory.",
+  "对话内容只发送给你在设置里填写的那个 AI 服务商地址。": "Chat content is sent only to the AI provider address you set in Settings.",
+  "Agent 的长篇交付会写成文件保存在": "The Agent's long-form deliverables are saved as files in ",
+  "。在这里": ". Here you can ",
+  "预览 / 转 Word / 转 Excel / 存 PDF / 导出到任意文件夹": "preview / convert to Word / convert to Excel / save as PDF / export to any folder",
+  "每次对话开始前自动存档产物空间。还原＝把整个产物目录回滚到那次对话开始前（还原前会自动保存当前状态，可再还原回去）。": "The deliverables space is auto-archived before every conversation. Restore = roll the whole deliverables directory back to before that conversation (the current state is auto-saved first, and you can restore back again).",
+  "按": "Filed ",
+  "归集：备赛时 Agent 会自动把这场对话挂到对应辩题下；一个辩题的历次对话和备赛包都收在一处。": " by motion: during prep, the Agent files each conversation under its motion automatically; all conversations and prep packs for one motion sit in one place.",
+  "删除辩题只删这条索引，不动你的对话和文件。": "Deleting a motion removes only this index — your chats and files are untouched.",
+  "对话里点回复下方的「⭐ 收藏」就会出现在这里，跨对话汇总；可一键存成产物或跳回原文。": "Click “⭐ Favorite” under a reply in any chat and it appears here, gathered across conversations; one click saves it as a deliverable or jumps back to the original.",
+  "记忆分两层：": "Memory has two layers: ",
+  "（精炼持久事实）与": " (distilled lasting facts) and ",
+  "（当天观察/备忘）。Agent 会自动读写，你也可以": " (same-day observations / memos). The Agent reads and writes them automatically; you can also ",
+  "手动新增 / 编辑 / 删除": "add / edit / delete",
+  "任意一条 —— 鼠标移到条目上就会出现「✏️ 编辑 / 🗑 删除」。": " any entry — hover over it to see “✏️ Edit / 🗑 Delete”.",
+  "统计": "Stats",
+  "个人资料库": "Personal Library",
+  "把你自己的": "Bring in your own ",
+  "备赛包 / 模辩文字稿 / 期刊 / 笔记": "prep packs / mock transcripts / journals / notes",
+  "存进来（txt / md / srt / pdf / docx）。 之后": " (txt / md / srt / pdf / docx). Later, during ",
+  "备赛与复盘": "prep and review",
+  "时，Agent 会自动检索这些资料，优先用你自己的口径、数据和话术。 资料只保存在本机": ", the Agent searches these materials automatically, preferring your own framing, data and scripts. Files stay on this machine",
+  "，不上传任何服务器。": " — never uploaded to any server.",
+  "备赛 / 复盘时自动检索资料库": "Auto-search the library during prep / review",
+  "把文件拖到这里，或": "Drag files here, or",
+  "支持 txt / md / srt / pdf / docx / 图片（png、jpg、bmp），单份 ≤ 16MB；可多选、可直接拖入整个文件夹（一次最多 100 份）；图片会自动做本地 OCR": "Supports txt / md / srt / pdf / docx / images (png, jpg, bmp), each ≤ 16MB; multi-select and whole-folder drag both work (up to 100 at a time); images get local OCR automatically",
+  "同义词（让「AI」也能召回「人工智能」的资料）": "Synonyms (so searching “AI” also recalls “artificial intelligence” materials)",
+  "一行一组，同组内词互相等价；检索命中任意一词时，同组其他词也会参与召回（权重略低）。": "One group per line; words in a group are equivalent. When any word matches, its group-mates join the recall at a lower weight.",
+  "保存同义词": "Save synonyms",
+  "这是一个": "This is an AI debate coach that ",
+  "的 AI 辩论教练。": ".",
+  "✅ 对话、资料、记忆都只存在": "✅ Chats, materials and memory stay only on ",
+  "你自己的电脑": "your own computer",
+  "上，不上传任何服务器": " — nothing uploaded to any server",
+  "✅ 覆盖": "✅ Covers ",
+  "备赛 / 复盘 / 评判 / 自由问答": "prep / review / judging / free Q&A",
+  "四种模式，各自独立": " — four modes, each independent",
+  "⚙️ 只需配置一次：填一个 AI 服务的密钥（API Key）": "⚙️ One-time setup: fill in one AI service key (API Key)",
+  "下面三步，大约 3 分钟就能搞定。": "Three steps below — about 3 minutes in total.",
+  "第 1 步：申请一个 API Key": "Step 1: Get an API Key",
+  "点下面的按钮打开": "Click the button below to open ",
+  "（国内可直连，价格便宜）": " (directly accessible in mainland China; inexpensive)",
+  "用手机号注册并登录": "Sign up with your phone number and log in",
+  "左侧菜单找到": "In the left menu, find ",
+  "→ 点": "→ click",
+  "「API Keys」": "“API Keys”",
+  "「保存配置」": "“Save Config”",
+  "「创建 API Key」": "“Create API Key”",
+  "复制那串": "Copy the string starting with ",
+  "开头的密钥（只显示一次，先粘到记事本）": "— shown only once; paste it into Notepad first",
+  "在平台里": "On the platform, ",
+  "充值几块钱": "top up a few yuan",
+  "（按用量扣费，很便宜）": " (pay-as-you-go, very cheap)",
+  "打开申请页面": "Open application page",
+  "我已经拿到 Key →": "I have my Key →",
+  "💡 不会操作？找队里用过 AI 的队友帮忙，5 分钟就能弄好。": "💡 Stuck? Ask a teammate who has used AI — 5 minutes and it's done.",
+  "第 2 步：把 Key 粘贴进来": "Step 2: Paste your Key in",
+  "，不会上传到任何第三方服务器。": " — never uploaded to any third-party server.",
+  "填好后点下面的「测试并保存」，会用这里的地址和模型去验证。": "When done, click “Test & Save” below — it verifies with this address and model.",
+  "← 返回上一步": "← Back",
+  "✅ 配置完成，可以开始用了！": "✅ Setup complete — you're ready to go!",
+  "顶部选模式：": "Pick a mode at the top: ",
+  "（各模式对话互相独立）": "(each mode keeps its own chats)",
+  "输入内容后按": "After typing, press ",
+  "📎 可上传": "📎 Attach ",
+  "🧰 工具箱里有": "🧰 The toolbox has ",
+  "辩案工作台、流水单、语音练习": "case workbench, flow sheet, speech practice",
+  "等，🧠 会记住你的偏好": " and more — 🧠 remembers your preferences",
+  "随时可在 ⚙️ 设置里更换模型、开关联网搜索、备份数据。": "Anytime in ⚙️ Settings: switch models, toggle web search, back up data.",
+  "Markdown 阅读器": "Markdown Reader",
+  "点击「打开文件」选择本地 .md 文档，或直接把文件拖进窗口。": "Click “Open File” to pick a local .md document, or drag one straight into the window.",
+  "这串 Key 就像一张「充值卡号」——": "An API Key works like a prepaid card number — ",
+  "没有它，软件连不上 AI，就用不了": "without it, the app can't reach the AI at all",
+  "。 跟着下面一步步做，大约 1 分钟：": ". Follow the steps below — about 1 minute:",
+  "打开官网注册。": "Open the official site and sign up.",
+  "点右边的链接即可：": "Or just click the link on the right:",
+  "（国内能直接打开；用": "(opens directly in mainland China; sign up with your ",
+  "手机号": "phone number",
+  "注册并登录，收个验证码就行）": "and log in — a verification code is all you need)",
+  "创建 Key。": "Create a Key.",
+  "登录后看": "After logging in, look at ",
+  "左边那一列菜单": "the menu on the left",
+  "，点": ", click ",
+  "， 再点": ", then click ",
+  "。名字随便填（比如": ". Any name works (e.g. ",
+  "），点确定。": "), then confirm.",
+  "复制这串 Key。": "Copy the Key.",
+  "屏幕上会出现": "You'll see ",
+  "一串": "a string starting with ",
+  "开头的字符": " characters",
+  "，这就是 Key。 点它旁边的": " — that's the Key. Click ",
+  "「复制」": "“Copy”",
+  "存好它（很重要）。": "Keep it safe (important).",
+  "⚠️ 这串 Key": "⚠️ This Key appears ",
+  "只显示这一次": "only once",
+  "，关掉页面就再也看不到了。 请马上粘贴到": " — once the page closes it's gone for good. Paste it right away into ",
+  "电脑自带的「记事本」": "the Notepad built into your computer",
+  "里，保存起来备用。": " and keep it for later.",
+  "填回本页。": "Paste it back on this page.",
+  "把 Key 粘贴到上面的": "Paste the Key into the ",
+  "框 → 点最下面的": " box → click ",
+  "。想确认能不能用，再点一下": ". To confirm it works, click ",
+  "「🔌 测试连接」": "“🔌 Test Connection”",
+  "💡 用之前一般要给账户": "💡 Before using it, you generally need to ",
+  "充一点钱": "top up the account a little",
+  "（按用量扣费，很便宜，先充几块钱能用很久）。 充值入口也是登录后左边的菜单。": " (pay-as-you-go, very cheap — a few yuan lasts a long time). The top-up entry is in the same left-side menu after login.",
+  "💡 已经有别家的 Key（硅基流动 / Kimi / 智谱 / OpenAI 等）？ 不用再注册 DeepSeek —— 直接点上面那张对应的": "💡 Already have a Key from another provider (SiliconFlow / Kimi / Zhipu / OpenAI etc.)? No need to register at DeepSeek — just click the matching ",
+  "服务商卡片": "provider card",
+  "，把 Key 填进去就行。": ", fill in your Key, and you're set.",
+  "🔒 放心：这串 Key": "🔒 Rest assured: this Key ",
+  "只存在你自己的电脑里": "stays on your own computer",
+  "，不会上传到任何别的地方。": " and is never uploaded anywhere else.",
+  "Key 只保存在本机": "The Key is stored only on this machine ",
+  "，只发给你选的地址，不上传任何服务器。": ", sent only to the address you choose — never uploaded to any server.",
+  "如：DeepSeek 主力 / 硅基流动": "e.g. DeepSeek main / SiliconFlow",
+  "如：Tavily 主力": "e.g. Tavily main",
+  "--- name: 技能名（英文短横线） description: 这个技能什么时候用、做什么。 whenToUse: 可选：触发条件描述。 --- 技能正文（Markdown）…": "---\nname: skill-name-in-kebab-case\ndescription: when to use it and what it does.\nwhenToUse: optional — trigger conditions.\n---\n\nSkill body (Markdown)…",
+  "辩题，如：大学生应该先就业再择业": "Motion, e.g. Should university students choose employment first",
+  "持方（选填），如：反方": "Side (optional), e.g. Opposition",
+  "资料名称，如：校赛_人工智能版权_反方备赛包": "Name, e.g. City Open_AICopyright_Opposition pack",
+  "粘贴正文（一辩稿、攻防预案、复盘笔记、期刊摘录都可以）": "Paste content (constructive, rebuttal brief, review notes, journal excerpts — all fine)",
+  "sk-...（粘贴你的密钥）": "sk-... (paste your Key)",
+  "在这里编辑 Markdown 原文…（Ctrl+S 保存）": "Edit the Markdown source here… (Ctrl+S to save)",
+  "打开产物目录文件夹": "Open the deliverables folder",
+  "每次对话启动前自动把产物空间整体存档（保留最近 10 份）；对话把文件改坏、误删时，可一键回滚到那次对话开始前": "Auto-archives the whole deliverables space before each conversation (keeps the last 10); one click rolls back to before that chat if files get broken or deleted"
 
 };
 
 const EN_RULES = [
+[/Academy 辩论教练 v([\d.]+)/, "Academy Debate Coach v$1"],
+[/共\s*(\d+)\s*份/, "$1 items"],
 [/DSH 内核: /, "DSH kernel: "],
 [/内置 Node: /, "Bundled Node: "],
 [/搜索: 服务侧✅/, "Search: server ✅"],
@@ -541,6 +768,16 @@ const EN_RULES = [
 function applyEnglishUI() {
   if (!document || !document.body) return;
   for (const k in EN_EXTRA) if (!(k in EN_UI)) EN_UI[k] = EN_EXTRA[k];
+  /* 空白归一化索引：HTML 源码里的换行/缩进在渲染时会被折叠，
+     节点原文却带着它们 —— 精确匹配永远打不中多行节点（Phase 5.7 补长文时实测）。
+     键与节点都按 \s+ 归一后再查，替换值本身不含换行，渲染结果不变
+     （textarea/pre 已在下方跳过，不受影响）。 */
+  if (!applyEnglishUI._enMap) {
+    applyEnglishUI._enMap = {};
+    for (const k in EN_UI) applyEnglishUI._enMap[k.replace(/\s+/g, ' ').trim()] = EN_UI[k];
+  }
+  const enMap = applyEnglishUI._enMap;
+  const normKey = (s) => s.replace(/\s+/g, ' ').trim();
   const hasHan = /[\u4e00-\u9fff]/;
   let walker;
   try {
@@ -560,7 +797,7 @@ function applyEnglishUI() {
     // 消息区默认保护用户/AI 内容；欢迎页与其中的界面控件（按钮、下拉、链接）除外
     if (p.closest('#messages') && !(p.closest('.welcome') || p.matches('button, select, option, a'))) continue;
     const raw = n.nodeValue;
-    const en = EN_UI[raw.trim()];
+    const en = enMap[normKey(raw)];
     if (en) {
       const m = /^(\s*)([\s\S]*?)(\s*)$/.exec(raw);
       n.nodeValue = m[1] + en + m[3];
@@ -578,7 +815,7 @@ function applyEnglishUI() {
     for (const attr of ['placeholder', 'title']) {
       const v = elm.getAttribute(attr);
       if (v) {
-        const en = EN_UI[v.trim()];
+        const en = enMap[normKey(v)];
         if (en && en !== v) { elm.setAttribute(attr, en); continue; }
         if (hasHan.test(v)) {
           let out = v;
@@ -591,7 +828,7 @@ function applyEnglishUI() {
     }
   });
   const t = (document.title || '').trim();
-  if (EN_UI[t]) document.title = EN_UI[t];
+  if (enMap[normKey(t)]) document.title = enMap[normKey(t)];
   // 本轮自己改出的节点变更不再触发观察者回调（英文值不命中中文键，本就会收敛，
   // 但吞掉记录可以省掉一整轮空转的 TreeWalker）
   try { if (enObserver) enObserver.takeRecords(); } catch (_) {}
