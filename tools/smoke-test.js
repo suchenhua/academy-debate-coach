@@ -865,10 +865,18 @@ async function main() {
             && applyR('1,234 字') === '1,234 chars'
             && applyR('⏳ 排队第 1 位 · 对话').includes('Chat'));
           check('Phase5.4/5.5 缓存版本号已提升（locale.js v1.2.0 / app.js v3.36.0）',
-            htmlSrc.includes('/locale.js?v=1.2.0') && htmlSrc.includes('/app.js?v=3.36.0'));
+            htmlSrc.includes('/locale.js?v=1.3.0') && htmlSrc.includes('/app.js?v=3.36.0'));
           check('Phase5.5 英文观察器同步执行且吞掉自触发记录（切模式不闪中文）',
             locSrc.includes('enObserver.takeRecords()')
             && !/setTimeout\(\s*\(\)\s*=>\s*\{[^}]*applyEnglishUI/s.test(locSrc));
+          // Phase 5.6：截图残留中文补齐（模式副标题 / 产物·记忆按钮 / 欢迎页脚 / 用量条 / 工具描述 / 引擎信息行）
+          const need56 = ['任何辩论问题', '立论 \u00b7 质询 \u00b7 攻防', '文字稿逐帧纠偏', '三票制 \u00b7 述票', '产物', '记忆', '本对话 Token', '暂无用量（发消息后显示）', 'MD 阅读器', '九步法构建完整辩案', '比赛攻防流水记录', '快照还原'];
+          check('Phase5.6 残留中文串已入英文词典', need56.every((k) => merged[k] && !/[\u4e00-\u9fff]/.test(merged[k])));
+          const engLine = 'DSH 内核: ✅ \u00b7 内置 Node: ✅ \u00b7 API: 127.0.0.1:8790 \u00b7 搜索: 服务侧✅ \u00b7 记忆 1,492 B';
+          const eng1 = applyR(engLine), eng2 = applyR(eng1);
+          check('Phase5.6 引擎信息行整行可译且规则幂等',
+            /^DSH kernel: .+Bundled Node: .+Search: server ✅.+memory 1,492 B$/.test(eng1)
+            && !/[\u4e00-\u9fff]/.test(eng1) && eng2 === eng1);
         }
 
         // 7c. 清空全部记忆：长期 + 流水都应清掉（含每日文件删除）；清空前应自动留快照
