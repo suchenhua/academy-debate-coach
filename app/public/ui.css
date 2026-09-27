@@ -481,6 +481,17 @@ button:focus:not(:focus-visible) { outline: none; }
   transition: border-color var(--dur-fast) var(--ease), box-shadow var(--dur-fast) var(--ease);
 }
 .composer:focus-within { border-color: var(--c-accent); box-shadow: 0 0 0 3px var(--c-accent-ring); }
+
+/* ── Phase 6.1（2026-09-27 子涵）：紧凑两行结构，参考 HIG ──
+   上行=输入本体（左对齐，随内容长高），下行=工具条（附件·模型·思考 | 字数·发送） */
+.composer { flex-direction: column; align-items: stretch; gap: 4px; padding: 10px 12px 8px; }
+.composer textarea { flex: none; width: 100%; padding: 2px 2px 0; min-height: 26px; }
+.composer textarea::placeholder { color: var(--c-text-4); }
+.composer-tools { display: flex; align-items: center; gap: 6px; }
+.composer-tools .composer-model select { padding: 4px 8px; max-width: 165px; }
+.composer-tools .composer-side { margin-left: auto; flex-direction: row; align-items: center; gap: 10px; }
+.composer-tools .send-btn, .composer-tools .stop-btn { height: 30px; padding: 0 14px; border-radius: 10px; }
+.composer-tools .icon-btn { width: 28px; height: 28px; }
 .composer textarea {
   font-size: var(--fs-lg); line-height: var(--lh-base);
   padding: var(--sp-2); color: var(--c-text);
