@@ -600,32 +600,12 @@ function welcomeGreeting() {
 }
 
 function renderWelcome() {
-  const modeT = modeMeta[state.mode] || {};
+  /* 2026-09-27 子涵：欢迎页只留一句居中问候——模式说明卡（图标+模式名+描述）也去掉了，
+     模式信息看聊天区顶栏（modeTitle/modeDesc）；原示例卡片与底部提示行此前已移除。 */
   const wrap = el('div', 'welcome');
-
-  // 1) 顶部：一句大字号问候语（居中）
   const head = el('div', 'welcome-head', '');
   head.appendChild(el('h1', 'welcome-greet', welcomeGreeting()));
   wrap.appendChild(head);
-
-  // 2) 当前模式说明
-  const modeBox = el('div', 'welcome-mode', '');
-  modeBox.appendChild(el('span', 'wm-icon', ic(WELCOME_ICONS[state.mode] || 'free', 20)));
-  const mt = el('div', 'wm-text', '');
-  mt.appendChild(el('div', 'wm-title', (modeT.title || state.mode) + '模式'));
-  mt.appendChild(el('div', 'wm-desc', modeT.desc || ''));
-  modeBox.appendChild(mt);
-  wrap.appendChild(modeBox);
-
-  /* 3) 原来这里有一栏「试试这样问」的示例卡片（4 个可点提示）。
-     2026-09-23 子涵反馈「有点鸡肋」去掉 —— 理由成立：
-     四种模式的示例各写各的，占了半屏却只在「刚打开、还不想打字」那一小会儿有用；
-     真要发问的人已经在输入框里打字了，卡片反而把欢迎页顶得很高、要滚才看得全。
-     示例词没浪费：每个模式第一句进了输入框 placeholder（见 updateModeUI），
-     要问什么、该怎么起头，在真正要打字的地方给。 */
-
-  /* 底部提示行（模式独立说明 + 发送热键）2026-09-27 应子涵要求去掉：
-     模式切换行为用了自然知道，热键提示输入框 placeholder 已带。 */
   return wrap;
 }
 
