@@ -19,10 +19,25 @@ const path = require('path');
 const fs = require('fs');
 
 const ROOT = path.resolve(__dirname, '..');
-const DATA_DIR = path.join(ROOT, 'data');
+const DATA_DIR = process.env.ACADEMY_DATA_DIR ? path.resolve(process.env.ACADEMY_DATA_DIR) : path.join(ROOT, 'data');
 const R_HTML = path.join(__dirname, 'md-reader', 'renderer.html');
-/* 英文模式：主 App 侧未来 spawn 时可传 --lang=en（文件关联启动无语言上下文，默认中文） */
-const LANG = (process.argv.find(function (a) { return a.indexOf('--lang=') === 0; }) || '').split('=')[1] || '';
+/* 语言上下文：--lang 显式参数 > data/config.json 的 locale（主窗 setLocale 落盘，
+   sendBeacon 保证切语言紧跟重载也送达）> 默认中文。
+   文件关联（资源管理器双击/右键）启动时没有命令行语言参数，靠 config 这条链路。 */
+function resolveUiLang() {
+  const arg = (process.argv.find(function (a) { return a.indexOf('--lang=') === 0; }) || '').split('=')[1] || '';
+  if (arg === 'en' || arg === 'zh-TW' || arg === 'zh-CN') return arg;
+  try {
+    const c = JSON.parse(fs.readFileSync(path.join(DATA_DIR, 'config.json'), 'utf8').replace(/^\uFEFF/, ''));
+    if (c && (c.locale === 'en' || c.locale === 'zh-TW')) return c.locale;
+  } catch (_) {}
+  return 'zh-CN';
+}
+const LANG = resolveUiLang();
+/* 非简中时经 URL search 透传给渲染层（file:// 与主窗口不同源，localStorage 不通） */
+function langSearch() {
+  return LANG === 'en' ? { search: 'lang=en' } : LANG === 'zh-TW' ? { search: 'lang=zh-TW' } : undefined;
+}
 const R_PRELOAD = path.join(__dirname, 'md-reader', 'preload.js');
 const ICON = path.join(ROOT, 'appicon.ico');
 const LOG_FILE = path.join(DATA_DIR, 'reader-launch.log');
@@ -157,7 +172,7 @@ function createReaderWindow(filePath, text, name) {
     if (!delivered && failTries < 2) {
       failTries += 1;
       log('reader 加载失败(code=' + code + ')，重试 ' + failTries + '/2');
-      win.loadFile(R_HTML, LANG === 'en' ? { search: 'lang=en' } : undefined).catch(() => {});
+      win.loadFile(R_HTML, langSearch()).catch(() => {});
     } else if (!delivered) {
       log('reader 页面加载失败: ' + desc + ' url=' + url);
     }
@@ -168,7 +183,7 @@ function createReaderWindow(filePath, text, name) {
     const msg = String(message || '');
     if (msg.indexOf('[reader]') === 0) log('渲染进程: ' + msg);
   });
-  win.loadFile(R_HTML, LANG === 'en' ? { search: 'lang=en' } : undefined).catch(() => {});
+  win.loadFile(R_HTML, langSearch()).catch(() => {});
   // 有未保存修改时关窗要拦一下，避免手滑丢内容
   win.on('close', (e) => {
     if (!dirtyMap.get(win.id)) return;
@@ -207,7 +222,7 @@ function openFiles(argv) {
     });
     mainWindow = win;
     win.removeMenu();
-    win.loadFile(R_HTML, LANG === 'en' ? { search: 'lang=en' } : undefined);
+    win.loadFile(R_HTML, langSearch());
     win.webContents.once('did-finish-load', () => win.webContents.send('reader:empty'));
     return;
   }

@@ -864,8 +864,8 @@ async function main() {
             && /^Engine ready · /.test(applyR('引擎就绪 · deepseek-chat'))
             && applyR('1,234 字') === '1,234 chars'
             && applyR('⏳ 排队第 1 位 · 对话').includes('Chat'));
-          check('Phase5.4-5.9/6.0 缓存版本号已提升（locale v1.5.0 / app v3.40.2 / style 3.28.10 / ui 4.0.4）',
-            htmlSrc.includes('/locale.js?v=1.5.0') && htmlSrc.includes('/app.js?v=3.40.2')
+          check('Phase5.4-5.9/6.0/6.2 缓存版本号已提升（locale v1.5.0 / app v3.41.0 / style 3.28.10 / ui 4.0.4）',
+            htmlSrc.includes('/locale.js?v=1.5.0') && htmlSrc.includes('/app.js?v=3.41.0')
             && htmlSrc.includes('/style.css?v=3.28.10') && htmlSrc.includes('/ui.css?v=4.0.4'));
           check('Phase5.5 英文观察器同步执行且吞掉自触发记录（切模式不闪中文）',
             locSrc.includes('enObserver.takeRecords()')
@@ -910,6 +910,20 @@ async function main() {
             && ['app/research/renderer.html', 'app/verify/renderer.html', 'app/trace/renderer.html',
                 'app/md-reader/renderer.html'].every((f) => require('fs').readFileSync(path.join(ROOT, f), 'utf8').includes('applyEnglishUI'))
             && ['app/public/tools/简易流水单-Flowing-Tool.html', 'app/public/tools/辩案工作台-Case-Workbench.html'].every((f) => require('fs').readFileSync(path.join(ROOT, f), 'utf8').includes('/locale.js?v=1.5.0')));
+          // Phase 6.2：MD 阅读器语言上下文接线（config.locale 落盘 + 阅读器按 config 取语言）
+          const serverSrc62 = require('fs').readFileSync(path.join(ROOT, 'app', 'server.js'), 'utf8');
+          const appSrc62 = require('fs').readFileSync(path.join(ROOT, 'app', 'public', 'app.js'), 'utf8');
+          const readerMain62 = require('fs').readFileSync(path.join(ROOT, 'app', 'md-reader-window.js'), 'utf8');
+          const readerBoot62 = require('fs').readFileSync(path.join(ROOT, 'app', 'md-reader', 'renderer.html'), 'utf8');
+          check('Phase6.2 语言上下文入库（server locale 归一化 / POST 透传）',
+            serverSrc62.includes('patch.locale !== undefined') && serverSrc62.includes('locale: body.locale !== undefined'));
+          check('Phase6.2 主窗落盘与启动对账（sendBeacon / reconcileLocaleOnce）',
+            appSrc62.includes('syncLocaleToConfig') && appSrc62.includes('sendBeacon')
+            && appSrc62.includes('reconcileLocaleOnce') && appSrc62.includes('try { reconcileLocaleOnce(); } catch (_) {}'));
+          check('Phase6.2 阅读器语言链路（--lang > config.json > 中文；URL 透传）',
+            readerMain62.includes('resolveUiLang') && readerMain62.includes('config.json')
+            && readerMain62.includes('lang=zh-TW') && readerBoot62.includes('applyLocaleToStatic')
+            && readerBoot62.includes("new URLSearchParams(location.search).get('lang')"));
           const engLine = 'DSH 内核: ✅ \u00b7 内置 Node: ✅ \u00b7 API: 127.0.0.1:8790 \u00b7 搜索: 服务侧✅ \u00b7 记忆 1,492 B';
           const eng1 = applyR(engLine), eng2 = applyR(eng1);
           check('Phase5.6 引擎信息行整行可译且规则幂等',

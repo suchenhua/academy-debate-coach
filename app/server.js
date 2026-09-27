@@ -451,6 +451,9 @@ function defaultConfig() {
     stepsDisplay: 'standard', busyBehavior: 'queue', reasoningEffort: 'high',
     // 微信式发送热键：ctrlEnter = Ctrl+Enter 发送、Enter 换行；enter = Enter 发送、Ctrl/Shift+Enter 换行
     sendHotkey: 'ctrlEnter',
+    // 界面语言（zh-CN|zh-TW|en）：主窗 setLocale 同步写入；
+    // 阅读器/工具窗等独立进程没有 localStorage，从这里取「语言上下文」（文件关联启动也能拿到）。
+    locale: 'zh-CN',
     // 自定义搜索服务（学习 RikkaHub 的插件式思路）：
     // 内置的免费抓取（Bing/DDG）在部分网络下会被反爬返回无关结果，
     // 与其塞一个必然失败的免费通道，不如让用户接入自己可用的搜索服务。
@@ -500,6 +503,7 @@ function saveConfig(patch) {
   if (patch.busyBehavior !== undefined) next.busyBehavior = patch.busyBehavior === 'interrupt' ? 'interrupt' : 'queue';
   if (patch.sendHotkey !== undefined) next.sendHotkey = patch.sendHotkey === 'enter' ? 'enter' : 'ctrlEnter';
   if (patch.reasoningEffort !== undefined) next.reasoningEffort = ['off', 'low', 'high', 'max'].includes(patch.reasoningEffort) ? patch.reasoningEffort : 'high';
+  if (patch.locale !== undefined) next.locale = ['zh-CN', 'zh-TW', 'en'].includes(patch.locale) ? patch.locale : 'zh-CN';
   writeJsonAtomic(CONFIG_FILE, next);
   writeDshSettings(next.model, next.baseUrl, effectiveSearchKey(next), resolveSearchProvider(next), next.reasoningEffort);
   return next;
@@ -5189,6 +5193,7 @@ function handleRequest(req, res) {
         busyBehavior: body.busyBehavior !== undefined ? body.busyBehavior : loadConfig().busyBehavior,
         sendHotkey: body.sendHotkey !== undefined ? body.sendHotkey : loadConfig().sendHotkey,
         reasoningEffort: body.reasoningEffort !== undefined ? body.reasoningEffort : loadConfig().reasoningEffort,
+        locale: body.locale !== undefined ? body.locale : loadConfig().locale,
       });
       return sendJson(res, 200, {
         ok: true, hasKey: !!cfg.apiKey, keyMasked: maskKey(cfg.apiKey),

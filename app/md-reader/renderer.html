@@ -35,14 +35,21 @@
   <script src="reader.js"></script>
 <script src="../public/locale.js"></script>
 <script>
-/* 英文模式引导：同 tool-window（?lang= 或同源 localStorage） */
+/* 语言引导：主进程按「--lang > data/config.json」解析出语言后经 ?lang= 透传
+   （file:// 与主窗口不同源，localStorage 不通）；直接以 http 打开时退回同源 localStorage。
+   q 优先并写回 localStorage，让 locale.js 的 academyLocale 与英文观察器都取到对的值。 */
 (function () {
   var q = '';
   try { q = new URLSearchParams(location.search).get('lang') || ''; } catch (_) {}
-  var en = q === 'en' || (!q && (localStorage.getItem('academy.locale.v1') || '') === 'en');
-  if (en && typeof applyEnglishUI === 'function') {
+  var loc = q || (function () { try { return localStorage.getItem('academy.locale.v1') || ''; } catch (_) { return ''; } })();
+  if (q === 'en' || q === 'zh-TW' || q === 'zh-CN') { try { localStorage.setItem('academy.locale.v1', q); } catch (_) {} }
+  if (loc === 'en' && typeof applyEnglishUI === 'function') {
     applyEnglishUI();
     if (typeof armEnglishWatcher === 'function') armEnglishWatcher();
+  } else if (loc === 'zh-TW' && typeof applyLocaleToStatic === 'function') {
+    try { document.documentElement.lang = 'zh-TW'; } catch (_) {}
+    applyLocaleToStatic();
+    [200, 600, 1200].forEach(function (ms) { setTimeout(function () { try { applyLocaleToStatic(); } catch (_) {} }, ms); });
   }
 })();
 </script>

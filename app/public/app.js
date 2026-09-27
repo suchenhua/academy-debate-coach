@@ -79,11 +79,11 @@ function setLocale(val) {
   const norm = val === 'zh-TW' ? 'zh-TW' : val === 'en' ? 'en' : 'zh-CN';
   const prev = restoreLocale();
   try { localStorage.setItem(LOCALE_LS, norm); } catch (_) {}
+  syncLocaleToConfig(norm);
   // 中英互切走整页重载：英文是词条覆盖替换，页内反向还原不可靠；重载后由 init + 观察器重新铺英文
   if ((prev === 'en') !== (norm === 'en')) {
     try { document.documentElement.lang = norm; } catch (_) {}
     location.reload();
-    return;
   }
   document.documentElement.lang = norm;
   syncLocaleChoices();
@@ -116,6 +116,25 @@ function setChatFs(v) {
   const px = clampChatFs(v);
   try { localStorage.setItem(CHAT_FS_LS, String(px)); } catch (_) {}
   applyChatFs();
+}
+/* 语言上下文同步进 data/config.json：阅读器/工具窗没有 localStorage，
+   从 config 取语言（文件关联启动的 MD 阅读器英文模式就靠这条链路） */
+function syncLocaleToConfig(norm) {
+  const body = JSON.stringify({ locale: norm });
+  try {
+    // sendBeacon：请求由浏览器保证送达，紧跟着整页重载也不丢（中英互切路径）
+    if (navigator.sendBeacon) { navigator.sendBeacon('/api/config', new Blob([body], { type: 'application/json' })); return; }
+  } catch (_) {}
+  try { fetch('/api/config', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body, keepalive: true }).catch(() => {}); } catch (_) {}
+}
+/* 启动对账（只一次）：老版本语言只存 localStorage，config 里的 locale 可能还是默认值；
+   不一致时以 localStorage 为准写回 config */
+async function reconcileLocaleOnce() {
+  try {
+    const r = await fetchJSON('/api/config');
+    const c = (r && r.config) || null;
+    if (c && c.locale !== restoreLocale()) syncLocaleToConfig(restoreLocale());
+  } catch (_) {}
 }
 function syncLocaleChoices() {
   const cur = restoreLocale();
@@ -5235,6 +5254,7 @@ function init() {
   try { applyChatFs(); } catch (_) {}
   try { syncLocaleChoices(); } catch (_) {}
   try { applyLocaleToStatic(); } catch (_) {}
+  try { reconcileLocaleOnce(); } catch (_) {}
   updateModeUI();
   renderTools();
   renderHistory();
