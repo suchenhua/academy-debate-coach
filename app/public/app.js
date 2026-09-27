@@ -1425,16 +1425,9 @@ function updateModeUI() {
   });
   $('#modeTitle').textContent = modeMeta[state.mode].title;
   $('#modeDesc').textContent = modeMeta[state.mode].desc;
-  /* 占位提示 = 该模式的第一句示例 + 发送快捷键。
-     以前这里只有「自由问答 · 输入后 Ctrl+Enter 发送」这种干巴巴一句，
-     示例全靠欢迎页那栏卡片；卡片去掉后，示例挪到这里 ——
-     在真正要打字的地方给例子，比在半屏外的地方给更管用。
-     各模式若显式写了 placeholder（如评判），仍以它为准。 */
-  const mm = modeMeta[state.mode] || {};
-  const fallback = (mm.prompts && mm.prompts[0]) ? (mm.prompts[0] + '…') : (mm.title || '') + ' · 输入后 ' + sendHintShort();
-  let ph = mm.placeholder || fallback;
-  if (sendHotkeyMode() === 'enter') ph = ph.split('Ctrl+Enter 发送').join('Enter 发送'); // 评判等模式硬编码的快捷键提示随之切换
-  $('#input').placeholder = ph;
+  /* 占位提示（2026-09-27 子涵）：各模式的示例句统一换成一句。
+     原实现=该模式第一句示例+快捷键提示；示例词仍保留在各 MODES 定义里备用。 */
+  $('#input').placeholder = '言语，是强大的主宰';
   const hs = document.querySelector('.side-head h3');
   if (hs) hs.innerHTML = ic('history',13) + '对话历史 · ' + esc(modeMeta[state.mode].title);
 }

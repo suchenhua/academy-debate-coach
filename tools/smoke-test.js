@@ -864,8 +864,8 @@ async function main() {
             && /^Engine ready · /.test(applyR('引擎就绪 · deepseek-chat'))
             && applyR('1,234 字') === '1,234 chars'
             && applyR('⏳ 排队第 1 位 · 对话').includes('Chat'));
-          check('Phase5.4/5.5/5.7/5.8/5.9 缓存版本号已提升（locale v1.5.0 / app v3.37.0 / style 3.28.9 / ui 4.0.3）',
-            htmlSrc.includes('/locale.js?v=1.5.0') && htmlSrc.includes('/app.js?v=3.39.0')
+          check('Phase5.4-5.9/6.0 缓存版本号已提升（locale v1.5.0 / app v3.40.0 / style 3.28.9 / ui 4.0.3）',
+            htmlSrc.includes('/locale.js?v=1.5.0') && htmlSrc.includes('/app.js?v=3.40.0')
             && htmlSrc.includes('/style.css?v=3.28.9') && htmlSrc.includes('/ui.css?v=4.0.3'));
           check('Phase5.5 英文观察器同步执行且吞掉自触发记录（切模式不闪中文）',
             locSrc.includes('enObserver.takeRecords()')
@@ -1142,9 +1142,10 @@ async function main() {
         codeOnly.indexOf('试试这样问') === -1 &&
         codeOnly.indexOf('welcome-prompts') === -1 &&
         codeOnly.indexOf("'welcome-prompt'") === -1);
-      /* 示例词改由输入框 placeholder 承载，别把它一起弄丢了 */
-      check('★ 输入框 placeholder 带模式示例',
-        /const fallback = \(mm\.prompts && mm\.prompts\[0\]\)/.test(appJsSrc));
+      /* 2026-09-27 子涵：placeholder 统一为一句「言语，是强大的主宰」（原各模式示例句退役） */
+      check('★ 输入框 placeholder 统一为「言语，是强大的主宰」',
+        appJsSrc.includes("placeholder = '言语，是强大的主宰'")
+        && require('fs').readFileSync(path.join(ROOT, 'app', 'public', 'index.html'), 'utf8').includes('placeholder="言语，是强大的主宰"'));
 
       /* 10h. ★ 内核 0.1.7 协议适配（2026-09-25 升级实测）：
          llm-deepseek 从 OpenAI chat/completions 改说 Anthropic Messages，

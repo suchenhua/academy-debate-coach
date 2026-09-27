@@ -685,6 +685,7 @@ const EN_EXTRA = {
 
   /* —— Phase 5.8d：工具页总览页残留 —— */
   "主页": "Home",
+  "言语，是强大的主宰": "Speech is the mighty sovereign.",
 
   /* —— Phase 6.0：思考强度下拉 —— */
   "思考": "Effort",
