@@ -398,7 +398,9 @@ button { font-family: inherit; cursor: pointer; }
 }
 .field input:focus, .field select:focus { border-color: var(--primary); }
 .key-row { display: flex; gap: 6px; }
-.key-row input { flex: 1; }
+/* min-width:0 必须写：input 的默认 min-width 是 auto（约等于它的固有宽度），
+   flex:1 也压不下去 —— 编辑器栏一窄，这一行就把设置面板撑出横向滚动条。 */
+.key-row input { flex: 1; min-width: 0; }
 .modal-actions { display: flex; gap: 8px; justify-content: flex-end; }
 .settings-result { font-size: 13px; margin: 12px 0 0; white-space: pre-wrap; }
 .settings-result.ok { color: var(--green); }
@@ -462,7 +464,8 @@ button.tool-link:hover { background: var(--primary-soft); }
 
 /* ── 设置·模型选择 ── */
 .model-row { display: flex; gap: 8px; align-items: center; }
-.model-row input { flex: 1; }
+/* 同上：不写 min-width:0，输入框不会收缩，「获取模型」按钮一起把面板顶出横向滚动条 */
+.model-row input { flex: 1; min-width: 0; }
 #modelSelect { width: 100%; margin-top: 6px; padding: 6px 8px; background: var(--input-bg); color: var(--text); border: 1px solid var(--border); border-radius: 8px; font-size: 13px; }
 #modelSelect:focus { outline: none; border-color: var(--gold); }
 
@@ -1046,7 +1049,19 @@ body.sidebar-collapsed .sidebar-toggle { left: 54px; transform: translateY(-50%)
 .wizard-adv-body input[type="text"]:focus, .wizard-adv-body select:focus { border-color: var(--primary); }
 /* ================= 个人资料库 ================= */
 .library-box { max-width: 860px; width: 94%; }
-.library-box .modal-body { display: flex; flex-direction: column; gap: 10px; padding: 14px 20px 20px; }
+/* 弹窗定高：分类 chip（全部/文档/Word/PDF/图片OCR/其他）切来切去时条目数不同，
+   不定高整个窗口跳大小。注意 flex-basis 必须是 auto：ui.css 的 .modal-body{flex:1}
+   会把 basis 定成 0%，那样下面的 height 就不参与主轴尺寸计算，弹窗退回按内容定高、
+   切分类又开始抖。 */
+.library-box .modal-body { display: flex; flex-direction: column; gap: 10px; padding: 14px 20px 20px; flex: 1 1 auto; height: min(660px, 78vh); }
+/* 已有资料时，把上方的「上传引导」收成一条细栏，把高度让给列表。
+   资料库正文里上传区 / OCR 提示 / 检索 / 同义词都是固定高度（合计约 410px），
+   在 600px 级别的屏上会把列表挤到一行都不到 —— 收起后列表能露出两三行。
+   引导文案与拖放区大提示只在「空库」时展开，那正是最需要它们的时候。 */
+.library-box.has-items > .modal-body > .memory-hint { display: none; }
+.library-box.has-items .lib-ocr-info.ok { display: none; }
+.library-box.has-items .lib-drop { padding: 9px 12px; }
+.library-box.has-items .lib-drop .field-hint { display: none; }
 .lib-switch-row { display: flex; align-items: center; justify-content: space-between; gap: 10px; flex-wrap: wrap; }
 .lib-switch { display: inline-flex; align-items: center; gap: 8px; font-size: 13px; cursor: pointer; user-select: none; }
 .lib-switch input { width: 16px; height: 16px; accent-color: var(--primary); cursor: pointer; }
@@ -1071,7 +1086,11 @@ body.sidebar-collapsed .sidebar-toggle { left: 54px; transform: translateY(-50%)
 .lib-hit-snippet { color: var(--text); line-height: 1.65; white-space: pre-wrap; opacity: .9; }
 .lib-list-head { font-size: 12px; color: var(--muted); margin-top: 2px; display: flex; align-items: center; justify-content: space-between; gap: 8px; flex-wrap: wrap; }
 .lib-list-head .deliver-chips { margin-left: auto; }
-.lib-list { display: flex; flex-direction: column; gap: 8px; max-height: 42vh; overflow: auto; }
+/* 列表按内容自然高：定高交给上面的 .modal-body。
+   资料库弹窗正文里还有上传区 / OCR 提示 / 检索 / 同义词等 ~410px 固定内容，
+   若让列表 flex:1 自己滚，短屏上留给列表只剩几十像素 —— 反而「下面的条目看不见」。
+   改回自然高 + 由弹窗正文统一滚动：整个弹窗只有一个滚动条，条目不裁不切。 */
+.lib-list { display: flex; flex-direction: column; gap: 8px; flex: 0 0 auto; }
 .lib-empty { font-size: 12.5px; color: var(--muted); line-height: 1.7; border: 1px dashed var(--border); border-radius: 10px; padding: 14px; }
 .lib-item { border: 1px solid var(--border); border-radius: 10px; padding: 9px 11px; background: var(--bg); }
 .lib-item.is-off { opacity: .62; }
@@ -1128,9 +1147,11 @@ body.sidebar-collapsed .sidebar-toggle { left: 54px; transform: translateY(-50%)
 .lib-syn-actions { display: flex; gap: 8px; justify-content: flex-end; }
 /* ================= 产物空间 ================= */
 .deliver-box { max-width: 860px; width: 94%; }
-/* 弹窗定高：文件/收藏两个 tab 内容高度不同，不定高则切 tab 整个窗口跳大小 */
-.deliver-box .modal-body { display: flex; flex-direction: column; gap: 8px; padding: 14px 20px 18px; height: min(660px, 78vh); }
-#deliverFilesPane, #deliverStarsPane { display: flex; flex-direction: column; gap: 8px; flex: 1; min-height: 0; }
+/* 弹窗定高：文件/辩题/收藏三个 tab 内容高度不同，不定高则切 tab 整个窗口跳大小。
+   注意 flex-basis 必须是 auto：ui.css 的 .modal-body{flex:1} 会把 basis 定成 0%，
+   那样下面的 height 就不参与主轴尺寸计算，弹窗退回按内容定高、切 tab 又开始抖。 */
+.deliver-box .modal-body { display: flex; flex-direction: column; gap: 8px; padding: 14px 20px 18px; flex: 1 1 auto; height: min(660px, 78vh); }
+#deliverFilesPane, #deliverCasesPane, #deliverStarsPane { display: flex; flex-direction: column; gap: 8px; flex: 1; min-height: 0; }
 .deliver-list { display: flex; flex-direction: column; gap: 8px; flex: 1; min-height: 0; overflow: auto; }
 
 /* ---------- 辩题档案夹 ---------- */

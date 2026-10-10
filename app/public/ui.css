@@ -287,6 +287,11 @@ button:focus:not(:focus-visible) { outline: none; }
 .messages { padding: var(--sp-8) var(--sp-6); gap: var(--sp-6); }
 .messages.empty { justify-content: center; gap: 0; padding: 0; }
 .messages.empty .welcome { min-height: 100%; padding-top: var(--sp-8); padding-bottom: var(--sp-8); display: flex; flex-direction: column; justify-content: center; box-sizing: border-box; }
+/* 欢迎页占满整屏、无内容可滚动：把内容不足一屏时的底部占位块摘掉。
+   该 ::after 是给普通消息流垫底的（flex-basis 24px），空态下 .welcome 已用
+   min-height:100% 撑满，再叠一块 24px 就超出容器高度（居中后仍留可见滚动量），
+   凭空长出右侧滚动条、还能滚。空态摘掉它，欢迎页既不溢出也不可滚。 */
+.messages.empty::after { display: none; }
 
 /* ── 欢迎页 ─────────────────────────────────────────────────────────────── */
 .welcome { max-width: 680px; padding: var(--sp-4) var(--sp-2) var(--sp-8); }
@@ -666,6 +671,21 @@ button:focus:not(:focus-visible) { outline: none; }
 .field textarea { height: auto; padding: var(--sp-2) var(--sp-3); resize: vertical; }
 .field input::placeholder { color: var(--c-text-4); }
 .field input:focus, .field select:focus, .field textarea:focus {
+  border-color: var(--c-accent); box-shadow: 0 0 0 3px var(--c-accent-ring);
+}
+/* 「AI 模型」面板的字段用 .set-step（小标题 + 控件）排布，而上面这套输入样式只挂在 .field 下，
+   于是那几个框一直是浏览器默认样（约 21px 高、直角、inset 边），跟同屏的卡片/按钮完全两套观感。
+   这里把同样的样式补给 .set-step 里的输入。只补 text/password：该面板唯一的 select 是 #modelSelect，
+   它有自己的规则，别再叠一层把它顶高。 */
+.set-step input[type="text"], .set-step input[type="password"] {
+  width: 100%; height: 34px; border: 1px solid var(--c-line-strong);
+  border-radius: var(--r-md); padding: 0 var(--sp-3);
+  font: inherit; font-size: var(--fs-md); outline: none;
+  background: var(--c-surface); color: var(--c-text);
+  transition: border-color var(--dur-fast) var(--ease), box-shadow var(--dur-fast) var(--ease);
+}
+.set-step input[type="text"]::placeholder, .set-step input[type="password"]::placeholder { color: var(--c-text-4); }
+.set-step input[type="text"]:focus, .set-step input[type="password"]:focus {
   border-color: var(--c-accent); box-shadow: 0 0 0 3px var(--c-accent-ring);
 }
 .modal-actions { gap: var(--sp-2); }

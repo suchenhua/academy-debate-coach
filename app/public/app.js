@@ -1502,7 +1502,7 @@ function renderHistory() {
   // 严格隔离：只显示当前模式的对话，别的模式绝不出现
   const mine = state.chats.filter((c) => c.mode === state.mode);
   if (!mine.length) {
-    box.appendChild(el('div', 'history-empty', '当前模式暂无历史（保存在本机浏览器）'));
+    box.appendChild(el('div', 'history-empty', '当前模式暂无历史'));
     return;
   }
   for (const c of mine.slice(0, 20)) {
@@ -1516,7 +1516,7 @@ function renderHistory() {
     edit.title = '重命名';
     edit.onclick = (e) => { e.stopPropagation(); e.preventDefault(); startRenameChat(c.id, t); };
     ops.appendChild(edit);
-    const del = el('span', 'history-del', '×');
+    const del = el('span', 'history-del', ic('trash',12));
     del.title = '删除';
     del.onclick = (e) => {
       e.stopPropagation();
@@ -1846,7 +1846,7 @@ function switchSettingsPane(pane) {
 /* ———— 关于应用 ———— */
 const ABOUT_LICENSE_URL = 'https://creativecommons.org/licenses/by-nc-sa/4.0/deed.zh';
 function renderAboutPane() {
-  const ver = (state.status && state.status.version) || '2.3.0';
+  const ver = (state.status && state.status.version) || '2.4.0';
   const edition = String((state.status && state.status.edition) || 'Flash').trim();
   const v = 'v' + String(ver).replace(/^v/i, '') + (edition ? ' ' + edition : '');
   const elVer = $('#aboutVersion');
@@ -1961,12 +1961,11 @@ function bindProviderCards() {
   providerCards().forEach((card) => {
     card.onclick = () => {
       if (card.dataset.id === 'custom') {
-        // 进入自定义：保留当前地址便于编辑，并跳到「高级」面板填地址
+        // 自定义：地址框就在「服务商」正下方，就地编辑即可（曾跳到「高级」面板去填，已改）
         const cur = ($('#baseUrlInput').value || '').trim() || 'https://api.deepseek.com';
         $('#baseUrlInput').value = cur;
         setActiveProviderCard(cur);
-        switchSettingsPane('advanced');
-        setTimeout(() => { const i = $('#baseUrlInput'); if (i) i.focus(); }, 50);
+        setTimeout(() => { const i = $('#baseUrlInput'); if (i) { i.focus(); i.select(); } }, 50);
       } else {
         const bu = card.dataset.baseurl;
         $('#baseUrlInput').value = bu;
@@ -4224,6 +4223,10 @@ function renderLibraryList() {
   if (!box) return;
   box.innerHTML = '';
   const all = libState.items || [];
+  /* 已有资料时收成细栏（把高度让给列表）——资料库正文里上传区/检索/同义词都是固定高度，
+     短屏上会把列表挤到只剩一行。空库时才展开完整引导（那时最需要它）。 */
+  const modalBox = document.querySelector('#libraryModal .modal-box');
+  if (modalBox) modalBox.classList.toggle('has-items', all.length > 0);
   const items = libState.filter === 'all' ? all : all.filter((it) => libCategory(it) === libState.filter);
   // 分类计数同步到 chip 上，一眼看清每类几份
   const counts = { all: all.length };

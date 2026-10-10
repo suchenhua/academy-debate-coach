@@ -77,7 +77,7 @@ const EN_UI = {
   "新对话": "New chat",
   "未命名": "Untitled",
   "未命名对话": "Untitled chat",
-  "当前模式暂无历史（保存在本机浏览器）": "No chats in this mode yet (stored in this browser).",
+  "当前模式暂无历史": "No chats in this mode yet.",
   "正在载入全部对话…": "Loading all chats…",
   "没有匹配的内容": "Nothing matches.",
   "清空": "Clear",

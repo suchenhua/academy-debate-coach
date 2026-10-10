@@ -5,8 +5,8 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>逻敏 · Academy 辩论教练</title>
   <link rel="stylesheet" href="/tokens.css?v=4.0.0" />
-  <link rel="stylesheet" href="/style.css?v=3.28.10" />
-  <link rel="stylesheet" href="/ui.css?v=4.0.4" />
+  <link rel="stylesheet" href="/style.css?v=3.28.15" />
+  <link rel="stylesheet" href="/ui.css?v=4.0.6" />
   <script src="/icons.js?v=4.0.0"></script>
   <link rel="icon" href="data:image/svg+xml,<svg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 100 100%22><text y=%22.9em%22 font-size=%2290%22>🎓</text></svg>" />
 </head>
@@ -118,7 +118,7 @@
       <div class="modal-head">
         <h2><svg class="ic" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><use href="#i-settings"></use></svg>设置</h2>
         <span id="settingsBadge" class="settings-badge"></span>
-        <button class="modal-close" data-close="settingsModal">×</button>
+        <button class="modal-close" data-close="settingsModal"><svg class="ic" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><use href="#i-close"></use></svg></button>
       </div>
       <div class="settings-layout">
         <!-- 左侧导航 -->
@@ -174,6 +174,11 @@
                       <b>＋ 自定义接口</b><small>填自己的 OpenAI 兼容地址</small>
                     </button>
                   </div>
+                </div>
+                <div class="set-step">
+                  <div class="set-step-title">API 地址（OpenAI 兼容）</div>
+                  <input type="text" id="baseUrlInput" placeholder="https://api.deepseek.com" autocomplete="off" />
+                  <small class="field-hint">一般不用改：选服务商时已自动填好。手填到域名或 /v1 即可，程序会自动补 /chat/completions。</small>
                 </div>
                 <div class="set-step">
                   <div class="set-step-title">配置名称</div>
@@ -362,99 +367,94 @@
 
           <!-- 面板：高级 -->
           <div class="settings-pane" data-settings-pane="advanced">
-            <label class="field">
-              <span>API 地址（OpenAI 兼容）</span>
-              <input type="text" id="baseUrlInput" placeholder="https://api.deepseek.com" autocomplete="off" />
-              <small class="field-hint">一般不用改：选服务商时已自动填好。手填到域名或 /v1 即可，程序会自动补 /chat/completions。</small>
-            </label>
             <div class="general-section">
-              <div class="gen-row">
+              <div class="gen-row gen-row-wrap">
                 <span class="gen-label">文档处理（扩展）</span>
                 <div class="gen-choices">
                   <label class="lib-switch"><input type="checkbox" id="extendedToolsToggle" /><span id="extendedToolsLabel">关（默认）</span></label>
-                  <small class="field-hint" style="display:block;width:100%;margin-top:4px;color:var(--amber)">
-                    默认关闭。开启后，教练可以按你的要求<b>读写你指定的文件夹</b>——比如把整份备赛资料整理成
-                    Word / Excel / PDF，直接存到你选好的位置。<b>⚠️ 开启等于让教练能动你电脑上的文件，
-                    开之前请想清楚、重要文件先备份。</b>开启时会先弹出确认，从下一条消息起生效。
-                  </small>
                 </div>
+                <small class="field-hint" style="color:var(--amber)">
+                  默认关闭。开启后，教练可以按你的要求<b>读写你指定的文件夹</b>——比如把整份备赛资料整理成
+                  Word / Excel / PDF，直接存到你选好的位置。<b>⚠️ 开启等于让教练能动你电脑上的文件，
+                  开之前请想清楚、重要文件先备份。</b>开启时会先弹出确认，从下一条消息起生效。
+                </small>
               </div>
+            </div>
 
-              <div class="general-section" style="margin-top:14px">
-                <div class="gen-row" style="border-top:none">
-                  <span class="gen-label">自定义搜索服务</span>
-                  <div class="gen-choices">
-                    <label class="lib-switch"><input type="checkbox" id="customSearchToggle" /><span id="customSearchLabel">关（默认）</span></label>
-                  </div>
+            <div class="general-section">
+              <div class="gen-row gen-row-wrap">
+                <span class="gen-label">自定义搜索服务</span>
+                <div class="gen-choices">
+                  <label class="lib-switch"><input type="checkbox" id="customSearchToggle" /><span id="customSearchLabel">关（默认）</span></label>
                 </div>
-                <small class="field-hint" style="display:block;margin-bottom:10px">
+                <small class="field-hint">
                   内置的「基础检索」是免费抓取网页，部分网络下会被限制、搜不到东西。
                   <b>如果你有可用的搜索服务（Tavily / SearXNG / Brave 等），在这里接上，
                   「基础检索」就会优先用它，结果会可靠得多。</b>不填也不影响使用——那就继续用深度检索。
                 </small>
+              </div>
 
-                <div id="customSearchForm" class="hidden">
-                  <label class="field">
-                    <span>选择预设（只是帮你填好格式，之后都能改）</span>
-                    <select id="customSearchPreset">
-                      <option value="">— 请选择 —</option>
-                    </select>
-                  </label>
-                  <small class="field-hint" id="customSearchPresetNote" style="display:block;margin:-4px 0 10px"></small>
+              <div id="customSearchForm" class="hidden" style="margin-top:12px">
+                <label class="field">
+                  <span>选择预设（只是帮你填好格式，之后都能改）</span>
+                  <select id="customSearchPreset">
+                    <option value="">— 请选择 —</option>
+                  </select>
+                </label>
+                <small class="field-hint" id="customSearchPresetNote" style="display:block;margin:-4px 0 10px"></small>
 
-                  <label class="field">
-                    <span>名称（随便起，只用于显示）</span>
-                    <input type="text" id="csName" placeholder="如：Tavily 主力" autocomplete="off" />
-                  </label>
+                <label class="field">
+                  <span>名称（随便起，只用于显示）</span>
+                  <input type="text" id="csName" placeholder="如：Tavily 主力" autocomplete="off" />
+                </label>
 
-                  <label class="field">
-                    <span>请求地址模板 <span class="require-dot">*</span></span>
-                    <input type="text" id="csUrl" placeholder="https://api.tavily.com/search" autocomplete="off" />
-                    <small class="field-hint">用 <code>{query}</code> 表示关键词（会自动做 URL 编码）。例：<code>https://your-searxng.com/search?q={query}&format=json</code></small>
-                  </label>
+                <label class="field">
+                  <span>请求地址模板 <span class="require-dot">*</span></span>
+                  <input type="text" id="csUrl" placeholder="https://api.tavily.com/search" autocomplete="off" />
+                  <small class="field-hint">用 <code>{query}</code> 表示关键词（会自动做 URL 编码）。例：<code>https://your-searxng.com/search?q={query}&format=json</code></small>
+                </label>
 
-                  <div class="set-step">
-                    <div class="set-step-title">请求方式</div>
-                    <div class="gen-choices" id="csMethodChoices" style="justify-content:flex-start">
-                      <button type="button" class="gen-choice" data-cs-method="GET">GET（关键词放地址里）</button>
-                      <button type="button" class="gen-choice" data-cs-method="POST">POST（关键词放请求体）</button>
-                    </div>
+                <div class="set-step">
+                  <div class="set-step-title">请求方式</div>
+                  <div class="gen-choices" id="csMethodChoices" style="justify-content:flex-start">
+                    <button type="button" class="gen-choice" data-cs-method="GET">GET（关键词放地址里）</button>
+                    <button type="button" class="gen-choice" data-cs-method="POST">POST（关键词放请求体）</button>
                   </div>
-
-                  <label class="field">
-                    <span>API Key（没有就留空）</span>
-                    <input type="password" id="csApiKey" placeholder="留空表示不修改已保存的 Key" autocomplete="off" />
-                    <small class="field-hint" id="csKeyHint">保存在本机 <code>data/config.json</code>。请求头里用 <code>{apiKey}</code> 引用，没写的话会自动加 <code>Authorization: Bearer</code>。</small>
-                  </label>
-
-                  <label class="field">
-                    <span>请求头（每行一个，可留空）</span>
-                    <textarea id="csHeaders" rows="2" placeholder="Authorization: Bearer {apiKey}"></textarea>
-                  </label>
-
-                  <label class="field" id="csBodyField">
-                    <span>请求体模板（POST 时用，JSON）</span>
-                    <textarea id="csBody" rows="2" placeholder='{"query":"{queryRaw}","max_results":8}'></textarea>
-                    <small class="field-hint"><code>{queryRaw}</code> 是未编码的原始关键词。</small>
-                  </label>
-
-                  <div class="set-step">
-                    <div class="set-step-title">从返回的 JSON 里取哪些字段 <span class="require-dot">*</span></div>
-                    <div class="cs-paths">
-                      <label class="field"><span>结果数组路径</span><input type="text" id="csResultsPath" placeholder="results" autocomplete="off" /></label>
-                      <label class="field"><span>标题字段</span><input type="text" id="csTitlePath" placeholder="title" autocomplete="off" /></label>
-                      <label class="field"><span>链接字段</span><input type="text" id="csUrlPath" placeholder="url" autocomplete="off" /></label>
-                      <label class="field"><span>摘要字段（可空）</span><input type="text" id="csSnippetPath" placeholder="content" autocomplete="off" /></label>
-                    </div>
-                    <small class="field-hint">用点号表示层级，如 Brave 的结果在 <code>web.results</code> 里就填 <code>web.results</code>。</small>
-                  </div>
-
-                  <div class="backup-actions" style="margin-top:12px">
-                    <button type="button" class="btn" id="btnCustomSearchTest"><svg class="ic" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><use href="#i-plugin"></use></svg>测试一下</button>
-                    <button type="button" class="btn primary" id="btnCustomSearchSave">保存</button>
-                  </div>
-                  <p id="customSearchResult" class="settings-result"></p>
                 </div>
+
+                <label class="field">
+                  <span>API Key（没有就留空）</span>
+                  <input type="password" id="csApiKey" placeholder="留空表示不修改已保存的 Key" autocomplete="off" />
+                  <small class="field-hint" id="csKeyHint">保存在本机 <code>data/config.json</code>。请求头里用 <code>{apiKey}</code> 引用，没写的话会自动加 <code>Authorization: Bearer</code>。</small>
+                </label>
+
+                <label class="field">
+                  <span>请求头（每行一个，可留空）</span>
+                  <textarea id="csHeaders" rows="2" placeholder="Authorization: Bearer {apiKey}"></textarea>
+                </label>
+
+                <label class="field" id="csBodyField">
+                  <span>请求体模板（POST 时用，JSON）</span>
+                  <textarea id="csBody" rows="2" placeholder='{"query":"{queryRaw}","max_results":8}'></textarea>
+                  <small class="field-hint"><code>{queryRaw}</code> 是未编码的原始关键词。</small>
+                </label>
+
+                <div class="set-step">
+                  <div class="set-step-title">从返回的 JSON 里取哪些字段 <span class="require-dot">*</span></div>
+                  <div class="cs-paths">
+                    <label class="field"><span>结果数组路径</span><input type="text" id="csResultsPath" placeholder="results" autocomplete="off" /></label>
+                    <label class="field"><span>标题字段</span><input type="text" id="csTitlePath" placeholder="title" autocomplete="off" /></label>
+                    <label class="field"><span>链接字段</span><input type="text" id="csUrlPath" placeholder="url" autocomplete="off" /></label>
+                    <label class="field"><span>摘要字段（可空）</span><input type="text" id="csSnippetPath" placeholder="content" autocomplete="off" /></label>
+                  </div>
+                  <small class="field-hint">用点号表示层级，如 Brave 的结果在 <code>web.results</code> 里就填 <code>web.results</code>。</small>
+                </div>
+
+                <div class="backup-actions" style="margin-top:12px">
+                  <button type="button" class="btn" id="btnCustomSearchTest"><svg class="ic" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><use href="#i-plugin"></use></svg>测试一下</button>
+                  <button type="button" class="btn primary" id="btnCustomSearchSave">保存</button>
+                </div>
+                <p id="customSearchResult" class="settings-result"></p>
               </div>
             </div>
           </div>
@@ -656,7 +656,7 @@ whenToUse: 可选：触发条件描述。
     <div class="modal-box small">
       <div class="modal-head">
         <h2 id="inputModalTitle">请输入</h2>
-        <button class="modal-close" data-close="inputModal">×</button>
+        <button class="modal-close" data-close="inputModal"><svg class="ic" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><use href="#i-close"></use></svg></button>
       </div>
       <div class="modal-body">
         <div id="inputModalHint" class="input-modal-hint hidden"></div>
@@ -674,7 +674,7 @@ whenToUse: 可选：触发条件描述。
     <div class="modal-box small">
       <div class="modal-head">
         <h2><svg class="ic" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><use href="#i-toolbox"></use></svg>工具箱</h2>
-        <button class="modal-close" data-close="toolsModal">×</button>
+        <button class="modal-close" data-close="toolsModal"><svg class="ic" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><use href="#i-close"></use></svg></button>
       </div>
       <div class="modal-body">
         <div id="toolsList" class="tools-list"></div>
@@ -687,7 +687,7 @@ whenToUse: 可选：触发条件描述。
     <div class="modal-box deliver-box">
       <div class="modal-head">
         <h2><svg class="ic" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><use href="#i-package"></use></svg>产物空间</h2>
-        <button class="modal-close" data-close="deliverModal">×</button>
+        <button class="modal-close" data-close="deliverModal"><svg class="ic" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><use href="#i-close"></use></svg></button>
       </div>
       <div class="modal-body">
         <p class="memory-hint">Agent 的长篇交付会写成文件保存在 <code>data/deliverables/</code>。在这里<b>预览 / 转 Word / 转 Excel / 存 PDF / 导出到任意文件夹</b>。</p>
@@ -753,7 +753,7 @@ whenToUse: 可选：触发条件描述。
     <div class="modal-box memory-box">
       <div class="modal-head">
         <h2><svg class="ic" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><use href="#i-memory"></use></svg>记忆中心</h2>
-        <button class="modal-close" data-close="memoryModal">×</button>
+        <button class="modal-close" data-close="memoryModal"><svg class="ic" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><use href="#i-close"></use></svg></button>
       </div>
       <div class="modal-body">
         <p class="memory-hint" id="memoryHint">记忆分两层：<b>长期记忆</b>（精炼持久事实）与<b>每日流水</b>（当天观察/备忘）。Agent 会自动读写，你也可以<b>手动新增 / 编辑 / 删除</b>任意一条 —— 鼠标移到条目上就会出现「✏️ 编辑 / 🗑 删除」。</p>
@@ -783,7 +783,7 @@ whenToUse: 可选：触发条件描述。
     <div class="modal-box library-box">
       <div class="modal-head">
         <h2><svg class="ic" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><use href="#i-library"></use></svg>个人资料库</h2>
-        <button class="modal-close" data-close="libraryModal">×</button>
+        <button class="modal-close" data-close="libraryModal"><svg class="ic" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><use href="#i-close"></use></svg></button>
       </div>
       <div class="modal-body">
         <p class="memory-hint">
@@ -854,7 +854,7 @@ whenToUse: 可选：触发条件描述。
     <div class="modal-box wizard-box">
       <div class="modal-head">
         <h2 id="wizardTitle">欢迎使用逻敏 · 辩论教练</h2>
-        <button class="modal-close" data-close="welcomeModal">×</button>
+        <button class="modal-close" data-close="welcomeModal"><svg class="ic" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><use href="#i-close"></use></svg></button>
       </div>
       <div class="modal-body">
         <div class="wizard-progress" id="wizardProgress">
@@ -968,7 +968,7 @@ whenToUse: 可选：触发条件描述。
     <div class="modal-box md-reader-box">
       <div class="modal-head">
         <h2 id="mdReaderTitle"><svg class="ic" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><use href="#i-book"></use></svg>Markdown 阅读器</h2>
-        <button class="modal-close" data-close="mdModal">×</button>
+        <button class="modal-close" data-close="mdModal"><svg class="ic" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><use href="#i-close"></use></svg></button>
       </div>
       <div class="modal-body md-reader-body">
         <div class="md-reader-bar">
@@ -988,7 +988,7 @@ whenToUse: 可选：触发条件描述。
       </div>
     </div>
   </div>
-  <script src="/locale.js?v=1.5.0"></script>
-  <script src="/app.js?v=3.41.0"></script>
+  <script src="/locale.js?v=1.5.1"></script>
+  <script src="/app.js?v=3.41.5"></script>
 </body>
 </html>
