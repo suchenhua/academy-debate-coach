@@ -1016,6 +1016,15 @@ async function main() {
       check('pack.js 已接入运行时裁剪', packSrc.indexOf('prune-runtime') !== -1);
       check('pack.js 含发版版本一致性自检', packSrc.indexOf('checkVersionConsistency') !== -1);
 
+      /* 文件关联开关必须随包发：这两个脚本以前不在 ITEMS 里，分发包中根本不存在，
+         用户想让 .md 回到系统默认只能手动改注册表（Pro 线 10/09 补过同一处）。
+         判据：ITEMS 里点名 + 文件真实存在（改名/挪位置也要让这条报红）。 */
+      const assocFiles = ['注册md文件关联.bat', '取消md文件关联.bat'];
+      check('★ 文件关联开关随包分发（注册 / 取消两个脚本）',
+        assocFiles.every((f) => packSrc.includes("'" + f + "'"))
+        && assocFiles.every((f) => fsMod.existsSync(path.join(ROOT, f))),
+        assocFiles.filter((f) => !packSrc.includes("'" + f + "'") || !fsMod.existsSync(path.join(ROOT, f))).join(',') || '两个都在');
+
       /* 合规检查器的扫描范围必须覆盖 .mjs：runtime/academy-text-stream.mjs 是
          我们自己写的内核插件，一旦写死开发机路径，分包在别人机器上内核整个起不来。
          而它曾经因为 TEXT_EXT 里没有 .mjs 被整段跳过 —— 护栏形同虚设。 */
@@ -1218,6 +1227,23 @@ async function main() {
           && serverSrc.includes('function dropIndexDb'));
         check('★ 内核格式契约：契约检查脚本在位（发版前 --live 跑一次）',
           fsMod.existsSync(path.join(ROOT, 'tools', 'verify-kernel-format.js')));
+      }
+      /* ★ 用量写入端的字段名契约。
+         extractFinalUsage 返回 normalizeUsage 的 {inputTokens, outputTokens, cacheReadTokens,…}，
+         而账本行用的是 {input, output, cacheRead,…} —— 两边字段名不同，中间必须显式改名。
+         这里曾经写成 doneUsage.input，全是 undefined → 每一行都记成 0，
+         统计面板/活跃度/按模型聚合长期静默为空（2026-09-13 起 20 行全 0，2026-10-10 才发现）。
+         别处那条「账本聚合」断言只覆盖读端，挡不住写端，所以单独立这条。 */
+      {
+        const usServerSrc = fsMod.readFileSync(path.join(ROOT, 'app', 'server.js'), 'utf8');
+        const m = usServerSrc.match(/usageAppend\(\{([\s\S]{0,600}?)\}\)/);
+        const blk = m ? m[1] : '';
+        check('★ 用量账本写入端用 *Tokens 字段（不得再写成 doneUsage.input）',
+          !!blk && blk.includes('doneUsage.inputTokens')
+          && blk.includes('doneUsage.outputTokens')
+          && blk.includes('doneUsage.cacheReadTokens')
+          && !/doneUsage\.(input|output|cacheRead|cacheWrite|reasoning)(?![A-Za-z])/.test(blk),
+          blk ? '写入端字段已核对' : '未找到 usageAppend 调用块');
       }
       /* 发版版本一致性：单一来源是 app/edition.js，README 与安装外壳必须同步
          （pack.js 的 ACADEMY_STRICT_VERSION=1 会阻断打包，这里让冒烟早点发现） */

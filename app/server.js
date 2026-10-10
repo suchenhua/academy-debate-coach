@@ -5990,18 +5990,22 @@ function handleRequest(req, res) {
         if (ok) {
           const doneUsage = extractFinalUsage(startedAt, cfg.model);
           const usagePayload = doneUsage ? Object.assign({ contextWindow: ctxWindowOf(cfg.model) }, doneUsage) : undefined;
-          // 落账本：只追加。以后即使这条对话被删掉，这段消耗仍在统计里。
+          /* 落账本：只追加。以后即使这条对话被删掉，这段消耗仍在统计里。
+             ★ 字段名必须用 extractFinalUsage 的返回契约（normalizeUsage 的 *Tokens 命名）。
+             这里曾经写成 doneUsage.input / output / cacheRead … —— 全是 undefined，
+             于是**每一行都记成 0**：统计面板、活跃度、按模型聚合长期静默为空。
+             冒烟测的是「聚合器读 input 字段」，而写入端从没被断言过，所以一直没人发现。 */
           if (doneUsage) {
             usageAppend({
               date: USAGE_DAY(Date.now()),
               chatId: String(body.chatId || ''),
               mode: String(body.mode || 'free'),
               model: String(cfg.model || ''),
-              input: Number(doneUsage.input) || 0,
-              output: Number(doneUsage.output) || 0,
-              cacheRead: Number(doneUsage.cacheRead) || 0,
-              cacheWrite: Number(doneUsage.cacheWrite) || 0,
-              reasoning: Number(doneUsage.reasoning) || 0,
+              input: Number(doneUsage.inputTokens) || 0,
+              output: Number(doneUsage.outputTokens) || 0,
+              cacheRead: Number(doneUsage.cacheReadTokens) || 0,
+              cacheWrite: Number(doneUsage.cacheWriteTokens) || 0,
+              reasoning: Number(doneUsage.reasoningTokens) || 0,
               elapsedMs: Date.now() - startedAt,
             });
           }
