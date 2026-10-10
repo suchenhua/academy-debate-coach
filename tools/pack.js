@@ -37,6 +37,10 @@ const ITEMS = [
   'start.bat', '一键打包.bat', '一键安装.bat', 'setup.bat', 'uninstall.bat',
   'launch.vbs', '启动辩论助手(Electron桌面版).vbs', 'install-shortcuts.ps1', 'appicon.ico', '安装说明.txt',
   'README.md', '使用说明.txt', '小白安装指南.md',
+  /* 文件关联开关：用户想自己控制「双击 .md 用不用 Academy 打开 / 怎么撤销」时用。
+     ★ 这两个脚本以前没在清单里 —— 分发包中根本不存在，用户一旦想让 .md 回到系统默认，
+     只能手动改注册表（Pro 线 2026-10-09 补过同一处，Flash 线当时没跟上）。 */
+  '注册md文件关联.bat', '取消md文件关联.bat',
   // 破坏性更新（换内核）时的用户升级指引：必须随包发，否则用户会拿旧补丁去升
   '升级说明-v2.4.0.txt',
   'AGENTS.md', 'SOUL.md', 'TOOLS.md', 'LICENSE.md',
