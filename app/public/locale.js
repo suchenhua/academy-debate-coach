@@ -310,6 +310,13 @@ const EN_UI = {
 /* Phase 5.4：补齐词典 + 动态文案规则。EN_EXTRA 并入 EN_UI；EN_RULES 按序做正则替换，
    输出不含汉字，因此对 MutationObserver 的重复调用保持幂等。 */
 const EN_EXTRA = {
+  /* —— 「模型 + 推理等级」控件（2026-10-10）——
+     ★ 四档的中文名（关闭/轻量/标准/最强）**不在这里再加一份** ——
+     它们早在 Phase 6.0「思考强度下拉」时就已经入过表（"标准":"Standard" 等）。
+     同一个键重复声明 = 后面那份静默失效，还会让人误以为改的是这里。 */
+  "推理等级": "Effort",
+  "模型与推理等级": "Model & effort",
+  "档位切换失败": "Could not switch effort",
   // —— 设置 / 通用 ——
   "开（默认）": "On (default)",
   "关（默认）": "Off (default)",
@@ -687,7 +694,7 @@ const EN_EXTRA = {
   "主页": "Home",
   "言语，是强大的主宰": "Speech is the mighty sovereign.",
 
-  /* —— Phase 6.0：思考强度下拉 —— */
+  /* —— Phase 6.0：思考强度（2026-10-10 起入口改为「模型 + 推理等级」控件里的滑条）—— */
   "思考": "Effort",
   "标准": "Standard",
   "轻量": "Light",

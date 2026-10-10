@@ -864,9 +864,9 @@ async function main() {
             && /^Engine ready · /.test(applyR('引擎就绪 · deepseek-chat'))
             && applyR('1,234 字') === '1,234 chars'
             && applyR('⏳ 排队第 1 位 · 对话').includes('Chat'));
-          check('Phase5.4-5.9/6.0/6.2 缓存版本号已提升（locale v1.5.1 / app v3.41.5 / style 3.28.15 / ui 4.0.6）',
-            htmlSrc.includes('/locale.js?v=1.5.1') && htmlSrc.includes('/app.js?v=3.41.5')
-            && htmlSrc.includes('/style.css?v=3.28.15') && htmlSrc.includes('/ui.css?v=4.0.6'));
+          check('Phase5.4-5.9/6.0/6.2 缓存版本号已提升（locale v1.5.1 / app v3.42.0 / style 3.28.16 / ui 4.1.0）',
+            htmlSrc.includes('/locale.js?v=1.5.1') && htmlSrc.includes('/app.js?v=3.42.0')
+            && htmlSrc.includes('/style.css?v=3.28.16') && htmlSrc.includes('/ui.css?v=4.1.0'));
           check('Phase5.5 英文观察器同步执行且吞掉自触发记录（切模式不闪中文）',
             locSrc.includes('enObserver.takeRecords()')
             && !/setTimeout\(\s*\(\)\s*=>\s*\{[^}]*applyEnglishUI/s.test(locSrc));
@@ -898,8 +898,8 @@ async function main() {
           check('Phase6.0 思考强度接线（server 归一化/写入 YAML / composer 下拉 / app 同步）',
             require('fs').readFileSync(path.join(ROOT, 'app', 'server.js'), 'utf8').includes("next.reasoningEffort = ['off', 'low', 'high', 'max'].includes(patch.reasoningEffort)")
             && require('fs').readFileSync(path.join(ROOT, 'app', 'server.js'), 'utf8').includes("reasoningEffort: ' + esc(String(reasoningEffort))")
-            && htmlSrc.includes('composerEffortSelect') && htmlSrc.includes('思考强度：控制模型推理深度')
-            && require('fs').readFileSync(path.join(ROOT, 'app', 'public', 'app.js'), 'utf8').includes('syncComposerEffortSelect')
+            && htmlSrc.includes('gearTrack') && htmlSrc.includes('推理等级')
+            && require('fs').readFileSync(path.join(ROOT, 'app', 'public', 'app.js'), 'utf8').includes('onComposerEffortChange')
             && require('fs').readFileSync(path.join(ROOT, 'app', 'server.js'), 'utf8').includes("'            max: high',")
             && !require('fs').readFileSync(path.join(ROOT, 'app', 'server.js'), 'utf8').includes('isOfficialDeepSeek && ['));
           check('Phase5.8 语言链路与页面接线（preload 透传 / registry titleEn / 五页挂 locale）',
@@ -1228,6 +1228,46 @@ async function main() {
         check('★ 内核格式契约：契约检查脚本在位（发版前 --live 跑一次）',
           fsMod.existsSync(path.join(ROOT, 'tools', 'verify-kernel-format.js')));
       }
+      /* ── Codex 风格「模型 + 推理等级」控件（2026-10-10，子涵） ──
+         来源：dsh-codex-effort-slider（DSH 插件，MIT，Microqian2th）的观感；
+         我们自己的前端直接做成第一等公民，不需要 DOM 桥。 */
+      {
+        const htmlSrc2 = fsMod.readFileSync(path.join(ROOT, 'app', 'public', 'index.html'), 'utf8');
+        const sliderSrc = (() => { try { return fsMod.readFileSync(path.join(ROOT, 'app', 'public', 'effort-slider.js'), 'utf8'); } catch (_) { return ''; } })();
+        const cssSrc2 = fsMod.readFileSync(path.join(ROOT, 'app', 'public', 'ui.css'), 'utf8');
+        check('★ 模型+推理等级控件：脚本存在且先于 app.js 加载（initComposerGear 依赖它）',
+          !!sliderSrc && htmlSrc2.includes('/effort-slider.js?v=')
+          && htmlSrc2.indexOf('/effort-slider.js') < htmlSrc2.indexOf('/app.js?v='));
+        check('★ 控件在发送按钮左侧、且不再是两个并排下拉',
+          htmlSrc2.includes('id="composerGear"')
+          && !htmlSrc2.includes('composerEffortSelect')
+          && htmlSrc2.indexOf('composerGear') < htmlSrc2.indexOf('id="btnSend"'));
+        check('★ 控件的四档与内核 reasoningEffort 取值一致（off/low/high/max）',
+          /id:\s*'off'/.test(sliderSrc) && /id:\s*'low'/.test(sliderSrc)
+          && /id:\s*'high'/.test(sliderSrc) && /id:\s*'max'/.test(sliderSrc));
+        /* 颜色/能量/粒子是**位置的纯函数**：这四条的锚点值来自参考实现，
+           改坏了会直接改变"一档一色、越往右越通电"这个核心观感。 */
+        check('★ 控件配色锚点：第二档以前纯蓝、high 处转紫、能量 0→0.5→1',
+          /COLOR_BLUE = \[77, 147, 248\]/.test(sliderSrc)
+          && /COLOR_VIOLET = \[147, 51, 234\]/.test(sliderSrc)
+          && /ENERGY_START = 1 \/ 3/.test(sliderSrc)
+          && /ENERGY_END = 2 \/ 3/.test(sliderSrc));
+        check('★ 控件旋钮内缩几何：圆心在 [半径, 宽度-半径]，两端的圆不被裁',
+          /knobOffsetOf/.test(sliderSrc) && /calc\(.*KNOB_RADIUS.*100%/.test(sliderSrc));
+        /* 时长/负相位必须内联：参考实现在真宿主里踩过"写成 CSS 变量导致相位不生效" */
+        check('★ 星尘时长与负相位内联赋值（不走 CSS 变量，否则相位不生效）',
+          /animationDuration = /.test(sliderSrc) && /animationDelay = /.test(sliderSrc)
+          && !/--gear-delay/.test(cssSrc2));
+        check('★ 控件样式：能量层/星尘层/扫光/高档位紫光都在，且尊重减少动态效果',
+          /.gear-energy\b/.test(cssSrc2) && /\.gear-stars\b/.test(cssSrc2)
+          && /gear-sweep/.test(cssSrc2) && /prefers-reduced-motion/.test(cssSrc2));
+        check('★ 控件失败回滚：写档位失败时回滚到真实档位（不谎报成功）',
+          /失败回滚到真实档位/.test(sliderSrc) && /state\.effort = prev/.test(sliderSrc));
+        /* 几何/能量/星尘/写回这些全是运行时观感，静态扫描证明不了 —— 必须有真渲染回归 */
+        check('★ 控件的真渲染回归脚本在位（Electron 量几何与观感）',
+          fsMod.existsSync(path.join(ROOT, 'tools', 'verify-gear-slider.js')));
+      }
+
       /* ★ 用量写入端的字段名契约。
          extractFinalUsage 返回 normalizeUsage 的 {inputTokens, outputTokens, cacheReadTokens,…}，
          而账本行用的是 {input, output, cacheRead,…} —— 两边字段名不同，中间必须显式改名。

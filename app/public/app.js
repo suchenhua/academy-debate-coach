@@ -1807,6 +1807,10 @@ function renderStatus() {
   }
   /* 2026-09-27 子涵：左下角技术参数行（DSH 内核/Node/API/搜索/记忆）已移除——
      是否可用看右上角状态徽章（绿点引擎就绪 / 红「服务异常」）即可。 */
+  /* 运行中时禁用「模型 + 推理等级」控件：正在跑的一轮用的是提交那一刻的档位，
+     跑到一半改档位没有意义、还会让读数与实际不符。busy 的唯一真相是 state.status.busy，
+     而 sendMessage / 压缩上下文 都在起止处改它并调到这里，所以搭这个钩子即可。 */
+  syncComposerGear();
 }
 
 function openSettings() {
@@ -2036,7 +2040,7 @@ async function loadProfilesUI() {
     }
     renderProfilesList();
     refreshComposerModelSelect();
-    syncComposerEffortSelect();
+    syncComposerGear();
   } catch (e) {
     toast('加载配置失败：' + e.message);
   }
@@ -2114,7 +2118,7 @@ async function activateProfileClient(id) {
     renderProfilesList();
     refreshComposerModelSelect();
     await refreshStatus();
-    syncComposerEffortSelect();
+    syncComposerGear();
     toast('已切换到：' + (p ? p.name : ''));
   } catch (e) {
     toast('切换失败：' + e.message);
@@ -2167,7 +2171,7 @@ async function saveCurrentProfile() {
   }
 }
 
-/* 对话区模型切换下拉 */
+/* 控件菜单里的「模型」行：枚举配置档案。收起态的席按钮显示的是当前档案（syncComposerGear）。 */
 function refreshComposerModelSelect() {
   const sel = $('#composerModelSelect');
   if (!sel) return;
@@ -2188,23 +2192,40 @@ async function bindComposerModelSelect() {
     if (sel.value) activateProfileClient(sel.value);
   };
 }
-/* 思考强度下拉：与配置一起存服务端（config.reasoningEffort），随每次请求生效 */
-function syncComposerEffortSelect() {
-  const sel = $('#composerEffortSelect');
-  if (!sel) return;
-  sel.value = (state.status && state.status.reasoningEffort) || 'high';
-  if (![...sel.options].some((o) => o.value === sel.value)) sel.value = 'high';
+/* 模型 + 推理等级：一个控件（Codex 风格滑条，见 effort-slider.js 与本文件 initComposerGear）
+   旧的两个并排下拉（composerModelSelect / composerEffortSelect）已并入这里；
+   思考强度的存取契约不变（config.reasoningEffort），只是入口换成了滑条。 */
+
+/** 当前配置档案的显示名（席按钮左侧那半）。 */
+function composerGearModelName() {
+  const p = (state.profiles || []).find((x) => x.id === state.activeProfileId);
+  return p ? (p.name || '未命名') + ' · ' + p.model : '未配置';
 }
+/** 把权威状态推进控件：档位只认 state.status（服务端归一化过的值）。 */
+function syncComposerGear() {
+  if (!window.AcademyEffort) return;
+  window.AcademyEffort.sync({
+    effort: (state.status && state.status.reasoningEffort) || 'high',
+    modelName: composerGearModelName(),
+    busy: !!state.busy,
+  });
+}
+/** 思考强度写入：失败时抛错，好让滑条回滚到真实档位（不谎报成功）。 */
 async function onComposerEffortChange(val) {
   const eff = ['off', 'low', 'high', 'max'].includes(val) ? val : 'high';
-  try {
-    const r = await fetchJSON('/api/config', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ reasoningEffort: eff }) });
-    if (r.ok && state.status) state.status.reasoningEffort = r.reasoningEffort || eff;
-    toast('思考强度：' + ({ off: '关闭', low: '轻量', high: '标准', max: '最强' }[eff] || eff));
-  } catch (e) {
-    toast('保存失败：' + e.message);
-    syncComposerEffortSelect();
-  }
+  const r = await fetchJSON('/api/config', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ reasoningEffort: eff }) });
+  if (!r.ok) throw new Error(r.error || '保存失败');
+  if (state.status) state.status.reasoningEffort = r.reasoningEffort || eff;
+  toast('推理等级：' + ({ off: '关闭', low: '轻量', high: '标准', max: '最强' }[eff] || eff));
+}
+function initComposerGear() {
+  if (!window.AcademyEffort) return;
+  window.AcademyEffort.init({
+    getModelName: composerGearModelName,
+    onModelChange: (id) => { if (id) activateProfileClient(id); },
+    onEffortChange: onComposerEffortChange,
+  });
+  syncComposerGear();
 }
 
 /* 静默自动拉取模型列表（打开设置时若已有 Key） */
@@ -5029,6 +5050,7 @@ try { bindMemToggles(); } catch (_) {}
   bindProviderCards();
   try { bindAboutPane(); } catch (_) {}
   bindComposerModelSelect();
+  initComposerGear();
   // 多配置档案：保存 / 新建
   const btnSaveProf = $('#btnSaveProfile');
   if (btnSaveProf) btnSaveProf.onclick = saveCurrentProfile;

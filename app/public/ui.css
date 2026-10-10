@@ -999,3 +999,132 @@ details > summary:hover { color: var(--c-text); }
 @media (max-width: 720px) {
   .welcome-prompts { grid-template-columns: 1fr; }
 }
+
+/* ══════════════════════════════════════════════════════════════════════════
+   11. 「模型 + 推理等级」控件（Codex 风格滑条）
+   ─────────────────────────────────────────────────────────────────────────
+   由来：dsh-codex-effort-slider（DSH 插件，MIT，Microqian2th）的观感搬到本前端。
+   位置在发送按钮左侧；原来的「模型」与「思考」两个并排下拉已并入这一个控件。
+   颜色/能量/粒子全部由 --gear-energy 与内联几何驱动，浅深色都跟随设计令牌。
+   ══════════════════════════════════════════════════════════════════════════ */
+
+.composer-gear { position: relative; flex: 0 0 auto; margin-left: auto; }
+/* 右侧只留一个 auto 边距：控件紧贴在「字数 · 发送」左边，而不是悬在工具条中间。
+   （.composer-tools .composer-side 自带 margin-left:auto，两个 auto 会把空白对半分，
+     结果是控件与发送键之间空出一大块 —— 同权重后写生效，这里把它归零。） */
+.composer-tools .composer-side { margin-left: 0; }
+
+/* 收起态：一枚按档位着色的席按钮（点开之前就看得见当前档位） */
+.gear-seat {
+  display: inline-flex; align-items: center; gap: 6px;
+  height: 30px; padding: 0 10px; max-width: 260px;
+  border: none; border-radius: var(--r-md);
+  background: transparent; color: var(--c-text-3);
+  font: inherit; font-size: var(--fs-sm); font-weight: var(--fw-medium);
+  cursor: pointer; white-space: nowrap;
+  transition: background var(--dur-fast) var(--ease), color var(--dur-fast) var(--ease);
+}
+.gear-seat:hover { background: var(--c-surface-hover); color: var(--c-text); }
+.gear-seat:active { transform: scale(.98); }
+.gear-seat:disabled { opacity: .5; cursor: not-allowed; }
+.gear-seat .gear-model { overflow: hidden; text-overflow: ellipsis; max-width: 150px; }
+.gear-seat .gear-effort { font-weight: var(--fw-semibold); }
+.gear-seat .gear-chev { opacity: .55; flex: 0 0 auto; }
+
+/* 展开的菜单：向上弹出（composer 贴底） */
+.gear-menu {
+  position: absolute; right: 0; bottom: calc(100% + 8px); z-index: 60;
+  width: 300px; padding: 6px;
+  border: 1px solid var(--c-line); border-radius: var(--r-lg);
+  background: var(--c-bg-elevated);
+  box-shadow: var(--sh-md);
+  backdrop-filter: blur(20px) saturate(180%);
+  -webkit-backdrop-filter: blur(20px) saturate(180%);
+}
+.gear-menu.hidden { display: none; }
+
+.gear-row {
+  display: flex; align-items: center; justify-content: space-between;
+  gap: 8px; padding: 8px 10px; border-radius: var(--r-sm);
+}
+.gear-row-label { font-size: var(--fs-sm); color: var(--c-text-2); flex: 0 0 auto; }
+.gear-row-model { padding-bottom: 4px; }
+.gear-model-select {
+  border: none; background: transparent; color: var(--c-text-3);
+  font: inherit; font-size: var(--fs-sm); font-weight: var(--fw-medium);
+  text-align: right; outline: none; cursor: pointer;
+  max-width: 190px; padding: 2px 4px; border-radius: var(--r-sm);
+  text-overflow: ellipsis;
+}
+.gear-model-select:hover { background: var(--c-surface-hover); color: var(--c-text); }
+/* 数值文字：颜色由 JS 按档位内联注入（Off 档不注入 = 保持原色） */
+.gear-row-value { font-size: var(--fs-sm); font-weight: var(--fw-semibold); color: var(--c-text-3); }
+
+/* ── 滑条：能量由 --gear-energy(0..1) 一个变量驱动，渐入是浏览器合成的插值 ── */
+.gear-inline { padding: 2px 4px 6px; }
+.gear-track {
+  position: relative; box-sizing: border-box;
+  height: 26px; border-radius: 999px;
+  background: var(--c-line);
+  cursor: pointer; touch-action: none; user-select: none; -webkit-user-select: none;
+}
+.gear-track:focus-visible { outline: 3px solid var(--c-accent-ring); outline-offset: 2px; }
+.gear-fill { position: absolute; top: 0; bottom: 0; left: 0; border-radius: 999px; pointer-events: none; }
+.gear-tick {
+  position: absolute; top: 50%; width: 3px; height: 3px; margin: -1.5px 0 0 -1.5px;
+  border-radius: 50%; pointer-events: none;
+  background: color-mix(in srgb, var(--c-text) 26%, transparent);
+}
+.gear-tick[data-on='1'] { background: rgba(255,255,255,.5); }
+/* 旋钮直径 = 轨道高度：圆完整地填满管口 */
+.gear-knob {
+  position: absolute; top: 50%; width: 26px; height: 26px; margin: -13px 0 0 -13px;
+  border-radius: 50%; background: #fff; pointer-events: none;
+  box-shadow: 0 1px 5px rgba(0,0,0,.34), 0 0 0 .5px rgba(0,0,0,.06);
+}
+/* 能量层：只覆盖已填充那段（宽度与填充相同）—— 没拖到的部分不出现能量条 */
+.gear-energy {
+  position: absolute; top: 0; bottom: 0; left: 0; border-radius: 999px; overflow: hidden;
+  pointer-events: none; opacity: var(--gear-energy, 0); transition: opacity .2s ease;
+  background: linear-gradient(90deg,#3b1178 0%,#6d28d9 30%,#9333ea 62%,#c084fc 100%);
+}
+.gear-sweep {
+  position: absolute; inset: 0; transform: translateX(100%);
+  background: linear-gradient(100deg,transparent 18%,rgba(255,255,255,.30) 50%,transparent 82%);
+  animation: gear-sweep 2.4s linear infinite;
+}
+@keyframes gear-sweep { 0% { transform: translateX(100%); } 100% { transform: translateX(-100%); } }
+/* 星星单独一层：不跟星云淡入（否则高档位会被星云的半透明压得看不见） */
+.gear-stars {
+  position: absolute; top: 0; bottom: 0; left: 0; border-radius: 999px;
+  overflow: hidden; pointer-events: none; transition: opacity .2s ease;
+}
+.gear-star {
+  position: absolute; left: 0; right: 0; height: 3px; margin-top: -1.5px; pointer-events: none;
+  animation-name: gear-star-sweep; animation-timing-function: linear; animation-iteration-count: infinite;
+}
+.gear-star__dot {
+  position: absolute; left: 100%; top: 0; width: 3px; height: 3px; margin-left: -1.5px;
+  border-radius: 50%; background: #fff; box-shadow: 0 0 4px rgba(255,255,255,.85);
+  opacity: var(--gear-b, 1); transform: scale(var(--gear-b, 1));
+}
+@keyframes gear-star-sweep {
+  0% { transform: translate3d(0,0,0); opacity: 0; }
+  6% { opacity: 1; }
+  94% { opacity: 1; }
+  100% { transform: translate3d(-100%,0,0); opacity: 0; }
+}
+/* 高档位：整条轨道描一圈紫光（强度跟着能量走） */
+.composer-gear[data-energy='1'] .gear-track {
+  box-shadow: 0 0 calc(var(--gear-energy, 0) * 16px) rgba(168,85,247,.5);
+}
+/* 没能量时把粒子动画停掉，不让一堆隐形元素白烧 GPU */
+.composer-gear[data-energy='0'] .gear-star,
+.composer-gear[data-energy='0'] .gear-sweep { animation-play-state: paused; }
+
+.gear-error { margin: 4px 10px 6px; font-size: var(--fs-xs); line-height: 1.5; color: var(--c-danger); }
+/* 「减少动态效果」：放缓而不是冻住 —— 冻成静态图会让"能量在流动"整个消失 */
+@media (prefers-reduced-motion: reduce) {
+  .gear-energy { transition: none; }
+  .gear-sweep { display: none; }
+}

@@ -5,8 +5,8 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>逻敏 · Academy 辩论教练</title>
   <link rel="stylesheet" href="/tokens.css?v=4.0.0" />
-  <link rel="stylesheet" href="/style.css?v=3.28.15" />
-  <link rel="stylesheet" href="/ui.css?v=4.0.6" />
+  <link rel="stylesheet" href="/style.css?v=3.28.16" />
+  <link rel="stylesheet" href="/ui.css?v=4.1.0" />
   <script src="/icons.js?v=4.0.0"></script>
   <link rel="icon" href="data:image/svg+xml,<svg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 100 100%22><text y=%22.9em%22 font-size=%2290%22>🎓</text></svg>" />
 </head>
@@ -88,16 +88,38 @@
             <div class="composer-tools">
               <button id="btnAttach" class="icon-btn" title="上传资料：Word / PDF / txt / md / srt（可多选）"><svg class="ic" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><use href="#i-attach"></use></svg></button>
               <input type="file" id="fileInput" accept=".txt,.md,.markdown,.srt,.pdf,.docx,text/plain,application/pdf,application/vnd.openxmlformats-officedocument.wordprocessingml.document" multiple hidden />
-              <div class="composer-model">
-                <select id="composerModelSelect" title="切换当前使用的 AI 配置（对话中随时切换）"></select>
-              </div>
-              <div class="composer-model">
-                <select id="composerEffortSelect" title="思考强度：控制模型推理深度（对话中随时切换，越强越慢越贵）">
-                  <option value="high">标准</option>
-                  <option value="low">轻量</option>
-                  <option value="max">最强</option>
-                  <option value="off">关闭</option>
-                </select>
+              <!-- 模型 + 推理等级：一个控件（Codex 风格）。收起态是一枚按档位着色的席按钮，
+                   点开后里面是「模型」一行与「推理等级」一行 + 可拖动的连续滑条。
+                   位置在发送按钮左侧；原来那两个并排的下拉已并入此处。 -->
+              <div class="composer-gear" id="composerGear" data-composer-card>
+                <button id="gearSeat" class="gear-seat" type="button" aria-haspopup="menu" aria-expanded="false" aria-controls="gearMenu" title="模型与推理等级" aria-label="模型与推理等级">
+                  <span id="gearModel" class="gear-model"></span>
+                  <span id="gearEffort" class="gear-effort"></span>
+                  <svg class="ic gear-chev" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><use href="#i-chevronDown"></use></svg>
+                </button>
+                <div id="gearMenu" class="gear-menu hidden" role="menu">
+                  <div class="gear-row gear-row-model">
+                    <span class="gear-row-label">模型</span>
+                    <select id="composerModelSelect" class="gear-model-select" title="切换当前使用的 AI 配置（对话中随时切换）"></select>
+                  </div>
+                  <div class="gear-row gear-row-effort">
+                    <span class="gear-row-label">推理等级</span>
+                    <span id="gearEffortValue" class="gear-row-value"></span>
+                  </div>
+                  <div class="gear-inline" id="gearInline">
+                    <div id="gearTrack" class="gear-track" role="slider" tabindex="0" aria-label="推理等级"
+                         aria-valuemin="0" aria-valuemax="3" aria-valuenow="2" title="推理等级">
+                      <div class="gear-fill" data-gear-part="fill"></div>
+                      <div class="gear-energy" data-gear-part="energy"><div class="gear-sweep"></div></div>
+                      <div class="gear-stars" data-gear-part="stars"></div>
+                      <span class="gear-tick" data-gear-part="tick"></span>
+                      <span class="gear-tick" data-gear-part="tick"></span>
+                      <span class="gear-tick" data-gear-part="tick"></span>
+                      <span class="gear-tick" data-gear-part="tick"></span>
+                      <div class="gear-knob" data-gear-part="knob"></div>
+                    </div>
+                  </div>
+                </div>
               </div>
               <div class="composer-side">
                 <span id="charCount" class="char-count">0 字</span>
@@ -989,6 +1011,8 @@ whenToUse: 可选：触发条件描述。
     </div>
   </div>
   <script src="/locale.js?v=1.5.1"></script>
-  <script src="/app.js?v=3.41.5"></script>
+  <!-- Codex 风格「模型 + 推理等级」控件：必须早于 app.js（app.js 的 initComposerGear 要用它） -->
+  <script src="/effort-slider.js?v=1.0.0"></script>
+  <script src="/app.js?v=3.42.0"></script>
 </body>
 </html>
