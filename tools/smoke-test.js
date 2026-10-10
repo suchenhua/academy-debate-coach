@@ -1249,6 +1249,14 @@ async function main() {
           && /ver === CHAT_INDEX_SCHEMA/.test(srvH)
           && srvH.includes("idxMetaGet('schema:chats')")
           && srvH.includes("idxMetaSet('schema:chats'"));
+        /* ★ ALTER 必须每次开库都跑：只在建表时加列的话，老库（表已存在）永远拿不到新列。
+           Pro 首次移植正是这样 —— schema 版本落了戳、列却没加上，摘要恒为空。 */
+        check('★ 加列在 CREATE 之后、且每次开库都执行（老库也能拿到新列）',
+          /CREATE TABLE IF NOT EXISTS chat_index[\s\S]{0,400}ALTER TABLE chat_index ADD COLUMN last_text/.test(srvH));
+        /* ★ 长标题会把右对齐的时间顶出去（Pro 实拍「标题压住 9月15日」）：
+           flex 子项默认 min-width:auto，必须显式归零。 */
+        check('★ 标题可收缩（min-width:0，长标题不压住右侧时间）',
+          /\.history-item \.h-title \{[^}]*min-width:\s*0/.test(cssH));
         check('★ 侧栏两行结构：标题 + 相对时间 + 最后一条消息摘要',
           appH.includes("el('span', 'h-top'") && appH.includes("'h-when'")
           && appH.includes("'h-sub'") && appH.includes('function historySubtitle'));
