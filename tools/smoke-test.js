@@ -1212,9 +1212,11 @@ async function main() {
           fsMod.existsSync(path.join(ROOT, 'tools', 'verify-upgrade.js')));
         check('★ 升级保护：安装向导能识别已有安装并提示数据保留',
           sfxSrc.includes('ReadInstalledVersion') && sfxSrc.includes('UpdateInstallHint'));
-        check('★ 升级保护：破坏性更新的升级说明随包分发',
-          fsMod.readFileSync(path.join(ROOT, 'tools', 'pack.js'), 'utf8').includes("'升级说明-v2.4.0.txt'")
-          && fsMod.existsSync(path.join(ROOT, '升级说明-v2.4.0.txt')));
+        /* ★ 升级说明的文件名带版本号：**改版就会让这条报红**，逼你把 pack.js 与这里一起改。
+           （不这么钉的话，发版时最容易漏的就是它 —— 包里还躺着上一版的说明。） */
+        check('★ 升级说明随包分发（文件名与当前版本一致）',
+          fsMod.readFileSync(path.join(ROOT, 'tools', 'pack.js'), 'utf8').includes("'升级说明-v" + require(path.join(ROOT, 'app', 'edition.js')).version + ".txt'")
+          && fsMod.existsSync(path.join(ROOT, '升级说明-v' + require(path.join(ROOT, 'app', 'edition.js')).version + '.txt')));
         /* 内核内部格式是真实契约：App tail session 日志取用量/流式，格式变过（0.1.1→0.1.5）。
            这类漂移是静默的，靠「金丝雀 + 可跑的契约检查」盯住。 */
         check('★ 内核格式契约：用量提取金丝雀接线（成功却取不到用量会被记下）',
@@ -1341,9 +1343,16 @@ async function main() {
         const ver = require(path.join(ROOT, 'app', 'edition.js')).version;
         const readmeSrc = fsMod.readFileSync(path.join(ROOT, 'README.md'), 'utf8');
         const sfxSrc2 = fsMod.readFileSync(path.join(ROOT, 'tools', 'sfx', 'SfxLauncher.cs'), 'utf8');
+        /* ★ 必须断言「**所有**与型号绑定的版本号都等于当前版本」——
+           只断言"存在一处匹配"是不够的：负向验证时我把 README 里一行改回 2.4.0，
+           那种弱断言照样通过（假绿）。pack.js 的自检扫的是全部匹配，冒烟要与它同口径。 */
+        const boundRe = new RegExp('v?(\\d+\\.\\d+\\.\\d+)\\s*Flash', 'gi');
+        const foundVers = Array.from(new Set((readmeSrc.match(boundRe) || [])
+          .map((s) => (s.match(/\d+\.\d+\.\d+/) || [''])[0])));
         check('★ 版本一致性：edition.js / README / 安装外壳三处同步（v' + ver + '）',
-          new RegExp('v?' + ver.replace(/\./g, '\\.') + '\\s*Flash', 'i').test(readmeSrc)
-          && sfxSrc2.includes('AssemblyVersion("' + ver + '.0")'));
+          foundVers.length > 0 && foundVers.every((x) => x === ver)
+          && sfxSrc2.includes('AssemblyVersion("' + ver + '.0")'),
+          'README 里找到：' + JSON.stringify(foundVers));
       }
 
       /* 10e. 工具窗/研究台也要跟同一套设计系统（2026-09-23 统一观感）：
