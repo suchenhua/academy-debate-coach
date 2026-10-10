@@ -37,6 +37,8 @@ const ITEMS = [
   'start.bat', '一键打包.bat', '一键安装.bat', 'setup.bat', 'uninstall.bat',
   'launch.vbs', '启动辩论助手(Electron桌面版).vbs', 'install-shortcuts.ps1', 'appicon.ico', '安装说明.txt',
   'README.md', '使用说明.txt', '小白安装指南.md',
+  // 破坏性更新（换内核）时的用户升级指引：必须随包发，否则用户会拿旧补丁去升
+  '升级说明-v2.4.0.txt',
   'AGENTS.md', 'SOUL.md', 'TOOLS.md', 'LICENSE.md',
   'app', '.dsh',
   // runtime 逐项列出：dsh-old-010 / dsh-new 是历史试验内核，绝不能进分发包

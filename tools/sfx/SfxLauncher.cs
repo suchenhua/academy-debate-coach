@@ -23,7 +23,7 @@ using System.Windows.Forms;
 [assembly: AssemblyDescription("Academy Debate Coach Setup (QFUD)")]
 [assembly: AssemblyProduct("Academy 辩论教练")]
 [assembly: AssemblyCompany("QFUD")]
-[assembly: AssemblyVersion("2.3.0.0")]
+[assembly: AssemblyVersion("2.4.0.0")]
 
 namespace AcademySetup
 {
@@ -81,6 +81,7 @@ namespace AcademySetup
         private Panel  choosePage;
         private Panel  progressPage;
         private TextBox pathBox;
+        private Label  detectLabel;
         private CheckBox chkDesktop;
         private CheckBox chkMenu;
         private Label statusLabel;
@@ -159,6 +160,20 @@ namespace AcademySetup
             };
             reset.Click += delegate { pathBox.Text = Program.DefaultInstallDir; };
 
+            // 升级检测：读目标目录里的 app/edition.js 取旧版本号。
+            // 换 DSH 内核属于破坏性更新，用户最担心的就是「我的数据还在不在」——
+            // 开装之前就在界面上把这件事说清楚，比装完再解释有效得多。
+            detectLabel = new Label
+            {
+                Location = new Point(140, 166),
+                AutoSize = false,
+                Size = new Size(414, 20),
+                Font = new Font("Microsoft YaHei UI", 8.5F),
+                ForeColor = Color.FromArgb(120, 120, 120),
+                Text = ""
+            };
+            pathBox.TextChanged += delegate { UpdateInstallHint(); };
+
             chkDesktop = new CheckBox
             {
                 Location = new Point(26, 204),
@@ -205,12 +220,71 @@ namespace AcademySetup
             p.Controls.Add(pathBox);
             p.Controls.Add(browse);
             p.Controls.Add(reset);
+            p.Controls.Add(detectLabel);
             p.Controls.Add(chkDesktop);
             p.Controls.Add(chkMenu);
             p.Controls.Add(hint);
             p.Controls.Add(go);
             p.Controls.Add(quit);
+            UpdateInstallHint();
             return p;
+        }
+
+        // ---------- 升级检测：把「这是升级、数据会保留」直接写在脸上 ----------
+        private void UpdateInstallHint()
+        {
+            if (detectLabel == null || pathBox == null) return;
+            try
+            {
+                string dir = (pathBox.Text ?? "").Trim().Trim((char)34);
+                if (dir.Length == 0)
+                {
+                    detectLabel.Text = "";
+                    return;
+                }
+                string old = ReadInstalledVersion(dir);
+                if (string.IsNullOrEmpty(old))
+                {
+                    detectLabel.ForeColor = Color.FromArgb(120, 120, 120);
+                    detectLabel.Text = "\u672A\u68C0\u6D4B\u5230\u5DF2\u6709\u5B89\u88C5\uFF08\u5168\u65B0\u5B89\u88C5\uFF09";
+                }
+                else
+                {
+                    detectLabel.ForeColor = Color.FromArgb(30, 120, 70);
+                    detectLabel.Text = "\u68C0\u6D4B\u5230\u5DF2\u6709\u5B89\u88C5 " + old
+                        + "\uFF1A\u8FD9\u662F\u5347\u7EA7\uFF0C\u4F60\u7684\u5BF9\u8BDD\u8BB0\u5F55 / \u8D44\u6599\u5E93 / API Key \u90FD\u4F1A\u4FDD\u7559\u3002";
+                }
+            }
+            catch { }
+        }
+
+        /* 从目标目录的 app/edition.js 里取第一个 version: 'x.y.z'。
+           刻意不用正则：本文件约定不出现任何 C# 字符串转义反斜杠（见文件头说明），
+           而正则的 \\s 之类必然要写反斜杠，所以手工扫描。 */
+        private static string ReadInstalledVersion(string dir)
+        {
+            try
+            {
+                string f = Path.Combine(dir, "app", "edition.js");
+                if (!File.Exists(f)) return null;
+                string text = File.ReadAllText(f);
+                int i = text.IndexOf("version:");
+                while (i >= 0)
+                {
+                    int j = i + 8;
+                    while (j < text.Length && text[j] != (char)39 && text[j] != (char)34) j++;
+                    if (j >= text.Length) return null;
+                    char q = text[j];
+                    int st = j + 1;
+                    int k = st;
+                    while (k < text.Length && text[k] != q) k++;
+                    string v = text.Substring(st, k - st).Trim();
+                    if (v.Length >= 5 && v[0] >= '0' && v[0] <= '9') return v;
+                    i = text.IndexOf("version:", i + 1);
+                }
+                return null;
+            }
+            catch { return null; }
         }
 
         // ---------- 第二阶段：进度 ----------

@@ -183,6 +183,13 @@ const USAGE_FILE = path.join(DATA_DIR, 'usage.jsonl');
 const edition = require('./edition');
 const APP_VERSION = edition.version;   // 必须保持 X.Y.Z 三段式
 const APP_EDITION = edition.name;      // 展示用版本线名（Flash / Pro）
+/* 升级钩子的结果（见下方 runUpgradeIfNeeded），供 /api/status 回显。
+   提前声明在模块顶部：statusPayload() 在上面定义、这里引用，避免依赖声明顺序。 */
+let upgradeInfo = null;
+/* 用量提取金丝雀（见 runDsh 的 ledgerComplete）：App 靠解析内核 session 日志拿 token 用量，
+   这条格式契约历史上变过一次（0.1.1 assistant/chunk → 0.1.5 assistant/message 的 data.stream[]）。
+   漂移是静默的 —— 照常能聊，只是统计/上下文占比悄悄空掉。所以把「跑成功却没取到用量」记成显式状态。 */
+let usageExtractState = { ok: null, at: '', runId: '', note: '' };
 const DEFAULT_MODEL = 'deepseek-chat';
 const DEFAULT_PORT = 8787;
 const MAX_BODY = 6 * 1024 * 1024; // 允许粘贴很长的比赛文字稿
@@ -729,6 +736,8 @@ function statusPayload() {
     ok: true,
     version: APP_VERSION,
     edition: APP_EDITION,
+    upgrade: upgradeInfo,   // 见 runUpgradeIfNeeded：本次是否做了升级、内核自检结果（未跑完时为 null）
+    usageExtract: usageExtractState,   // 用量提取金丝雀：内核 session 格式漂移时这里会变 ok=false
     instanceRoot: INSTANCE_ROOT,   // 见 app/instance-id.js：供调用方判断「这个 server 是不是自己这份」
     engine: 'dsh-headless',
     dsh: !!dshBin(),
@@ -1759,6 +1768,161 @@ function autoBackupData(reason, opts) {
     }
     return dest;
   } catch (_) { return ''; }
+}
+
+/* ---------------- 安装戳 + 一次性升级钩子 ----------------
+   背景：v2.4.0 换掉了 DSH 内核 —— 这是破坏性更新。先划清边界：
+     · 用户数据全在 data/ 下（对话 chats/、资料库 library/、记忆 memory/、Key config+profiles、
+       技能 .dsh/skills/），安装器只做「覆盖程序文件 + 不删多余文件」，从不碰 data/ → 文件不会丢；
+       内核也从不读写这些目录（它的整个世界是 data/.dsh/）。
+     · 但「换版后第一次启动」有几件事必须做，否则就是听天由命：
+       1) 先给用户数据留一份快照 —— 出事能退回去；
+       2) 重建内核侧生成物（settings.yaml / persona.patch.yml / 两个自建插件），这些是我们生成的、幂等；
+       3) 换内核时清掉旧内核的会话日志与投影缓存 —— 旧格式对新内核没有意义，UI 也从不读它们；
+       4) 跑一次内核自检，确认新内核真能起来，而不是等用户发第一条消息才发现。
+   靠 data/.install-stamp.json 记「上次跑的是哪个版本」，只在版本变化时做一次（幂等、可重跑）。 */
+const INSTALL_STAMP = path.join(DATA_DIR, '.install-stamp.json');
+
+/* 内核版本：直接读内核包自己的 package.json。bin 在 <dsh>/lib/bin.js，上两级即包根。
+   两套历史布局都认（dshBin() 已经处理）。 */
+function dshVersion() {
+  try {
+    const bin = dshBin();
+    if (!bin) return '';
+    const pkg = path.join(path.dirname(path.dirname(bin)), 'package.json');
+    return String(JSON.parse(fs.readFileSync(pkg, 'utf8')).version || '');
+  } catch (_) { return ''; }
+}
+
+function readInstallStamp() {
+  try { return JSON.parse(fs.readFileSync(INSTALL_STAMP, 'utf8')); } catch (_) { return null; }
+}
+
+function writeInstallStamp(extra) {
+  try {
+    ensureDir(DATA_DIR);
+    const payload = Object.assign({
+      appVersion: APP_VERSION,
+      dshVersion: dshVersion(),
+      // 内置 Node 也带契约（data/app-index.db 是它用 node:sqlite 写的），一并记进戳
+      nodeVersion: process.version,
+      at: new Date().toISOString(),
+    }, extra || {});
+    fs.writeFileSync(INSTALL_STAMP, JSON.stringify(payload, null, 2), 'utf8');
+  } catch (_) {}
+}
+
+/* 清掉检索索引库。纯镜像 —— markdown/JSON 才是唯一事实源（见索引段注释），
+   所以换内置 Node 时直接丢弃重建成最稳的选择：避免「旧 SQLite 文件 + 新 node:sqlite」的未知组合。 */
+function dropIndexDb() {
+  if (memDb) { try { memDb.close(); } catch (_) {} memDb = null; }
+  let n = 0;
+  for (const f of ['app-index.db', 'app-index.db-shm', 'app-index.db-wal']) {
+    try {
+      const p = path.join(DATA_DIR, f);
+      if (fs.existsSync(p)) { fs.rmSync(p, { force: true }); n++; }
+    } catch (_) {}
+  }
+  return n;
+}
+
+/* 内核自检：用内置 node 起一次内核问版本。只在升级后跑一次。
+   失败不阻断启动 —— 用户仍能看历史对话、改设置、导出数据，总比整块打不开好。 */
+function kernelSelfCheck() {
+  const node = bundledNode();
+  const bin = dshBin();
+  if (!node || !bin) return { ok: false, reason: '内核或内置 Node 缺失' };
+  try {
+    const r = spawnSync(node, [bin, '--version'], { encoding: 'utf8', windowsHide: true, timeout: 30000 });
+    if (r.error) return { ok: false, reason: r.error.message };
+    if (r.status !== 0) {
+      const err = String(r.stderr || '').trim().slice(0, 200);
+      return { ok: false, reason: '内核启动失败（exit ' + r.status + '）' + (err ? '：' + err : '') };
+    }
+    return { ok: true, reported: String(r.stdout || '').trim() };
+  } catch (e) { return { ok: false, reason: e.message }; }
+}
+
+/* 清掉旧内核留下的会话日志与投影缓存。明确不动：chats/ memory/ library/ deliverables/ config/profiles。
+   内核从不 resume 旧会话（见中间产物清理段的说明），UI 也不读它们，所以换内核时删掉最干净。 */
+function clearKernelState() {
+  let n = 0;
+  const targets = [
+    path.join(DSH_HOME, 'sessions'),
+    path.join(DSH_HOME, 'sessions-zstd-backup'),
+    path.join(DSH_HOME, 'storages', 'session_projcache'),
+  ];
+  for (const t of targets) {
+    try {
+      if (!fs.existsSync(t)) continue;
+      for (const e of fs.readdirSync(t)) {
+        try { fs.rmSync(path.join(t, e), { recursive: true, force: true }); n++; } catch (_) {}
+      }
+    } catch (_) {}
+  }
+  return n;
+}
+
+function runUpgradeIfNeeded() {
+  const prev = readInstallStamp();
+  const appVer = APP_VERSION;
+  const dshVer = dshVersion();
+  const nodeVer = process.version;
+  if (prev && prev.appVersion === appVer && prev.dshVersion === dshVer
+      && String(prev.nodeVersion || '') === nodeVer) {
+    upgradeInfo = { upgraded: false, appVersion: appVer, dshVersion: dshVer, nodeVersion: nodeVer };
+    return upgradeInfo;
+  }
+
+  const firstRun = !prev;
+  const kernelChanged = !firstRun && String(prev.dshVersion || '') !== dshVer;
+  const nodeChanged = !firstRun && String(prev.nodeVersion || '') !== nodeVer;
+  const from = firstRun ? '' : String(prev.appVersion || '未知');
+  const steps = [];
+  console.log('[upgrade] ' + (firstRun ? '首次运行' : '检测到版本变化 ' + from + ' → ' + appVer)
+    + (kernelChanged ? ' · 内核 ' + (prev.dshVersion || '未知') + ' → ' + dshVer : '')
+    + (nodeChanged ? ' · 内置 Node ' + (prev.nodeVersion || '未知') + ' → ' + nodeVer : ''));
+
+  /* 1) 升级前快照。首次运行没有旧数据可保，跳过。
+        autoBackupData 自带 10 份滚动上限，不会无限堆。 */
+  if (!firstRun) {
+    const dir = autoBackupData('before-upgrade-' + appVer);
+    steps.push(dir ? '已备份 data（' + path.basename(dir) + '）' : '备份跳过');
+  }
+
+  /* 2) 内核侧生成物重建（幂等；平时每次启动也会自愈，这里保证换版后一定跑过一遍） */
+  try { migrateZstdSessions(); } catch (_) {}
+  try { ensureStreamPlugin(); } catch (_) {}
+  try { ensureWriteGatePlugin(); } catch (_) {}
+  try { materializePatch(); steps.push('补丁已实例化'); } catch (_) {}
+  try {
+    const cfg = loadConfig();
+    writeDshSettings(cfg.model, cfg.baseUrl, effectiveSearchKey(cfg), resolveSearchProvider(cfg), cfg.reasoningEffort);
+    steps.push('settings.yaml 已重建');
+  } catch (_) {}
+
+  /* 3) 换内核 → 清掉旧内核的会话日志与投影缓存 */
+  if (kernelChanged) {
+    const n = clearKernelState();
+    steps.push('清理旧内核会话/缓存 ' + n + ' 项');
+  }
+  /* 3b) 换内置 Node → 丢弃检索索引库（纯镜像，源文件不动，随后自动重建）。
+        app-index.db 是旧 Node 的 node:sqlite 写的，跨 Node 版本没有兼容承诺。 */
+  if (nodeChanged) {
+    const n = dropIndexDb();
+    steps.push('内置 Node 变化，检索索引已重置 ' + n + ' 个文件（源数据未动，会自动重建）');
+  }
+
+  /* 4) 内核自检：确认新内核能起来 */
+  const kc = kernelSelfCheck();
+  steps.push(kc.ok ? '内核自检通过（' + (kc.reported || '无输出') + '）' : '内核自检失败：' + kc.reason);
+
+  /* 5) 落戳。自检失败也落 —— 否则每次启动都重跑一遍钩子；失败信息留在 upgradeInfo 里供排查。 */
+  writeInstallStamp({ from: from || undefined, kernelChanged, nodeChanged, selfCheck: kc });
+  upgradeInfo = { upgraded: true, firstRun, from, appVersion: appVer, dshVersion: dshVer, nodeVersion: nodeVer, kernelChanged, nodeChanged, selfCheck: kc, steps };
+  console.log('[upgrade] ' + steps.join(' · '));
+  if (!kc.ok) console.error('[upgrade] 内核自检未通过，App 可能无法正常作答：' + kc.reason);
+  return upgradeInfo;
 }
 
 /* ---------------- 个人资料库：存储与检索 ----------------
@@ -3295,6 +3459,16 @@ function runDsh(runId, taskText, cfg, stream, meta) {
       try {
         let usage;
         try { const u = extractFinalUsage(startedAt, cfg && cfg.model); if (u) usage = { input: u.inputTokens, output: u.outputTokens }; } catch (_) {}
+        /* 用量提取金丝雀：跑成功了却一条 usage 都取不到，只可能是内核 session 日志格式又变了
+           （0.1.1 assistant/chunk → 0.1.5 assistant/message 的 data.stream[] 就是这么改的）。
+           这种漂移是**静默**的：界面照常能聊，只是用量账本 / 统计面板 / 上下文占比悄悄空掉。
+           所以记成显式状态并打一条显眼的警告，暴露在 /api/status.usageExtract 上，不让它无声无息。 */
+        if (info2 && info2.code === 0) {
+          usageExtractState = usage
+            ? { ok: true, at: new Date().toISOString(), runId, note: '' }
+            : { ok: false, at: new Date().toISOString(), runId, note: '运行成功但未提取到 usage —— 内核 session 日志格式可能已变（查 usageChunksFromRecord）' };
+          if (!usage) console.warn('[usage] ⚠ 运行成功却取不到用量：内核 session 格式可能已变（runId=' + runId + '）');
+        }
         ledgerFinishRun(ledgerRec, info2, usage);
       } catch (_) {}
     };
@@ -6041,6 +6215,10 @@ async function runStartupMaintenance() {
   const t0 = Date.now();
   let mm = 'skip', ll = 'skip', cc = 'skip';
   let cl = { files: 0, bytes: 0 };
+  /* 放最前面：换版后第一次启动要先做「备份 + 重建内核侧文件 + 内核自检」，
+     再谈索引刷新这些常规维护。只在版本/内核变化时真正做事，平时是一次 JSON 读取。 */
+  try { runUpgradeIfNeeded(); } catch (e) { console.error('[upgrade] 钩子异常（不影响启动）：' + e.message); }
+  await yieldLoop();
   try { migrateZstdSessions(); } catch (_) {}
   await yieldLoop();
   try { distillRecentNotes(); } catch (_) {}

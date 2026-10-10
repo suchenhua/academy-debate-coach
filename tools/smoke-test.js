@@ -864,9 +864,9 @@ async function main() {
             && /^Engine ready · /.test(applyR('引擎就绪 · deepseek-chat'))
             && applyR('1,234 字') === '1,234 chars'
             && applyR('⏳ 排队第 1 位 · 对话').includes('Chat'));
-          check('Phase5.4-5.9/6.0/6.2 缓存版本号已提升（locale v1.5.0 / app v3.41.0 / style 3.28.10 / ui 4.0.4）',
-            htmlSrc.includes('/locale.js?v=1.5.0') && htmlSrc.includes('/app.js?v=3.41.0')
-            && htmlSrc.includes('/style.css?v=3.28.10') && htmlSrc.includes('/ui.css?v=4.0.4'));
+          check('Phase5.4-5.9/6.0/6.2 缓存版本号已提升（locale v1.5.1 / app v3.41.5 / style 3.28.15 / ui 4.0.6）',
+            htmlSrc.includes('/locale.js?v=1.5.1') && htmlSrc.includes('/app.js?v=3.41.5')
+            && htmlSrc.includes('/style.css?v=3.28.15') && htmlSrc.includes('/ui.css?v=4.0.6'));
           check('Phase5.5 英文观察器同步执行且吞掉自触发记录（切模式不闪中文）',
             locSrc.includes('enObserver.takeRecords()')
             && !/setTimeout\(\s*\(\)\s*=>\s*\{[^}]*applyEnglishUI/s.test(locSrc));
@@ -909,7 +909,7 @@ async function main() {
             && require('fs').readFileSync(path.join(ROOT, 'app', 'tool-window.js'), 'utf8').includes("--lang=")
             && ['app/research/renderer.html', 'app/verify/renderer.html', 'app/trace/renderer.html',
                 'app/md-reader/renderer.html'].every((f) => require('fs').readFileSync(path.join(ROOT, f), 'utf8').includes('applyEnglishUI'))
-            && ['app/public/tools/简易流水单-Flowing-Tool.html', 'app/public/tools/辩案工作台-Case-Workbench.html'].every((f) => require('fs').readFileSync(path.join(ROOT, f), 'utf8').includes('/locale.js?v=1.5.0')));
+            && ['app/public/tools/简易流水单-Flowing-Tool.html', 'app/public/tools/辩案工作台-Case-Workbench.html'].every((f) => require('fs').readFileSync(path.join(ROOT, f), 'utf8').includes('/locale.js?v=1.5.1')));
           // Phase 6.2：MD 阅读器语言上下文接线（config.locale 落盘 + 阅读器按 config 取语言）
           const serverSrc62 = require('fs').readFileSync(path.join(ROOT, 'app', 'server.js'), 'utf8');
           const appSrc62 = require('fs').readFileSync(path.join(ROOT, 'app', 'public', 'app.js'), 'utf8');
@@ -1101,6 +1101,134 @@ async function main() {
       /* 导航/顶栏这些「界面骨架」不该再出现 emoji 图标 */
       check('★ 主界面骨架不再用 emoji 当图标',
         !/class="mode-btn[^"]*"><span>[\u{1F300}-\u{1FAFF}\u{2600}-\u{27BF}]/u.test(indexSrc));
+      /* 欢迎页占满整屏、不该能滚动：.messages 的底部占位块 ::after 在空态必须摘掉，
+         否则 .welcome(min-height:100%) + ::after(24px) 溢出，凭空长出滚动条。 */
+      const uiCssSrc = fsMod.readFileSync(uiPath, 'utf8');
+      check('★ 欢迎页空态摘掉底部占位块（不溢出、不滚动）',
+        /\.messages\.empty::after\s*\{[^}]*display\s*:\s*none/u.test(uiCssSrc));
+      /* 重做层给这些按钮设了 font-size:0（指望里面是 SVG 图标）。
+         若里面只放字面量「×」，图标就永远不出现 —— 按钮变成一块空白（2026-09-28 修）。
+         判据：每个 .modal-close 里都不能是裸 ×，且都要有 #i-close 图标引用。 */
+      const modalCloseCount = (indexSrc.match(/class="modal-close"/g) || []).length;
+      check('★ 弹窗关闭按钮用图标而非裸 ×（font-size:0 下仍可见）',
+        modalCloseCount > 0 &&
+        !/class="modal-close"[^>]*>×</u.test(indexSrc) &&
+        (indexSrc.match(/#i-close/g) || []).length >= modalCloseCount);
+      check('★ 历史删除按钮用 trash 图标（不再是被 font-size:0 隐形的 ×）',
+        /el\('span', 'history-del', ic\('trash'/u.test(appJsSrc));
+
+      /* 产物空间弹窗：文件/辩题/收藏三个 tab 内容高度不同，靠 .deliver-box .modal-body
+         的 height:min(660px,78vh) 定高，切 tab 才不跳大小。但 ui.css 的 .modal-body{flex:1}
+         会把 flex-basis 定成 0%（= flex:1 1 0%）——basis 0% 时上面的 height 不再参与主轴
+         尺寸计算，弹窗退回按内容定高、切 tab 又开始抖。故 basis 必须显式 auto（2026-09-28 修）。 */
+      const styleCssSrc = fsMod.readFileSync(path.join(ROOT, 'app', 'public', 'style.css'), 'utf8');
+      check('★ 产物弹窗定高：.deliver-box .modal-body 的 flex-basis 必须是 auto',
+        /\.deliver-box\s+\.modal-body\s*\{[^}]*flex\s*:\s*1\s+1\s+auto/u.test(styleCssSrc)
+        && /\.deliver-box\s+\.modal-body\s*\{[^}]*height\s*:\s*min\(660px/u.test(styleCssSrc));
+      check('★ 产物弹窗三个 tab 面板都撑满可滚（辩题面板不可漏）',
+        /#deliverFilesPane\s*,\s*#deliverCasesPane\s*,\s*#deliverStarsPane/u.test(styleCssSrc));
+      check('★ 产物弹窗切 tab 的运行时回归脚本在位（静态扫不出布局回归）',
+        fsMod.existsSync(path.join(ROOT, 'tools', 'verify-deliver-tabs.js')));
+
+      /* 资料库弹窗同理：分类 chip（全部/文档/Word/PDF/图片OCR/其他）切换时条目数不同，
+         靠 .library-box .modal-body 的 height:min(660px,78vh) 定高才不跳大小。
+         同样地 basis 必须 auto（ui.css .modal-body{flex:1} 会把 basis 定成 0%，height 失效）；
+         列表则须撑满剩余空间并内部滚动，不能再按内容定高（2026-09-29 修）。 */
+      check('★ 资料库弹窗定高：.library-box .modal-body 的 flex-basis 必须是 auto',
+        /\.library-box\s+\.modal-body\s*\{[^}]*flex\s*:\s*1\s+1\s+auto/u.test(styleCssSrc)
+        && /\.library-box\s+\.modal-body\s*\{[^}]*height\s*:\s*min\(660px/u.test(styleCssSrc));
+      check('★ 资料库列表按内容自然高、由弹窗正文统一滚动（条目不裁不切）',
+        /\.lib-list\s*\{[^}]*flex\s*:\s*0\s+0\s+auto/u.test(styleCssSrc)
+        && !/\.lib-list\s*\{[^}]*max-height\s*:/u.test(styleCssSrc)
+        && !/\.lib-list\s*\{[^}]*min-height\s*:\s*0/u.test(styleCssSrc));
+      check('★ 资料库切分类的运行时回归脚本在位（静态扫不出布局回归）',
+        fsMod.existsSync(path.join(ROOT, 'tools', 'verify-library-tabs.js')));
+      /* 已有资料时收起上传引导：资料库正文的固定高度内容（上传区/OCR/检索/同义词）约 410px，
+         600px 级短屏上会把列表挤到看不见 —— 收起后列表才有位置（2026-09-29 修）。 */
+      check('★ 资料库已有资料时收起上传引导（把高度让给列表）',
+        /\.library-box\.has-items\s+\.lib-drop/u.test(styleCssSrc)
+        && /\.library-box\.has-items\s+>\s+\.modal-body\s+>\s+\.memory-hint/u.test(styleCssSrc)
+        && appJsSrc.includes("classList.toggle('has-items'"));
+
+      /* 设置弹窗的「设置面板」出过横向滚动条：input 默认 min-width:auto（≈固有宽度），
+         flex:1 也压不下去，编辑器栏一窄就顶破面板。两处行内输入都必须能收缩（2026-09-29 修）。 */
+      check('★ 设置弹窗行内输入可收缩（不再撑出横向滚动条）',
+        /\.model-row\s+input\s*\{[^}]*min-width\s*:\s*0/u.test(styleCssSrc)
+        && /\.key-row\s+input\s*\{[^}]*min-width\s*:\s*0/u.test(styleCssSrc));
+      check('★ 设置面板横向溢出的运行时回归脚本在位（静态扫不出这类溢出）',
+        fsMod.existsSync(path.join(ROOT, 'tools', 'verify-settings-overflow.js')));
+      /* 高级面板：两个开关本是并列关系，曾经把「自定义搜索服务」整卡嵌在「文档处理（扩展）」卡里；
+         长提示也塞进右侧 .gen-choices 挤成一列。现在各自独立成卡 + 用项目既有的 gen-row-wrap 整行铺开。 */
+      check('★ 高级面板：两项设置各自独立成卡、长提示整行铺开',
+        /class="gen-row gen-row-wrap">\s*<span class="gen-label">文档处理（扩展）<\/span>/u.test(indexSrc)
+        && /class="gen-row gen-row-wrap">\s*<span class="gen-label">自定义搜索服务<\/span>/u.test(indexSrc)
+        && !/style="display:block;width:100%;margin-top:4px;color:var\(--amber\)"/u.test(indexSrc));
+      /* 「API 地址」是「AI 模型」面板里的配置项（服务商 → 地址 → 名称 → Key → 模型）：
+         曾经放在「高级」面板，点「自定义接口」还会把你跳到那边去填。2026-09-29 移回模型面板。
+         用面板注释当锚点（导航按钮上也有 data-settings-pane="advanced"，不能拿它比位置）。 */
+      const iModelPane = indexSrc.indexOf('<!-- 面板：AI 模型（多配置） -->');
+      const iAdvPane = indexSrc.indexOf('<!-- 面板：高级 -->');
+      const iBaseUrl = indexSrc.indexOf('id="baseUrlInput"');
+      check('★ API 地址在「AI 模型」面板内（不再放「高级」面板）',
+        iModelPane > 0 && iAdvPane > iModelPane && iBaseUrl > iModelPane && iBaseUrl < iAdvPane
+        && !appJsSrc.includes("switchSettingsPane('advanced')"));
+      check('★ .set-step 里的输入也走设计系统样式（不再是浏览器默认方框）',
+        /\.set-step\s+input\[type="text"\][^{]*\{[^}]*border-radius/u.test(uiCssSrc)
+        && /\.set-step\s+input\[type="password"\]/u.test(uiCssSrc));
+
+      /* ── v2.4.0 换 DSH 内核属破坏性更新：平滑升级靠三件事撑着 ──
+         ① 安装器只覆盖程序文件、绝不删 data/（且铺之前先清旧内核目录，防新旧混树）
+         ② App 侧「安装戳 + 一次性升级钩子」：备份 → 重建内核侧文件 → 清旧内核会话 → 内核自检
+         ③ 一条能反复跑的跨版本升级演练（tools/verify-upgrade.js，单独 Electron/Node 跑） */
+      {
+        const setupBatSrc = fsMod.readFileSync(path.join(ROOT, 'setup.bat'), 'utf8');
+        const serverSrc = fsMod.readFileSync(path.join(ROOT, 'app', 'server.js'), 'utf8');
+        const sfxSrc = fsMod.readFileSync(path.join(ROOT, 'tools', 'sfx', 'SfxLauncher.cs'), 'utf8');
+        check('★ 升级保护：setup.bat 铺之前先清旧内核目录（防新旧内核混树）',
+          setupBatSrc.includes('rmdir /s /q "!DEST!\\runtime\\dsh"')
+          && setupBatSrc.includes('if exist "!SRC!\\runtime\\dsh"'));
+        check('★ 升级保护：setup.bat 装完校验 data 仍在（防误删用户数据）',
+          setupBatSrc.includes('HAD_DATA') && setupBatSrc.includes('用户数据目录 data 不见了'));
+        check('★ 升级保护：server 有安装戳 + 升级钩子（备份/重建/清内核/自检）',
+          serverSrc.includes('INSTALL_STAMP')
+          && serverSrc.includes('function runUpgradeIfNeeded')
+          && serverSrc.includes('function kernelSelfCheck')
+          && serverSrc.includes('function clearKernelState')
+          && serverSrc.includes('runUpgradeIfNeeded()')
+          && serverSrc.includes('upgrade: upgradeInfo'));
+        check('★ 升级保护：升级钩子只清内核侧目录，不碰 chats/memory/library',
+          serverSrc.includes("path.join(DSH_HOME, 'sessions')")
+          && !/clearKernelState[\s\S]{0,600}CHATS_DIR/.test(serverSrc));
+        check('★ 升级保护：跨版本升级演练脚本在位',
+          fsMod.existsSync(path.join(ROOT, 'tools', 'verify-upgrade.js')));
+        check('★ 升级保护：安装向导能识别已有安装并提示数据保留',
+          sfxSrc.includes('ReadInstalledVersion') && sfxSrc.includes('UpdateInstallHint'));
+        check('★ 升级保护：破坏性更新的升级说明随包分发',
+          fsMod.readFileSync(path.join(ROOT, 'tools', 'pack.js'), 'utf8').includes("'升级说明-v2.4.0.txt'")
+          && fsMod.existsSync(path.join(ROOT, '升级说明-v2.4.0.txt')));
+        /* 内核内部格式是真实契约：App tail session 日志取用量/流式，格式变过（0.1.1→0.1.5）。
+           这类漂移是静默的，靠「金丝雀 + 可跑的契约检查」盯住。 */
+        check('★ 内核格式契约：用量提取金丝雀接线（成功却取不到用量会被记下）',
+          serverSrc.includes('let usageExtractState')
+          && serverSrc.includes('usageExtract: usageExtractState')
+          && serverSrc.includes('运行成功却取不到用量'));
+        check('★ 内核格式契约：安装戳含内置 Node 版本（换 Node 也会触发升级钩子）',
+          serverSrc.includes('nodeVersion: process.version')
+          && serverSrc.includes("String(prev.nodeVersion || '') === nodeVer")
+          && serverSrc.includes('function dropIndexDb'));
+        check('★ 内核格式契约：契约检查脚本在位（发版前 --live 跑一次）',
+          fsMod.existsSync(path.join(ROOT, 'tools', 'verify-kernel-format.js')));
+      }
+      /* 发版版本一致性：单一来源是 app/edition.js，README 与安装外壳必须同步
+         （pack.js 的 ACADEMY_STRICT_VERSION=1 会阻断打包，这里让冒烟早点发现） */
+      {
+        const ver = require(path.join(ROOT, 'app', 'edition.js')).version;
+        const readmeSrc = fsMod.readFileSync(path.join(ROOT, 'README.md'), 'utf8');
+        const sfxSrc2 = fsMod.readFileSync(path.join(ROOT, 'tools', 'sfx', 'SfxLauncher.cs'), 'utf8');
+        check('★ 版本一致性：edition.js / README / 安装外壳三处同步（v' + ver + '）',
+          new RegExp('v?' + ver.replace(/\./g, '\\.') + '\\s*Flash', 'i').test(readmeSrc)
+          && sfxSrc2.includes('AssemblyVersion("' + ver + '.0")'));
+      }
 
       /* 10e. 工具窗/研究台也要跟同一套设计系统（2026-09-23 统一观感）：
          它们各有自己的样式表，是「重做时最容易漏掉的那一块」——

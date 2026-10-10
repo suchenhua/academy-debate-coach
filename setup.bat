@@ -53,6 +53,28 @@ if /I "!SRC!"=="!DEST!" (
   echo [2/4] 已位于安装目录，跳过文件复制。
 ) else (
   echo [2/4] 正在复制程序文件，请稍候（大约 1~3 分钟）...
+
+  rem ============================================================
+  rem  升级保护 1/2：先把旧的内核 / 运行时目录整体删掉再铺
+  rem    robocopy /E 只覆盖同名文件、**不会删除**目标里多出来的文件。
+  rem    换 DSH 内核时，旧内核里被删掉或改名的 @deepseek-ai/dsh-* 包
+  rem    会残留在目标目录 → 新旧内核混树（最难排查的一类故障）。
+  rem    这三个目录只装程序文件、不含任何用户数据，可以安全整体删除。
+  rem    只在源包里确实带了该目录时才删（避免精简包把运行时删没了）。
+  rem ============================================================
+  if exist "!SRC!\runtime\dsh"      if exist "!DEST!\runtime\dsh"      rmdir /s /q "!DEST!\runtime\dsh"
+  if exist "!SRC!\runtime\node"     if exist "!DEST!\runtime\node"     rmdir /s /q "!DEST!\runtime\node"
+  if exist "!SRC!\runtime\electron" if exist "!DEST!\runtime\electron" rmdir /s /q "!DEST!\runtime\electron"
+
+  rem ============================================================
+  rem  升级保护 2/2：data/ 是用户数据（对话记录 / 资料库 / 记忆 / Key / 技能），
+  rem    安装只允许「不碰」，绝不允许删除。这里先记住它在不在，装完必须还在。
+  rem    将来若有人给 robocopy 加上 /PURGE，下面这行会立刻拦住 —— 而不是
+  rem    静默把用户几年的资料清空。
+  rem ============================================================
+  set "HAD_DATA=0"
+  if exist "!DEST!\data" set "HAD_DATA=1"
+
   rem /XD 必须给完整路径：按目录名匹配会把 runtime\electron\dist 和 dsh 里所有 dist\ 一起排除掉
   robocopy "!SRC!" "!DEST!" /E /COPY:DAT /DCOPY:DAT /R:1 /W:1 /NFL /NDL /NJH /NJS /XD "!SRC!\data" "!SRC!\dist" "!SRC!\build" "!SRC!\.git" "!SRC!\.backup" >nul
   set "RC=!ERRORLEVEL!"
@@ -60,6 +82,12 @@ if /I "!SRC!"=="!DEST!" (
     echo.
     echo 安装失败：复制文件出错（错误码 !RC!）。
     echo 建议关闭杀毒软件后重新运行安装程序。
+    exit /b 1
+  )
+  if "!HAD_DATA!"=="1" if not exist "!DEST!\data" (
+    echo.
+    echo 严重错误：用户数据目录 data 不见了，安装已中止。
+    echo 请先备份原 data 目录再联系维护者，不要继续使用本目录。
     exit /b 1
   )
 )
