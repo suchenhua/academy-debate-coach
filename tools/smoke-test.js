@@ -1228,6 +1228,48 @@ async function main() {
         check('★ 内核格式契约：契约检查脚本在位（发版前 --live 跑一次）',
           fsMod.existsSync(path.join(ROOT, 'tools', 'verify-kernel-format.js')));
       }
+      /* ── 侧栏历史两行化：最后一条消息 + 多久前（2026-10-10，子涵） ──
+         参考图那种「标题 + 3 小时前 / 下面是最后一条消息」。列表是元数据懒加载的，
+         所以摘要必须由服务端索引给出（前端此时没有正文）。 */
+      {
+        const srvH = fsMod.readFileSync(path.join(ROOT, 'app', 'server.js'), 'utf8');
+        const appH = fsMod.readFileSync(path.join(ROOT, 'app', 'public', 'app.js'), 'utf8');
+        const cssH = fsMod.readFileSync(path.join(ROOT, 'app', 'public', 'ui.css'), 'utf8');
+        const locH = fsMod.readFileSync(path.join(ROOT, 'app', 'public', 'locale.js'), 'utf8');
+        check('★ 服务端索引出「最后一条消息」摘要（列 + 提取 + 列表返回）',
+          srvH.includes('last_text TEXT') && srvH.includes('function chatLastSnippet')
+          && srvH.includes('last_text AS lastText'));
+        /* 索引结构变了必须让「源文件没变」的老库也重建一次 ——
+           否则老用户对话文件一个字节没动、指纹不变、rebuildIfStale 永远 skip，新列恒为空。 */
+        /* 断言要**精确到机制**：只 includes('CHAT_INDEX_SCHEMA') 会被
+           CHAT_INDEX_SCHEMA_DISABLED 这种子串蒙过去（负向验证时实测假绿）。
+           必须同时钉「常量声明」与「用它的比较」，以及两个 meta 键。 */
+        check('★ 索引结构带版本号（改列会强制重建，不靠源文件指纹）',
+          /const CHAT_INDEX_SCHEMA = \d+;/.test(srvH)
+          && /ver === CHAT_INDEX_SCHEMA/.test(srvH)
+          && srvH.includes("idxMetaGet('schema:chats')")
+          && srvH.includes("idxMetaSet('schema:chats'"));
+        check('★ 侧栏两行结构：标题 + 相对时间 + 最后一条消息摘要',
+          appH.includes("el('span', 'h-top'") && appH.includes("'h-when'")
+          && appH.includes("'h-sub'") && appH.includes('function historySubtitle'));
+        check('★ 相对时间分档（刚刚/分钟/小时/天，超一周退回日期）',
+          /function fmtAgo/.test(appH) && /分钟前/.test(appH) && /小时前/.test(appH)
+          && /天前/.test(appH));
+        check('★ 摘要缺失时退回消息条数（不留空白）',
+          /条消息/.test(appH) && /还没有消息/.test(appH));
+        check('★ 列表分页：默认 20 条 + 「显示更多（还有 N 条）」',
+          appH.includes('HISTORY_PAGE') && appH.includes('historyLimit')
+          && appH.includes('显示更多（还有 '));
+        check('★ 两行条目的样式齐备（时间右对齐、摘要省略号、操作按钮绝对定位）',
+          /\.history-item \.h-when\b/.test(cssH) && /\.history-item \.h-sub\b/.test(cssH)
+          && /\.history-more\b/.test(cssH)
+          && /\.history-ops \{ position: absolute/.test(cssH));
+        /* 相对时间 / 条数 / 显示更多 都是拼出来的串，精确词典命中不了，必须走 EN_RULES 的正则 */
+        check('★ 英文模式覆盖动态串（相对时间 / 条数 / 显示更多）',
+          /\$1 min ago/.test(locH) && /\$1 hr ago/.test(locH) && /\$1 days ago/.test(locH)
+          && /Show more/.test(locH) && /\$1 messages/.test(locH));
+      }
+
       /* ── Codex 风格「模型 + 推理等级」控件（2026-10-10，子涵） ──
          来源：dsh-codex-effort-slider（DSH 插件，MIT，Microqian2th）的观感；
          我们自己的前端直接做成第一等公民，不需要 DOM 桥。 */

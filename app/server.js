@@ -1390,6 +1390,12 @@ function openMemoryIndex() {
       chat_id TEXT PRIMARY KEY, mode TEXT, title TEXT,
       created INTEGER, updated INTEGER, msg_count INTEGER
     )`);
+    /* 列表副标题用的「最后一条消息摘要」与它的角色（2026-10-10，子涵要求侧栏显示最后一条消息）。
+       加列用 ALTER + 容忍失败：索引库是**纯镜像**（源文件是对话 JSON），
+       但已被 dropIndexDb()/重建路径覆盖不到的老库仍可能缺列，届时按缺列处理即可。 */
+    for (const ddl of ['ALTER TABLE chat_index ADD COLUMN last_text TEXT', 'ALTER TABLE chat_index ADD COLUMN last_role TEXT']) {
+      try { memDb.exec(ddl); } catch (_) { /* 列已存在 */ }
+    }
     memDb.exec(`CREATE TABLE IF NOT EXISTS meta(key TEXT PRIMARY KEY, value TEXT)`);
     return true;
   } catch (_) { memDb = null; return false; }
@@ -1443,10 +1449,17 @@ function libIndexRebuildIfStale() {
   libIndexRebuild();
   return 'rebuild';
 }
+/* 索引结构版本。**改 chat_index 的列就要 +1** ——
+   否则老用户的对话文件一个字节没动、fp:chats 也不变，
+   rebuildIfStale 会一直 'skip'，新列永远是空的（2026-10-10 加 last_text 时踩到）。
+   版本不符时强制重建一次（索引是纯镜像，重建只是重解析一遍对话文件）。 */
+const CHAT_INDEX_SCHEMA = 2;
 function chatIndexRebuildIfStale() {
   const fp = fpChats();
-  if (fp !== '-' && fp === idxMetaGet('fp:chats')) return 'skip';
+  const ver = Number(idxMetaGet('schema:chats')) || 0;
+  if (ver === CHAT_INDEX_SCHEMA && fp !== '-' && fp === idxMetaGet('fp:chats')) return 'skip';
   chatIndexRebuild();
+  try { idxMetaSet('schema:chats', String(CHAT_INDEX_SCHEMA)); } catch (_) {}
   return 'rebuild';
 }
 
@@ -1644,6 +1657,34 @@ function writeAllChats(chats) {
 }
 
 /* ---- 对话元数据索引：列表不再全量解析对话 JSON（对话文件本身仍是事实源） ---- */
+
+/* 侧栏列表副标题用的「最后一条消息」摘要（2026-10-10，子涵要求）。
+   规则：
+   · 从后往前找**第一条有正文的**消息（末条可能正在流式、文本还是空的）；
+   · 去掉 markdown 记号与换行，压成一行，按**字符数**截断（中文按字算，不按字节）；
+   · 上限 120 字：足够侧栏两行显示，也不会把索引撑大。
+   只进索引、不进对话文件 —— 索引是纯镜像，随时可重建。 */
+function chatLastSnippet(chat) {
+  const msgs = chat && Array.isArray(chat.messages) ? chat.messages : [];
+  for (let i = msgs.length - 1; i >= 0; i--) {
+    const m = msgs[i];
+    const raw = m && typeof m.text === 'string' ? m.text : '';
+    if (!raw.trim()) continue;
+    const flat = raw
+      .replace(/\`\`\`[\s\S]*?\`\`\`/g, ' ')      // 代码块整段丢掉
+      .replace(/!?\[[^\]]*\]\([^)]*\)/g, ' ')            // 图片 / 链接
+      .replace(/^\s{0,3}#{1,6}\s*/gm, '')                  // 标题记号
+      .replace(/^\s{0,3}[-*+]\s+/gm, '')                   // 无序列表记号
+      .replace(/^\s{0,3}>\s?/gm, '')                       // 引用记号
+      .replace(/[*_~`]/g, '')                              // 行内强调记号
+      .replace(/\s+/g, ' ')
+      .trim();
+    if (!flat) continue;
+    return { text: flat.slice(0, 120), role: (m.role === 'user' ? 'user' : 'ai') };
+  }
+  return { text: '', role: '' };
+}
+
 function chatIndexRebuild() {
   if (!openMemoryIndex()) return false;
   try {
@@ -1655,15 +1696,16 @@ function chatIndexRebuild() {
       try {
         const c = JSON.parse(fs.readFileSync(path.join(CHATS_DIR, e.name), 'utf8'));
         if (c && typeof c === 'object' && c.id) {
-          rows.push({ id: c.id, mode: c.mode || 'free', title: c.title || '', created: c.created || 0, updated: c.updated || 0, msg: (c.messages || []).length });
+          const snip = chatLastSnippet(c);
+          rows.push({ id: c.id, mode: c.mode || 'free', title: c.title || '', created: c.created || 0, updated: c.updated || 0, msg: (c.messages || []).length, last: snip.text, role: snip.role });
         }
       } catch (_) {}
     }
     memDb.exec('BEGIN');
     try {
       memDb.exec('DELETE FROM chat_index');
-      const ins = memDb.prepare('INSERT OR REPLACE INTO chat_index(chat_id, mode, title, created, updated, msg_count) VALUES (?,?,?,?,?,?)');
-      for (const r of rows) ins.run(r.id, r.mode, r.title, r.created, r.updated, r.msg);
+      const ins = memDb.prepare('INSERT OR REPLACE INTO chat_index(chat_id, mode, title, created, updated, msg_count, last_text, last_role) VALUES (?,?,?,?,?,?,?,?)');
+      for (const r of rows) ins.run(r.id, r.mode, r.title, r.created, r.updated, r.msg, r.last || '', r.role || '');
       memDb.exec('COMMIT');
     } catch (err) { try { memDb.exec('ROLLBACK'); } catch (_) {} throw err; }
     idxMetaSet('fp:chats', fpChats());
@@ -1673,8 +1715,9 @@ function chatIndexRebuild() {
 function chatIndexUpsert(c) {
   try {
     if (!openMemoryIndex()) return;
-    memDb.prepare('INSERT OR REPLACE INTO chat_index(chat_id, mode, title, created, updated, msg_count) VALUES (?,?,?,?,?,?)')
-      .run(String(c.id), c.mode || 'free', c.title || '', c.created || 0, c.updated || 0, (c.messages || []).length);
+    const snip = chatLastSnippet(c);
+    memDb.prepare('INSERT OR REPLACE INTO chat_index(chat_id, mode, title, created, updated, msg_count, last_text, last_role) VALUES (?,?,?,?,?,?,?,?)')
+      .run(String(c.id), c.mode || 'free', c.title || '', c.created || 0, c.updated || 0, (c.messages || []).length, snip.text, snip.role);
   } catch (_) {}
 }
 function chatIndexDelete(id) {
@@ -1686,7 +1729,7 @@ function chatIndexDelete(id) {
 function chatIndexList() {
   if (!openMemoryIndex()) return null;
   try {
-    return memDb.prepare('SELECT chat_id AS id, mode, title, created, updated, msg_count AS msgCount FROM chat_index ORDER BY updated DESC').all();
+    return memDb.prepare('SELECT chat_id AS id, mode, title, created, updated, msg_count AS msgCount, last_text AS lastText, last_role AS lastRole FROM chat_index ORDER BY updated DESC').all();
   } catch (_) { return null; }
 }
 

@@ -299,6 +299,37 @@ function fmtElapsed(ms) {
   return Math.floor(ms / 60000) + ' 分 ' + Math.round((ms % 60000) / 1000) + ' 秒';
 }
 
+/* 「多久前活跃」（2026-10-10，子涵：参考图里右侧那个"3 小时前"挺好）。
+   分档：刚刚 / N 分钟前 / N 小时前 / N 天前，超过一周就退回日期（当年不写年份）。
+   用**相对时间**是因为它回答的是"这个对话还热不热"，绝对时间戳做不到。 */
+function fmtAgo(ts) {
+  const t = Number(ts) || 0;
+  if (!t) return '';
+  const diff = Date.now() - t;
+  if (diff < 0) return '刚刚';
+  const min = Math.floor(diff / 60000);
+  if (min < 1) return '刚刚';
+  if (min < 60) return min + ' 分钟前';
+  const hr = Math.floor(min / 60);
+  if (hr < 24) return hr + ' 小时前';
+  const day = Math.floor(hr / 24);
+  if (day < 7) return day + ' 天前';
+  const d = new Date(t);
+  const sameYear = d.getFullYear() === new Date().getFullYear();
+  return sameYear ? (d.getMonth() + 1) + '月' + d.getDate() + '日'
+                  : d.getFullYear() + '年' + (d.getMonth() + 1) + '月' + d.getDate() + '日';
+}
+
+/* 列表副标题：优先服务端索引给的最后一条消息摘要；没有（老索引 / 懒加载未载入）
+   就退回消息条数 —— 与参考图里"2 条消息"的降级一致，绝不留空白。 */
+function historySubtitle(c) {
+  const snip = typeof c.lastText === 'string' ? c.lastText.trim() : '';
+  if (snip) return (c.lastRole === 'user' ? '我：' : '') + snip;
+  const n = Number(c.msgCount);
+  if (Number.isFinite(n) && n > 0) return n + ' 条消息';
+  return '还没有消息';
+}
+
 const CHATS_API = '/api/chats';
 const CHATS_LS_MIGRATED = 'academy.chats.v1.migratedAt';
 
@@ -1505,10 +1536,20 @@ function renderHistory() {
     box.appendChild(el('div', 'history-empty', '当前模式暂无历史'));
     return;
   }
-  for (const c of mine.slice(0, 20)) {
+  const shown = mine.slice(0, historyLimit);
+  for (const c of shown) {
     const item = el('button', 'history-item' + (c.id === state.chatId ? ' active' : ''), '');
+    /* 两行结构（2026-10-10，子涵：给参考图那种"最后一条消息 + 多久前"）：
+       上行=标题（左）+ 活跃时间（右）；下行=最后一条消息摘要。
+       标题/摘要是文本节点，直接挂在 button 里会把 ops 挤到下面，
+       所以各自包一层，由 CSS 控制省略号。 */
+    const top = el('span', 'h-top', '');
     const t = el('span', 'h-title', c.title || '未命名');
-    item.appendChild(t);
+    top.appendChild(t);
+    const when = fmtAgo(c.updated);
+    if (when) top.appendChild(el('span', 'h-when', when));
+    item.appendChild(top);
+    item.appendChild(el('span', 'h-sub', historySubtitle(c)));
     // 操作按钮整组包进 .history-ops：平时隐藏，hover 到该条才出现（见 style.css）
     const ops = el('span', 'history-ops', '');
     // 重命名按钮（单击标题会切换对话，双击不可靠，改用显式按钮）
@@ -1540,6 +1581,17 @@ function renderHistory() {
     item.appendChild(ops);
     item.onclick = () => switchChat(c.id);
     box.appendChild(item);
+  }
+  /* 参考图底部那行「显示更多（还有 N 条）」：默认只看最近 20 条，
+     免得几十个对话把侧栏撑成一条长龙。点一次多放 20 条。 */
+  if (mine.length > shown.length) {
+    const more = el('button', 'history-more', '显示更多（还有 ' + (mine.length - shown.length) + ' 条）');
+    more.onclick = () => { historyLimit += 20; renderHistory(); };
+    box.appendChild(more);
+  } else if (historyLimit > HISTORY_PAGE) {
+    const less = el('button', 'history-more', '收起');
+    less.onclick = () => { historyLimit = HISTORY_PAGE; renderHistory(); };
+    box.appendChild(less);
   }
 }
 
@@ -1610,6 +1662,10 @@ function startRenameChat(chatId, titleEl) {
   input.addEventListener('blur', () => finish(true));
   input.onclick = (e) => e.stopPropagation();
 }
+
+/* 侧栏历史一次显示多少条（「显示更多」每次 +20）。 */
+const HISTORY_PAGE = 20;
+let historyLimit = HISTORY_PAGE;
 
 /* ================= 对话全文搜索（跨所有模式） ================= */
 let historyQuery = '';
