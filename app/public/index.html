@@ -405,6 +405,32 @@
 
             <div class="general-section">
               <div class="gen-row gen-row-wrap">
+                <span class="gen-label">增强检索（免 Key）</span>
+                <div class="gen-choices">
+                  <label class="lib-switch"><input type="checkbox" id="modsearchToggle" /><span id="modsearchLabel">开（默认）</span></label>
+                </div>
+                <small class="field-hint">
+                  备赛要查数据、法条、事件原委。开启后，教练的端侧检索<b>优先走增强检索</b>（ModSearch）：
+                  <b>免注册、免填 API Key</b>，结果比默认抓取搜索引擎网页更准。
+                  关掉就退回「基础检索」（免费抓取 Bing / DuckDuckGo），不影响其他功能。
+                </small>
+                <small class="field-hint" style="color:var(--amber)">
+                  ⚠️ <b>这一路有限额</b>：走的是 Firecrawl 的免注册通道，官方口径约
+                  <b>1,000 credits / 月</b>，一次搜索约 2 credits（约够 500 次），且<b>按网络 IP 计量</b>——
+                  同一网络下可能更早用完。额度耗尽、超时或网络不通时<b>自动退回基础检索</b>，
+                  不会因此搜不到东西；想不受限额约束，就在下面的「自定义搜索服务」接上你自己的 Key（它优先级更高）。
+                </small>
+                <small class="field-hint" id="modsearchQuota">本月用量：读取中…</small>
+                <div class="backup-actions" style="margin-top:8px">
+                  <button type="button" class="btn" id="btnModsearchTest"><svg class="ic" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><use href="#i-plugin"></use></svg><span id="modsearchTestLabel">试搜一次（消耗额度）</span></button>
+                  <button type="button" class="btn primary" id="btnModsearchSave">保存</button>
+                </div>
+                <p id="modsearchResult" class="settings-result"></p>
+              </div>
+            </div>
+
+            <div class="general-section">
+              <div class="gen-row gen-row-wrap">
                 <span class="gen-label">自定义搜索服务</span>
                 <div class="gen-choices">
                   <label class="lib-switch"><input type="checkbox" id="customSearchToggle" /><span id="customSearchLabel">关（默认）</span></label>

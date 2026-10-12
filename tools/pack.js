@@ -113,6 +113,17 @@ const ELECTRON_BIN = path.join(ROOT, 'runtime', 'electron', 'dist', 'electron.ex
 if (!fs.existsSync(ELECTRON_BIN)) fail('Electron 桌面版内核缺失: ' + ELECTRON_BIN + '（需先放入 runtime/electron/dist）');
 log('✓ 内核就绪（DSH + node + Electron）');
 
+// 0.32) 增强检索随包检查：ModSearch CLI（app/vendor/modsearch）是「基础检索」之上的一层，
+//       缺了分发包里设置页会显示「未随包安装」——宁可不打包，也别发一个残缺的搜索层。
+if (!fs.existsSync(path.join(ROOT, 'app', 'vendor', 'modsearch', 'main.js'))) {
+  fail('增强检索缺失：app/vendor/modsearch/main.js 不存在');
+}
+for (const dep of ['undici', 'commander']) {
+  if (!fs.existsSync(path.join(ROOT, 'app', 'vendor', 'modsearch', 'node_modules', dep))) {
+    fail('增强检索依赖缺失：app/vendor/modsearch/node_modules/' + dep);
+  }
+}
+
 // 0.3) 清理 Electron 下载中间产物（electron.zip 不需要进分发包）
 try {
   const staleZip = path.join(ROOT, 'runtime', 'electron', 'electron.zip');

@@ -562,6 +562,22 @@ const EN_EXTRA = {
   "⚠️ 开启等于让教练能动你电脑上的文件， 开之前请想清楚、重要文件先备份。": "⚠️ Turning this on lets the coach touch files on your computer. Think it through, and back up important files first.",
   "内置的「基础检索」是免费抓取网页，部分网络下会被限制、搜不到东西。": "The built-in “Basic search” scrapes pages for free; on some networks it gets throttled and finds nothing.",
   "如果你有可用的搜索服务（Tavily / SearXNG / Brave 等），在这里接上， 「基础检索」就会优先用它，结果会可靠得多。": "If you have a search service (Tavily / SearXNG / Brave etc.), connect it here — “Basic search” will prefer it, and results get far more reliable.",
+  /* —— 增强检索 ModSearch 设置卡（2026-10-12）：按 <b> 切出的文本节点逐片入表 —— */
+  "增强检索（免 Key）": "Enhanced search (no key)",
+  "备赛要查数据、法条、事件原委。开启后，教练的端侧检索": "For prep you keep needing data, statutes and real events. When on, the coach's local search ",
+  "优先走增强检索": "goes through Enhanced search first",
+  "（ModSearch）：": " (ModSearch): ",
+  "免注册、免填 API Key": "no signup, no API key",
+  "，结果比默认抓取搜索引擎网页更准。 关掉就退回「基础检索」（免费抓取 Bing / DuckDuckGo），不影响其他功能。": " — more accurate than scraping search-engine pages. Turning it off falls back to “Basic search” (free Bing / DuckDuckGo scraping); nothing else changes.",
+  "这一路有限额": "This channel has a quota",
+  "：走的是 Firecrawl 的免注册通道，官方口径约": ": it rides Firecrawl's keyless channel, officially about ",
+  "，一次搜索约 2 credits（约够 500 次），且": ", roughly 2 credits per search (~500 a month), and it's ",
+  "按网络 IP 计量": "metered per IP",
+  "—— 同一网络下可能更早用完。额度耗尽、超时或网络不通时": " — machines on the same network can exhaust it sooner. When it runs out, times out or the network fails, ",
+  "自动退回基础检索": "it falls back to Basic search on its own",
+  "， 不会因此搜不到东西；想不受限额约束，就在下面的「自定义搜索服务」接上你自己的 Key（它优先级更高）。": " — you never lose search entirely. To escape the cap, plug your own key into “Custom search service” below (it takes priority).",
+  "本月用量：读取中…": "This month: loading…",
+  "试搜一次（消耗额度）": "Try one search (uses quota)",
   "不填也不影响使用——那就继续用深度检索。": "Leaving it empty is fine too — Deep search keeps working.",
   "选择预设（只是帮你填好格式，之后都能改）": "Pick a preset (it only pre-fills the format — everything stays editable)",
   "Tavily（AI 搜索，有免费额度）": "Tavily (AI search, free tier)",
@@ -1200,6 +1216,24 @@ const EN_EXTRA = {
 };
 
 const EN_RULES = [
+  /* 增强检索设置卡的动态文案（2026-10-12）：用量、试搜结果都是拼出来的串，
+     精确词典命中不了，统一走正则。放在数组最前，避免被后面的宽泛规则截断。 */
+  [/^本月用量：增强检索未随包安装（请重新解压完整安装包）$/, "This month: Enhanced search is not installed (re-extract the full package)"],
+  [/^本月用量：读取失败$/, "This month: usage unavailable"],
+  [/^1,000 credits \/ 月$/, "1,000 credits / month"],
+  [/本月用量：/, "This month: "],
+  [/已用 (\d+) credits（(\d+) 次搜索）/, "$1 credits used ($2 searches)"],
+  [/剩余额度约 (\d+) credits（本机估算，上限 (\d+)\/月）/, "~$1 credits left (local estimate, cap $2/mo)"],
+  [/｜最近一次失败：/, " | last failure: "],
+  [/^已保存：增强检索开启（下一条消息起生效）$/, "Saved: Enhanced search on (from the next message)"],
+  [/^已保存：已关闭，端侧检索退回基础检索$/, "Saved: off — local search falls back to Basic search"],
+  [/^正在用「辩论」试搜一次（会消耗额度）…$/, "Trying one search for “debate” (uses quota)…"],
+  [/^搜索中…$/, "Searching…"],
+  [/成功：(\d+) 条结果，用时 (\d+)ms，引擎 /, "OK: $1 results in $2ms via "],
+  [/，本次消耗 (\d+) credits/, " — $1 credits used"],
+  [/样例：/, "Sample: "],
+  [/^失败：/, "Failed: "],
+  [/（不影响使用，端侧检索会自动退回基础检索）$/, " (harmless — local search falls back to Basic search)"],
   /* 侧栏历史的两行结构（2026-10-10）：相对时间与「N 条消息」「显示更多」都是拼出来的串，
      精确词典命中不了，统一走正则。注意顺序：先长后短（「N 分钟前」要在「N 天前」之前判）。 */
   [/^(\d+) 分钟前$/, "$1 min ago"],

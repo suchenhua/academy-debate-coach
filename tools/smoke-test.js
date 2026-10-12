@@ -1168,10 +1168,89 @@ async function main() {
         fsMod.existsSync(path.join(ROOT, 'tools', 'verify-settings-overflow.js')));
       /* 高级面板：两个开关本是并列关系，曾经把「自定义搜索服务」整卡嵌在「文档处理（扩展）」卡里；
          长提示也塞进右侧 .gen-choices 挤成一列。现在各自独立成卡 + 用项目既有的 gen-row-wrap 整行铺开。 */
-      check('★ 高级面板：两项设置各自独立成卡、长提示整行铺开',
+      check('★ 高级面板：三项设置各自独立成卡、长提示整行铺开',
         /class="gen-row gen-row-wrap">\s*<span class="gen-label">文档处理（扩展）<\/span>/u.test(indexSrc)
+        && /class="gen-row gen-row-wrap">\s*<span class="gen-label">增强检索（免 Key）<\/span>/u.test(indexSrc)
         && /class="gen-row gen-row-wrap">\s*<span class="gen-label">自定义搜索服务<\/span>/u.test(indexSrc)
         && !/style="display:block;width:100%;margin-top:4px;color:var\(--amber\)"/u.test(indexSrc));
+      /* ── 增强检索（ModSearch，2026-10-12）：随包 CLI + 检索链插层 + 限额账本 ──
+         静态断言钉机制（换名/挪位置必须报红），接口断言验真实读写。
+         ★ 冒烟不真发网络请求（沿用既有约定）：真跑一次搜索归 tools/verify-modsearch.js。 */
+      {
+        const msServer = fsMod.readFileSync(path.join(ROOT, 'app', 'server.js'), 'utf8');
+        const msLocale = fsMod.readFileSync(path.join(ROOT, 'app', 'public', 'locale.js'), 'utf8');
+        const msPack = fsMod.readFileSync(path.join(ROOT, 'tools', 'pack.js'), 'utf8');
+        const msVendor = path.join(ROOT, 'app', 'vendor', 'modsearch');
+        check('★ 增强检索随包在位（CLI + undici + commander + MIT 许可证）',
+          fsMod.existsSync(path.join(msVendor, 'main.js'))
+          && fsMod.existsSync(path.join(msVendor, 'node_modules', 'undici', 'package.json'))
+          && fsMod.existsSync(path.join(msVendor, 'node_modules', 'commander', 'package.json'))
+          && fsMod.existsSync(path.join(msVendor, 'LICENSE')));
+        check('★ 端侧检索优先级：自定义 → 增强检索 → 基础检索（顺序钉死）',
+          /async function searchResults\([\s\S]{0,1400}?if \(modsearchOn\(\)\) \{[\s\S]{0,300}?provider: 'modsearch'[\s\S]{0,300}?provider: 'free'/.test(msServer));
+        check('★ 增强检索失败不弹错误卡：只往下退，不返回 lowQuality 占位',
+          /if \(mr\.ok\) return \{ provider: 'modsearch'/.test(msServer)
+          && !/provider: 'modsearch'[\s\S]{0,400}?lowQuality: true/.test(msServer));
+        check('★ 开关严格布尔（防字符串 "false" 当假写入）',
+          /patch\.modsearch !== undefined[\s\S]{0,260}?m\.enabled = m\.enabled === true/.test(msServer));
+        check('★ 额度账本与 CLI 状态目录都走 DATA_DIR（ACADEMY_DATA_DIR 隔离生效）',
+          /const MODSEARCH_HOME = path\.join\(DATA_DIR, 'modsearch-home'\)/.test(msServer)
+          && /const MODSEARCH_LEDGER = path\.join\(DATA_DIR, 'modsearch-usage\.json'\)/.test(msServer));
+        check('★ 账本只留最近 12 个月（不会无限增长）',
+          /Object\.keys\(led\.months\)\.sort\(\)\.slice\(0, -12\)/.test(msServer));
+        check('★ 两层超时兜底：CLI --deadline + 进程硬超时（卡死也要退回基础检索）',
+          /'--deadline', String\(deadlineMs\)/.test(msServer) && /deadlineMs \+ 6000/.test(msServer));
+        check('★ 起子进程前清掉 MODSEARCH_NESTED（上游递归护栏会误判）',
+          /delete env\.MODSEARCH_NESTED/.test(msServer));
+        check('★ 结果过相关性打分；额度按实际消耗记账（失败也记）',
+          /modsearchRecord\(credits\);[\s\S]{0,600}?scoreSourcesRelevance\(q, sources\)/.test(msServer));
+        check('★ 设置页有增强检索卡：开关 + 限额说明 + 用量行 + 试搜按钮',
+          /<span class="gen-label">增强检索（免 Key）<\/span>/.test(indexSrc)
+          && /id="modsearchToggle"/.test(indexSrc)
+          && /1,000 credits \/ 月/.test(indexSrc)
+          && /id="modsearchQuota"/.test(indexSrc)
+          && /id="btnModsearchTest"/.test(indexSrc));
+        check('★ 前端读写状态接口，且每次打开设置都刷新用量',
+          /fetchJSON\('\/api\/search\/modsearch', \{/.test(appJsSrc)
+          && /try \{ loadModsearchUI\(\); \} catch/.test(appJsSrc)
+          && /bindModsearch\(\)/.test(appJsSrc));
+        check('★ 英文模式覆盖用量/试搜的动态文案（拼出来的串走 EN_RULES）',
+          /\[\/\^本月用量：读取失败\$\/, "This month: usage unavailable"\]/.test(msLocale)
+          && /已用 \(\\d\+\) credits/.test(msLocale));
+        check('★ 打包缺 vendor 会被阻断（pack.js 有随包检查）',
+          /增强检索缺失：app\/vendor\/modsearch\/main\.js/.test(msPack));
+        /* 真跑那一段冒烟覆盖不了（不联网），所以有独立的回归批；脚本不在位就等于没验证。 */
+        check('★ 增强检索回归批在位（引擎级 + 真渲染 + 跑批）',
+          fsMod.existsSync(path.join(ROOT, 'tools', 'verify-modsearch.js'))
+          && fsMod.existsSync(path.join(ROOT, 'tools', 'verify-modsearch-ui.js'))
+          && fsMod.existsSync(path.join(ROOT, 'tools', 'run-modsearch-tests.js')));
+        /* 从 Electron 宿主里继承 ELECTRON_RUN_AS_NODE 会把 electron.exe 变成纯 node，
+           真渲染脚本 require('electron') 直接 MODULE_NOT_FOUND（本次实跑撞上）。 */
+        check('★ 跑批起 Electron 前清掉 ELECTRON_RUN_AS_NODE（否则真渲染假失败）',
+          /delete env\.ELECTRON_RUN_AS_NODE/.test(fsMod.readFileSync(path.join(ROOT, 'tools', 'run-modsearch-tests.js'), 'utf8')));
+        /* 免注册通道按 IP 计量，外部限流不该把回归判红，但必须显式跳过而不是静默通过。 */
+        check('★ 引擎级真跑：上游不可用记为显式跳过，其他失败照判红',
+          /skipped: true/.test(fsMod.readFileSync(path.join(ROOT, 'tools', 'verify-modsearch.js'), 'utf8'))
+          && /rejected the keyless/.test(fsMod.readFileSync(path.join(ROOT, 'tools', 'verify-modsearch.js'), 'utf8')));
+        const before = await j('GET', '/api/search/modsearch');
+        check('★ GET /api/search/modsearch：额度结构完整（cap / 已用 / 剩余估算自洽）',
+          before.status === 200 && before.d && before.d.ok === true && !!before.d.quota
+          && typeof before.d.quota.monthlyCap === 'number'
+          && typeof before.d.quota.creditsUsed === 'number'
+          && before.d.quota.remainingEst === Math.max(0, before.d.quota.monthlyCap - before.d.quota.creditsUsed),
+          JSON.stringify((before.d && before.d.quota) || {}));
+        const origEnabled = !!(before.d && before.d.enabled);
+        const off = await j('POST', '/api/search/modsearch', { enabled: false });
+        const bogus = await j('POST', '/api/search/modsearch', { enabled: 'true' });
+        const cfgNow = await j('GET', '/api/config');
+        check('★ 开关写坏值（字符串 "true"）不会被误当开启',
+          off.status === 200 && off.d.enabled === false && bogus.status === 200 && bogus.d.enabled === false
+          && !!(cfgNow.d && cfgNow.d.config && cfgNow.d.config.modsearch) && cfgNow.d.config.modsearch.enabled === false);
+        await j('POST', '/api/search/modsearch', { enabled: origEnabled });
+        const restored = await j('GET', '/api/search/modsearch');
+        check('★ 开关可还原（冒烟不在真实配置里留残留）',
+          restored.d && restored.d.enabled === origEnabled, 'orig=' + origEnabled);
+      }
       /* 「API 地址」是「AI 模型」面板里的配置项（服务商 → 地址 → 名称 → Key → 模型）：
          曾经放在「高级」面板，点「自定义接口」还会把你跳到那边去填。2026-09-29 移回模型面板。
          用面板注释当锚点（导航按钮上也有 data-settings-pane="advanced"，不能拿它比位置）。 */

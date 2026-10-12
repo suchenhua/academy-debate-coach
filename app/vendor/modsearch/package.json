@@ -1,0 +1,7 @@
+{
+  "name": "@liustack/modsearch",
+  "version": "5.10.6",
+  "type": "module",
+  "private": true,
+  "description": "Vendored copy of the ModSearch CLI (MIT) used as the Academy enhanced-search engine."
+}

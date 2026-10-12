@@ -26,3 +26,8 @@ desktop.ini
 
 # ---- Node ----
 node_modules/
+
+# 例外：增强检索（ModSearch CLI）的两个依赖必须入库 ——
+# tools/pack.js 的打包守卫要求 app/vendor/modsearch/node_modules/{undici,commander} 一定在场，
+# 交给 npm 现装等于「换台机器/断网就编不出来」。上游 MIT，LICENSE 已随文件带上。
+!app/vendor/modsearch/node_modules/

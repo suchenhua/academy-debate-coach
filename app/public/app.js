@@ -1887,6 +1887,7 @@ function openSettings() {
   // 载入/刷新多配置档案（编辑当前生效的配置）
   loadProfilesUI();
   try { loadExtToolsToggle(); } catch (_) {}
+  try { loadModsearchUI(); } catch (_) {}
   try { loadMemToggles(); loadMemRejectList(); } catch (_) {}
     try { loadAgentChoices(); } catch (_) {}
   setTimeout(() => { const i = $('#apiKeyInput'); if (i) i.focus(); }, 50);
@@ -3737,6 +3738,123 @@ function bindCustomSearch() {
   loadCustomSearchUI();
 }
 
+/* ================= 增强检索 ModSearch（设置 → 高级） =================
+   默认那路「基础检索」是本地抓 Bing/DuckDuckGo，部分网络下被反爬返回无关结果。
+   增强检索走随包内置的 ModSearch CLI（免注册、免 Key），召回质量高一档，
+   但**上游免注册通道有月度限额** —— 所以这张卡除了开关，还要把本机用量摊开给用户看。
+   关掉/额度用不完都不会让搜索失效：失败一律自动退回基础检索。 */
+let msState = { enabled: true, available: true, quota: null, last: null };
+
+function modsearchQuotaLine() {
+  if (!msState.available) return '本月用量：增强检索未随包安装（请重新解压完整安装包）';
+  const q = msState.quota || {};
+  const cap = Number(q.monthlyCap) || 1000;
+  let s = '本月用量：已用 ' + (Number(q.creditsUsed) || 0) + ' credits（' + (Number(q.searches) || 0)
+    + ' 次搜索）· 剩余额度约 ' + (Number(q.remainingEst) || 0) + ' credits（本机估算，上限 ' + cap + '/月）';
+  if (msState.last && msState.last.ok === false && msState.last.error) {
+    s += '｜最近一次失败：' + String(msState.last.error).slice(0, 80);
+  }
+  return s;
+}
+
+function renderMsEnabled() {
+  const t = document.getElementById('modsearchToggle');
+  const lab = document.getElementById('modsearchLabel');
+  if (lab) lab.textContent = (t && t.checked) ? '开' : '关（默认）';
+}
+
+function renderMsQuota() {
+  const el = document.getElementById('modsearchQuota');
+  if (el) el.textContent = modsearchQuotaLine();
+}
+
+async function loadModsearchUI() {
+  try {
+    const r = await fetchJSON('/api/search/modsearch');
+    if (!r || !r.ok) { msState.available = false; renderMsQuota(); return; }
+    msState.enabled = r.enabled === true;
+    msState.available = r.available === true;
+    msState.quota = r.quota || null;
+    msState.last = r.last || null;
+    const t = document.getElementById('modsearchToggle');
+    if (t) t.checked = msState.enabled;
+    renderMsEnabled();
+    renderMsQuota();
+  } catch (_) {
+    const el = document.getElementById('modsearchQuota');
+    if (el) el.textContent = '本月用量：读取失败';
+  }
+}
+
+async function saveModsearch() {
+  const out = document.getElementById('modsearchResult');
+  const t = document.getElementById('modsearchToggle');
+  const want = !!(t && t.checked);
+  try {
+    const r = await fetchJSON('/api/search/modsearch', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ enabled: want }),
+    });
+    if (!r || !r.ok) throw new Error((r && r.error) || '保存失败');
+    msState.enabled = want;
+    msState.available = r.available !== false;
+    if (out) {
+      out.textContent = want ? '已保存：增强检索开启（下一条消息起生效）' : '已保存：已关闭，端侧检索退回基础检索';
+      out.className = 'settings-result ok';
+    }
+    renderMsEnabled();
+  } catch (e) {
+    if (out) { out.textContent = '' + (e.message || '保存失败'); out.className = 'settings-result err'; }
+  }
+}
+
+async function testModsearch() {
+  const out = document.getElementById('modsearchResult');
+  const btn = document.getElementById('btnModsearchTest');
+  const lab = document.getElementById('modsearchTestLabel');
+  if (btn) btn.disabled = true;
+  if (lab) lab.textContent = '搜索中…';
+  if (out) { out.textContent = '正在用「辩论」试搜一次（会消耗额度）…'; out.className = 'settings-result'; }
+  try {
+    const r = await fetchJSON('/api/search/modsearch/test', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ query: '辩论' }),
+    });
+    if (r && r.ok) {
+      const s = (r.samples || [])[0];
+      msState.quota = r.quota || msState.quota;
+      renderMsQuota();
+      if (out) {
+        out.innerHTML = '成功：' + r.count + ' 条结果，用时 ' + r.elapsedMs + 'ms，引擎 ' + esc(String(r.engine || ''))
+          + '，本次消耗 ' + (Number(r.credits) || 0) + ' credits'
+          + (s ? '<br><span style="color:var(--muted)">样例：' + esc(String(s.title || s.url).slice(0, 60)) + '</span>' : '');
+        out.className = 'settings-result ok';
+      }
+    } else {
+      if (r && r.quota) { msState.quota = r.quota; renderMsQuota(); }
+      if (out) {
+        out.textContent = '失败：' + ((r && r.error) || '未知错误') + '（不影响使用，端侧检索会自动退回基础检索）';
+        out.className = 'settings-result err';
+      }
+    }
+  } catch (e) {
+    if (out) { out.textContent = '' + (e.message || '测试失败'); out.className = 'settings-result err'; }
+  } finally {
+    if (btn) btn.disabled = false;
+    if (lab) lab.textContent = '试搜一次（消耗额度）';
+  }
+}
+
+function bindModsearch() {
+  const t = document.getElementById('modsearchToggle');
+  if (t) t.onchange = renderMsEnabled;
+  const bs = document.getElementById('btnModsearchSave');
+  if (bs) bs.onclick = saveModsearch;
+  const bt = document.getElementById('btnModsearchTest');
+  if (bt) bt.onclick = testModsearch;
+  loadModsearchUI();
+}
+
 async function saveExtToolsToggle() {
   const t = $('#extendedToolsToggle'); if (!t) return;
   const want = t.checked;
@@ -4958,6 +5076,7 @@ try { bindMemToggles(); } catch (_) {}
   try { bindAgentChoices(); } catch (_) {}
 { const br = document.getElementById('btnRunsRefresh'); if (br) br.onclick = () => loadRunsPane(); }
   try { bindCustomSearch(); } catch (_) {}
+  try { bindModsearch(); } catch (_) {}
   // 重新查看新手引导
   const btnWiz = $('#btnShowWizard');
   if (btnWiz) btnWiz.onclick = () => { $('#settingsModal').classList.add('hidden'); openWelcome(1); };

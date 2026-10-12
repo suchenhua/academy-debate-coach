@@ -465,6 +465,10 @@ function defaultConfig() {
     // 内置的免费抓取（Bing/DDG）在部分网络下会被反爬返回无关结果，
     // 与其塞一个必然失败的免费通道，不如让用户接入自己可用的搜索服务。
     customSearch: defaultCustomSearch(),
+    // 增强检索（ModSearch，随包内置在 app/vendor/modsearch）：免注册、免 API Key，默认开。
+    // ★ 有月度限额（上游 Firecrawl 免注册通道约 1,000 credits/月），所以设置页显示本机用量；
+    //   额度耗尽 / 网络不通 / 结果不相关时自动退回「基础检索」（Bing/DuckDuckGo 免费抓取）。
+    modsearch: defaultModsearch(),
   };
 }
 
@@ -489,6 +493,13 @@ function defaultCustomSearch() {
   };
 }
 
+/* 增强检索（ModSearch）配置。只有一个开关：
+   引擎、Key、故障转移都由 vendor 里的 CLI 自己管（本机零配置），
+   这里只决定「端侧检索要不要先走它」。 */
+function defaultModsearch() {
+  return { enabled: true };
+}
+
 function loadConfig() {
   const cfg = Object.assign(defaultConfig(), readJson(CONFIG_FILE, {}));
   cfg.baseUrl = normalizeBaseUrl(cfg.baseUrl);
@@ -511,6 +522,11 @@ function saveConfig(patch) {
   if (patch.sendHotkey !== undefined) next.sendHotkey = patch.sendHotkey === 'enter' ? 'enter' : 'ctrlEnter';
   if (patch.reasoningEffort !== undefined) next.reasoningEffort = ['off', 'low', 'high', 'max'].includes(patch.reasoningEffort) ? patch.reasoningEffort : 'high';
   if (patch.locale !== undefined) next.locale = ['zh-CN', 'zh-TW', 'en'].includes(patch.locale) ? patch.locale : 'zh-CN';
+  if (patch.modsearch !== undefined) {
+    const m = Object.assign(defaultModsearch(), patch.modsearch || {});
+    m.enabled = m.enabled === true;   // 同其他开关：严格布尔，防字符串 "false" 当假写入
+    next.modsearch = m;
+  }
   writeJsonAtomic(CONFIG_FILE, next);
   writeDshSettings(next.model, next.baseUrl, effectiveSearchKey(next), resolveSearchProvider(next), next.reasoningEffort);
   return next;
@@ -4083,8 +4099,189 @@ async function gatherSearchSources(cfg, nativeQuery, seedQueries) {
   return { sources, via };
 }
 
-/* 端侧检索统一入口：优先用用户配置的自定义搜索服务（可靠），
-   没有配置才退回内置免费抓取（可能被反爬挡住，返回结果会带 lowQuality 标记）。 */
+/* ---------------- 搜索通道 A+：增强检索（ModSearch，随包内置 CLI） ----------------
+   为什么要加这一层：端侧「基础检索」是本地抓 Bing/DuckDuckGo 的 HTML，
+   部分网络下被反爬、返回无关结果（代码里那套相关性打分就是为此存在的）。
+   ModSearch（npm @liustack/modsearch，MIT）默认走 Firecrawl 的免注册通道：
+   不填 Key、不绑卡就能搜，返回结构化的标题/链接/摘要，召回质量高一档。
+   它是独立 CLI，这里用 App 自带的 node 起子进程调用，解析其 stdout 的 JSON。
+
+   ★ 限额（必须让用户看得见）：免注册通道由 Firecrawl 提供，官方口径约 1,000 credits/月，
+     且**按 IP 计量**——同一网络下可能更早触顶。一次搜索实测约 2 credits（约 500 次）。
+     上游不返回「剩余额度」字段，所以本机自己记账：每次成功解析到的 credits 累加进
+     data/modsearch-usage.json，设置页显示的是**本机估算**，不是上游余额。
+   ★ 失败一律退回基础检索：额度耗尽、超时、解析失败、结果不相关 —— 最坏情况维持原状。 */
+/* ACADEMY_MODSEARCH_CLI 是测试钩子：verify-modsearch 用它注入「CLI 缺失」与「输出是垃圾」
+   两种负向对照，证明退回基础检索那条路真的会走。正常安装不该设置它。 */
+const MODSEARCH_CLI = (process.env.ACADEMY_MODSEARCH_CLI || '').trim()
+  || path.join(ROOT, 'app', 'vendor', 'modsearch', 'main.js');
+const MODSEARCH_PKG = path.join(ROOT, 'app', 'vendor', 'modsearch', 'package.json');
+const MODSEARCH_HOME = path.join(DATA_DIR, 'modsearch-home');    // CLI 的配置/冷却状态落这里，不污染用户主目录
+const MODSEARCH_LEDGER = path.join(DATA_DIR, 'modsearch-usage.json');
+const MODSEARCH_MONTHLY_CAP = 1000;                              // 上游免注册通道的月度 credits 口径（估算用）
+let modsearchLast = null;                                        // 最近一次调用结果（给设置页排障用）
+
+/* 上游报错翻译成中文。免注册通道按 IP 判定，很多网络（加速器 / 机房 IP / 校园出口）
+   会被直接拒——那不是用户做错了什么，但界面如果甩出英文堆栈，小白只会以为程序坏了。 */
+function modsearchFriendly(raw) {
+  const s = String(raw || '');
+  const low = s.toLowerCase();
+  if (/ip address looks suspicious|rejected the keyless|anonymous access may be unavailable/.test(low)) {
+    return '本机网络被免注册通道拒绝（Firecrawl 按 IP 判定，与你的 Key、余额无关）';
+  }
+  if (/not (?:currently )?available in your (?:location|region|country)|eligibility check failed/.test(low)) {
+    return '免注册通道在你所在的网络地区不可用';
+  }
+  if (/out of credits|insufficient|exhausted|depleted|used up|\b402\b/.test(low)) {
+    return '本月免注册额度已用完（约 1,000 credits/月）';
+  }
+  if (/rate.?limit|too many requests|\b429\b/.test(low)) {
+    return '免注册通道被限流（同一网络下请求太多）';
+  }
+  if (/timeout|timed out|deadline/.test(low)) return '增强检索超时';
+  return s.slice(0, 160);
+}
+
+function modsearchVersion() {
+  const p = readJson(MODSEARCH_PKG, null);
+  return (p && p.version) ? String(p.version) : '';
+}
+
+function modsearchReady() { return fs.existsSync(MODSEARCH_CLI); }
+
+function modsearchOn() {
+  const ms = loadConfig().modsearch || defaultModsearch();
+  return ms.enabled === true && modsearchReady();
+}
+
+function modsearchMonthKey(ts) {
+  const d = new Date(ts || Date.now());
+  return d.getFullYear() + '-' + String(d.getMonth() + 1).padStart(2, '0');
+}
+
+/* 本机用量账本：{ months: { '2026-10': { credits, searches } } }，只留最近 12 个月 */
+function modsearchUsage() {
+  const led = readJson(MODSEARCH_LEDGER, null);
+  const months = (led && typeof led.months === 'object' && led.months) || {};
+  const key = modsearchMonthKey();
+  const cur = months[key] || {};
+  const credits = Number(cur.credits) || 0;
+  return {
+    month: key,
+    creditsUsed: credits,
+    searches: Number(cur.searches) || 0,
+    monthlyCap: MODSEARCH_MONTHLY_CAP,
+    remainingEst: Math.max(0, MODSEARCH_MONTHLY_CAP - credits),
+  };
+}
+
+function modsearchRecord(credits) {
+  try {
+    const led = readJson(MODSEARCH_LEDGER, { months: {} });
+    if (!led || typeof led !== 'object') { /* 坏档直接重建 */ }
+    if (!led.months || typeof led.months !== 'object') led.months = {};
+    const key = modsearchMonthKey();
+    const cur = led.months[key] || { credits: 0, searches: 0 };
+    cur.credits = (Number(cur.credits) || 0) + (Number(credits) || 0);
+    cur.searches = (Number(cur.searches) || 0) + 1;
+    led.months[key] = cur;
+    for (const k of Object.keys(led.months).sort().slice(0, -12)) delete led.months[k];
+    writeJsonAtomic(MODSEARCH_LEDGER, led);
+  } catch (_) { /* 记账失败不影响搜索本身 */ }
+}
+
+/* 跑一次 ModSearch CLI。resolve { ok, sources, engine, credits, error }，永不 reject。 */
+function modsearchSearch(query, opts) {
+  const o = opts || {};
+  const deadlineMs = Number(o.deadlineMs) || 35000;
+  const timeoutMs = Number(o.timeoutMs) || 20000;
+  return new Promise((resolve) => {
+    const q = String(query || '').trim().slice(0, 200);
+    if (!q) return resolve({ ok: false, error: '搜索词为空' });
+    if (!modsearchReady()) return resolve({ ok: false, error: '增强检索未随包安装（app/vendor/modsearch 缺失）' });
+    try { fs.mkdirSync(MODSEARCH_HOME, { recursive: true }); } catch (_) {}
+    const env = Object.assign({}, process.env, { USERPROFILE: MODSEARCH_HOME, HOME: MODSEARCH_HOME });
+    delete env.MODSEARCH_NESTED;   // 上游的递归护栏：从 App 里起进程不该带这个标记
+    let child;
+    try {
+      child = spawn(bundledNode(), [
+        MODSEARCH_CLI, '-q', q,
+        '--max-results', String(Number(o.maxResults) || 8),
+        '--timeout', String(timeoutMs),
+        '--deadline', String(deadlineMs),
+      ], { cwd: path.dirname(MODSEARCH_CLI), env, windowsHide: true, stdio: ['ignore', 'pipe', 'pipe'] });
+    } catch (e) {
+      modsearchLast = { at: Date.now(), ok: false, error: '启动搜索进程失败：' + e.message };
+      return resolve({ ok: false, error: modsearchLast.error });
+    }
+    let out = '', errOut = '', settled = false;
+    const finish = (r) => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(hardTimer);
+      modsearchLast = { at: Date.now(), ok: !!r.ok, error: r.ok ? '' : String(r.error || '').slice(0, 200), engine: r.engine || '' };
+      resolve(r);
+    };
+    // CLI 自己有 --deadline，这里再兜一层：进程卡住（如 DNS 挂起）也要放回去走基础检索
+    const hardTimer = setTimeout(() => {
+      try { child.kill(); } catch (_) {}
+      finish({ ok: false, error: '增强检索超时（' + (deadlineMs + 6000) + 'ms 未返回）' });
+    }, deadlineMs + 6000);
+    child.stdout.setEncoding('utf8');
+    child.stderr.setEncoding('utf8');
+    child.stdout.on('data', (d) => { out += d; });
+    child.stderr.on('data', (d) => { errOut += d; });
+    child.on('error', (e) => finish({ ok: false, error: '增强检索进程异常：' + e.message }));
+    child.on('close', () => {
+      let j;
+      try { j = JSON.parse(out.replace(/^\uFEFF/, '')); } catch (_) {
+        const raw = String(errOut || out).trim();
+        const friendly = modsearchFriendly(raw);
+        // 认得出来的上游失败直接说人话；认不出才保留「无法解析」原文（可能是真的坏了）
+        const msg = friendly === raw.slice(0, 160) ? '增强检索输出无法解析：' + raw.slice(0, 160) : friendly;
+        return finish({ ok: false, error: msg, raw: raw.slice(0, 300) });
+      }
+      const sources = [];
+      const seen = new Set();
+      let credits = 0, engine = '';
+      for (const r of (Array.isArray(j.results) ? j.results : [])) {
+        if (!r || typeof r !== 'object') continue;
+        if (r.engine) engine = String(r.engine);
+        for (const a of (Array.isArray(r.attempts) ? r.attempts : [])) {
+          if (a && a.ok && typeof a.credits === 'number') credits += a.credits;
+        }
+        for (const it of (Array.isArray(r.items) ? r.items : [])) {
+          const url = String((it && it.url) || '');
+          if (!/^https?:\/\//i.test(url) || seen.has(url)) continue;
+          seen.add(url);
+          const s = {
+            url,
+            title: String(it.title || '').slice(0, 120) || url,
+            snippet: String(it.snippet || '').slice(0, 260),
+            engine: String(r.engine || 'modsearch'),
+          };
+          s.tags = classifySearchSource(s);
+          sources.push(s);
+          if (sources.length >= 10) break;
+        }
+        if (sources.length >= 10) break;
+      }
+      modsearchRecord(credits);   // 额度是实际消耗，结果好坏都记
+      if (!sources.length) {
+        const w = j.results && j.results[0] && Array.isArray(j.results[0].warnings) ? j.results[0].warnings[0] : '';
+        return finish({ ok: false, error: '增强检索没有返回结果' + (w ? '：' + modsearchFriendly(w) : '') });
+      }
+      const rel = scoreSourcesRelevance(q, sources);
+      if (!rel.ok) return finish({ ok: false, error: '增强检索结果相关性不足（' + (rel.reason || '未知') + '）' });
+      finish({ ok: true, sources, engine, credits });
+    });
+  });
+}
+
+/* 端侧检索统一入口，优先级：自定义搜索服务（用户自备，最可靠）
+   → 增强检索 ModSearch（免 Key、有月度限额，默认开）
+   → 基础检索（内置免费抓取 Bing/DuckDuckGo，可能被反爬挡住，结果会带 lowQuality 标记）。
+   后两级是「失败就往下退」，不是「二选一」。 */
 async function searchResults(query) {
   const cfg = loadConfig();
   const cs = cfg.customSearch || {};
@@ -4102,6 +4299,11 @@ async function searchResults(query) {
       }],
       answer: '',
     };
+  }
+  if (modsearchOn()) {
+    const mr = await modsearchSearch(query);
+    if (mr.ok) return { provider: 'modsearch', sources: mr.sources, answer: '' };
+    // 不弹错误、不中断任务：退回基础检索，让模型至少还有一次免费抓取的机会
   }
   return { provider: 'free', sources: await freeSearchResults(query), answer: '' };
 }
@@ -4551,6 +4753,48 @@ function handleRequest(req, res) {
         ok: true, query: q, elapsedMs: Date.now() - t0,
         count: r2.sources.length,
         samples: r2.sources.slice(0, 3),
+      });
+    }).catch((e) => sendJson(res, 500, { ok: false, error: e.message }));
+  }
+
+  /* —— 增强检索（ModSearch）：状态 / 开关 / 试搜 —— */
+  if (req.method === 'GET' && p === '/api/search/modsearch') {
+    return sendJson(res, 200, {
+      ok: true,
+      enabled: (loadConfig().modsearch || defaultModsearch()).enabled === true,
+      available: modsearchReady(),
+      version: modsearchVersion(),
+      quota: modsearchUsage(),
+      last: modsearchLast,
+    });
+  }
+
+  if (req.method === 'POST' && p === '/api/search/modsearch') {
+    return readBody(req, 32 * 1024).then((raw) => {
+      let body;
+      try { body = JSON.parse(raw || '{}'); } catch (_) { return sendJson(res, 400, { ok: false, error: 'JSON 解析失败' }); }
+      const next = Object.assign(defaultModsearch(), loadConfig().modsearch || {});
+      if (body.enabled !== undefined) next.enabled = body.enabled === true;
+      saveConfig({ modsearch: next });
+      return sendJson(res, 200, { ok: true, enabled: next.enabled, available: modsearchReady() });
+    }).catch((e) => sendJson(res, 500, { ok: false, error: e.message }));
+  }
+
+  /* 试搜：真发一次请求（会实际消耗免注册额度，界面上已注明）。
+     开关关着也能试 —— 和「自定义搜索服务」的测试一样，测的是「这条路能不能走通」。 */
+  if (req.method === 'POST' && p === '/api/search/modsearch/test') {
+    return readBody(req, 32 * 1024).then(async (raw) => {
+      let body;
+      try { body = JSON.parse(raw || '{}'); } catch (_) { return sendJson(res, 400, { ok: false, error: 'JSON 解析失败' }); }
+      const q = String(body.query || '辩论').trim().slice(0, 100) || '辩论';
+      const t0 = Date.now();
+      const r = await modsearchSearch(q, { maxResults: 5 });
+      if (!r.ok) return sendJson(res, 200, { ok: false, error: r.error, elapsedMs: Date.now() - t0, quota: modsearchUsage() });
+      return sendJson(res, 200, {
+        ok: true, query: q, elapsedMs: Date.now() - t0,
+        count: r.sources.length, engine: r.engine, credits: r.credits,
+        samples: r.sources.slice(0, 3).map((s) => ({ title: s.title, url: s.url, tags: s.tags })),
+        quota: modsearchUsage(),
       });
     }).catch((e) => sendJson(res, 500, { ok: false, error: e.message }));
   }
@@ -6351,6 +6595,9 @@ module.exports = { memoryForget: forgetLongEntries, deliverShadow: { snapshot: s
   academyGovernance: { archiveMemoryFromOutput, appendMemory, memRejectedHit, rejectMemoryFingerprint, unrejectMemory, pushMemoryPending, removeMemoryPending, readJsonSafe, memFingerprint, selectLongMemory },
   academyConfig: { loadConfig, saveConfig, statusPayload },
   academyEffort: { settingsFile: SETTINGS_FILE },
+  /* 增强检索（ModSearch）内核（tools/verify-modsearch.js 测试直调）：
+     searchResults 一并导出，用来验「增强检索失败 → 自动退回基础检索」这条降级链。 */
+  academyModsearch: { search: modsearchSearch, searchResults, usage: modsearchUsage, ready: modsearchReady, version: modsearchVersion, ledgerFile: () => MODSEARCH_LEDGER },
   academyQueue: { queueRegister, pumpQueue, queueWithdraw, queueWithdrawAll, preemptCurrentRun, queuePositionOf, runPrecheck, sha16, ledgerAppendRec, runsLedgerRecent, runQueue: () => runQueue,
     beginFakeRunForTest: (runId) => { currentRun = { runId, child: null, cancelled: false, startedAt: Date.now() }; },
     endFakeRunForTest: () => { currentRun = null; } } };
