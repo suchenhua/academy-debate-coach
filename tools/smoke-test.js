@@ -1199,7 +1199,26 @@ async function main() {
         check('★ 账本只留最近 12 个月（不会无限增长）',
           /Object\.keys\(led\.months\)\.sort\(\)\.slice\(0, -12\)/.test(msServer));
         check('★ 两层超时兜底：CLI --deadline + 进程硬超时（卡死也要退回基础检索）',
-          /'--deadline', String\(deadlineMs\)/.test(msServer) && /deadlineMs \+ 6000/.test(msServer));
+          /'--deadline', String\(deadlineMs\)/.test(msServer) && /\}, deadlineMs \+ graceMs\);/.test(msServer));
+
+        /* ★ Agent 自身的检索链路。内核 dsh-tool-web 的 web_search 只有 30s 预算
+           （DEFAULT_WEB_TOOL_TIMEOUT_MS），超了就 TOOL_TIMEOUT —— 端侧超时是「降级」，
+           Agent 超时是「整次搜索白做」。所以预算必须写死在源码里并被钉住，
+           而不是靠人记得。 */
+        const msBudget = msServer.match(/const BOUNDED_MODSEARCH_OPTS = \{[^}]*?timeoutMs: (\d+)[^}]*?deadlineMs: (\d+)[^}]*?graceMs: (\d+)[^}]*?freeDeadlineMs: (\d+)/);
+        check('★ Agent 检索预算：增强检索硬超时 + 基础检索兜底 ≤ 26s（留 4s 给内核 30s 砍刀）',
+          !!msBudget && Number(msBudget[1]) <= Number(msBudget[2])
+          && Number(msBudget[2]) + Number(msBudget[3]) + Number(msBudget[4]) <= 26000);
+        check('★ 三个调用点都把预算传下去（代理路由带 signal、端侧并发检索、基础检索兜底）',
+          /searchResults\(query, Object\.assign\(\{ signal: ctl\.signal \}, BOUNDED_MODSEARCH_OPTS\)\)/.test(msServer)
+          && /searchResults\(q, BOUNDED_MODSEARCH_OPTS\)/.test(msServer)
+          && /freeSearchBounded\(query, opts && opts\.freeDeadlineMs\)/.test(msServer));
+        check('★ 客户端断开即杀子进程；「被取消」不算通道故障（别一次取消把增强检索关 20s）',
+          /res\.on\('close'[\s\S]{0,200}?ctl\.abort\(\)/.test(msServer)
+          && /const onAbort = \(\) => \{ try \{ child\.kill\(\)/.test(msServer)
+          && /if \(!r\.ok && !r\.skipped && !r\.aborted\) modsearchCoolUntil/.test(msServer));
+        check('★ 引用条目带 url：内核 citationSnippets() 靠 url 并回摘要，缺了模型只看得到标题',
+          /const citations = sources\.map\(\(s\) => \(\{[\s\S]{0,320}?url: s\.url/.test(msServer));
         check('★ 起子进程前清掉 MODSEARCH_NESTED（上游递归护栏会误判）',
           /delete env\.MODSEARCH_NESTED/.test(msServer));
         check('★ 结果过相关性打分；额度按实际消耗记账（失败也记）',

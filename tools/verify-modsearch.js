@@ -16,6 +16,8 @@
  *   short-query-pass   ★ 两字中文查询（设置页试搜用的就是「辩论」）：结果相关必须放行
  *   short-query-fail   ★ 同一个「辩论」但结果无关：必须仍然拦下（防止上一项把闸门修成常亮绿灯）
  *   quota-shape        额度账本结构自洽、落在 DATA_DIR 下（ACADEMY_DATA_DIR 隔离生效）
+ *   bounded-free-timeout ★ 有预算的调用方：基础检索到点必须先看表返回（内核 30s 预算）
+ *   bounded-free-no-cap  ★ 上一项的负向对照：不套表时不该出现「超时」那条
  *
  * 用法：runtime\\node\\node.exe tools/verify-modsearch.js --suite
  * 说明：--suite 会为每个用例 spawn 一个子进程（ACADEMY_MODSEARCH_CLI 在 require 时就定死，
@@ -68,6 +70,8 @@ if (SUITE) {
     ['quota-shape', null],
     ['short-query-pass', STUB('good.js')],
     ['short-query-fail', STUB('irrelevant.js')],
+    ['bounded-free-timeout', null],
+    ['bounded-free-no-cap', null],
     ['engine-real', null],
   ];
   const results = [];
@@ -201,6 +205,31 @@ const DATA_DIR = process.env.ACADEMY_DATA_DIR;
     return out({
       ok: one.ok === false && /相关性不足|没有返回结果/.test(one.error || '') && r.provider === 'free',
       detail: 'ok=' + one.ok + ' err=' + String(one.error || '').slice(0, 40) + ' provider=' + r.provider,
+    });
+  }
+
+  /* ★ 有预算的调用方（内核 web_search 代理）：退回基础检索也必须先到点先回。
+     探针实测过「增强检索硬表 16s + 免费抓取 5s = 21s」，离内核 30s 只剩 9s 余量；
+     网络再差一点就整条超表 → TOOL_TIMEOUT，agent 连兜底结果都拿不到。 */
+  if (kase === 'bounded-free-timeout') {
+    C.saveConfig({ modsearch: { enabled: false } });
+    const t0 = Date.now();
+    const r = await MS.searchResults('新加坡 高中 辩论 教育 政策', { freeDeadlineMs: 20 });
+    const ms = Date.now() - t0;
+    const s = r.sources[0] || {};
+    return out({
+      ok: r.provider === 'free' && ms < 3000 && r.sources.length === 1 && s.lowQuality === true && /超时/.test(String(s.title)),
+      detail: '耗时=' + ms + 'ms 首条=' + String(s.title),
+    });
+  }
+
+  if (kase === 'bounded-free-no-cap') {
+    // 同一个查询、同一个网络，只是不套表：必须不是「超时」那条，否则上一项就是常亮绿灯
+    C.saveConfig({ modsearch: { enabled: false } });
+    const r = await MS.searchResults('新加坡 高中 辩论 教育 政策', { freeDeadlineMs: 0 });
+    return out({
+      ok: !/超时/.test(String((r.sources[0] || {}).title)),
+      detail: r.sources.length + ' 条 / 首条=' + String((r.sources[0] || {}).title).slice(0, 24),
     });
   }
 

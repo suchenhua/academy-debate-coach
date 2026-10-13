@@ -3995,6 +3995,32 @@ async function freeSearchResults(query) {
   return sources;
 }
 
+/* 基础检索的可预算外壳，供有超时约束的调用方（内核 web_search 代理、工具箱检证/溯源）使用。
+   fetchUrlText 只有 socket 空闲超时，网络半死时两路抓取能各自拖到 10 秒以上；而内核 web_search
+   的预算是 30 秒，整条链一超表就是 TOOL_TIMEOUT——那时 agent 拿到的不是「退化成免费抓取」，
+   而是连兜底结果都没有。到点就把手里的东西回出去，后台那路自己会结束。 */
+function freeSearchBounded(query, deadlineMs) {
+  const run = freeSearchResults(query);
+  const cap = Number(deadlineMs);
+  if (!(cap > 0)) return run;
+  return new Promise((resolve, reject) => {
+    let settled = false;
+    const t = setTimeout(() => {
+      if (settled) return;
+      settled = true;
+      const q = encodeURIComponent(String(query || '').slice(0, 200));
+      resolve([{
+        url: 'https://cn.bing.com/search?q=' + q,
+        title: '基础检索超时',
+        snippet: '本地免费检索在 ' + Math.round(cap / 1000) + ' 秒内没有返回，可能是网络受限或搜索引擎无响应。请改用「深度检索」，或基于本地知识库回答，不要据此编造事实。',
+        lowQuality: true,
+      }]);
+    }, cap);
+    run.then((sources) => { if (settled) return; settled = true; clearTimeout(t); resolve(sources); },
+      (e) => { if (settled) return; settled = true; clearTimeout(t); reject(e); });
+  });
+}
+
 /* 搜索通道 A：端侧免费（Bing/DuckDuckGo 本地抓取，0 扣费），任何网络可用 */
 /* 快速检证：从一条论据里抽出 2~3 个检索词。
    论据常是整句（"据《柳叶刀》2019年研究，中国有9500万抑郁症患者"），
@@ -4084,7 +4110,7 @@ async function gatherSearchSources(cfg, nativeQuery, seedQueries) {
     const before = sources.length;
     for (const q of seedQueries) {
       try {
-        const r3 = await searchResults(q);
+        const r3 = await searchResults(q, BOUNDED_MODSEARCH_OPTS);
         const list = (r3 && r3.sources) || [];
         for (const s of list) {
           if (!s || !s.url || seenUrl.has(s.url)) continue;
@@ -4123,6 +4149,18 @@ const MODSEARCH_HOME = path.join(DATA_DIR, 'modsearch-home');    // CLI 的配�
 const MODSEARCH_LEDGER = path.join(DATA_DIR, 'modsearch-usage.json');
 const MODSEARCH_MONTHLY_CAP = 1000;                              // 上游免注册通道的月度 credits 口径（估算用）
 let modsearchLast = null;                                        // 最近一次调用结果（给设置页排障用）
+/* 失败冷却：增强检索刚失败过，就在一段时间内直接走基础检索。
+   没有它的话，agent 一次回答里的 8 次 web_search 会各自重付一遍增强检索的超时税
+   （实测：内核 tool-web 的 searchTimeoutMs 默认 30000，超了就是 TOOL_TIMEOUT，
+   连原本能拿到的免费抓取结果一起丢掉）。 */
+const MODSEARCH_COOLDOWN_MS = 20000;   // 通道本身不健康（超时/被拒/解析失败）
+const MODSEARCH_GATE_COOLDOWN_MS = 6000; // 只是被相关性打分拦下：通道没坏，别把后面本会成功的搜索一起罚掉
+let modsearchCoolUntil = 0;
+/* 有预算的调用方（内核 web_search 代理、工具箱检证/溯源）共用这一包时间。
+   总账要压在内核 web_search 的 30 秒预算之内（超表 = TOOL_TIMEOUT，整次搜索白做）：
+   增强检索硬表 14+2=16s，退回基础检索再给 8s，最坏 24s，留 6s 余量。
+   设置页「试搜」不受它管——那是用户在明确地测这条路，要等就让它等到底。 */
+const BOUNDED_MODSEARCH_OPTS = { timeoutMs: 12000, deadlineMs: 14000, graceMs: 2000, freeDeadlineMs: 8000 };
 
 /* 上游报错翻译成中文。免注册通道按 IP 判定，很多网络（加速器 / 机房 IP / 校园出口）
    会被直接拒——那不是用户做错了什么，但界面如果甩出英文堆栈，小白只会以为程序坏了。 */
@@ -4198,10 +4236,15 @@ function modsearchSearch(query, opts) {
   const o = opts || {};
   const deadlineMs = Number(o.deadlineMs) || 35000;
   const timeoutMs = Number(o.timeoutMs) || 20000;
+  const graceMs = Number(o.graceMs) || 6000;
   return new Promise((resolve) => {
     const q = String(query || '').trim().slice(0, 200);
     if (!q) return resolve({ ok: false, error: '搜索词为空' });
     if (!modsearchReady()) return resolve({ ok: false, error: '增强检索未随包安装（app/vendor/modsearch 缺失）' });
+    if (!o.ignoreCooldown && modsearchCoolUntil > Date.now()) {
+      // 冷却期内不记账、不覆盖「最近一次失败」——那还是上一条真实失败的原因更有参考价值
+      return resolve({ ok: false, skipped: true, error: '增强检索刚失败，约 ' + Math.ceil((modsearchCoolUntil - Date.now()) / 1000) + ' 秒内先用基础检索' });
+    }
     try { fs.mkdirSync(MODSEARCH_HOME, { recursive: true }); } catch (_) {}
     const env = Object.assign({}, process.env, { USERPROFILE: MODSEARCH_HOME, HOME: MODSEARCH_HOME });
     delete env.MODSEARCH_NESTED;   // 上游的递归护栏：从 App 里起进程不该带这个标记
@@ -4218,18 +4261,26 @@ function modsearchSearch(query, opts) {
       return resolve({ ok: false, error: modsearchLast.error });
     }
     let out = '', errOut = '', settled = false;
-    const finish = (r) => {
+    const finish = (r, keepLast) => {
       if (settled) return;
       settled = true;
       clearTimeout(hardTimer);
-      modsearchLast = { at: Date.now(), ok: !!r.ok, error: r.ok ? '' : String(r.error || '').slice(0, 200), engine: r.engine || '' };
+      if (o.signal) { try { o.signal.removeEventListener('abort', onAbort); } catch (_) {} }
+      if (!r.ok && !r.skipped && !r.aborted) modsearchCoolUntil = Date.now() + (r.gateBlocked ? MODSEARCH_GATE_COOLDOWN_MS : MODSEARCH_COOLDOWN_MS);
+      if (!keepLast) modsearchLast = { at: Date.now(), ok: !!r.ok, error: r.ok ? '' : String(r.error || '').slice(0, 200), engine: r.engine || '' };
       resolve(r);
     };
+    // 调用方放弃（内核 30s 掐断）时立刻杀掉子进程：别留一堆没人要的搜索在后台跑
+    const onAbort = () => { try { child.kill(); } catch (_) {} finish({ ok: false, aborted: true, error: '搜索请求已被取消' }, true); };
     // CLI 自己有 --deadline，这里再兜一层：进程卡住（如 DNS 挂起）也要放回去走基础检索
     const hardTimer = setTimeout(() => {
       try { child.kill(); } catch (_) {}
-      finish({ ok: false, error: '增强检索超时（' + (deadlineMs + 6000) + 'ms 未返回）' });
-    }, deadlineMs + 6000);
+      finish({ ok: false, error: '增强检索超时（' + (deadlineMs + graceMs) + 'ms 未返回）' });
+    }, deadlineMs + graceMs);
+    if (o.signal) {
+      if (o.signal.aborted) return onAbort();
+      o.signal.addEventListener('abort', onAbort, { once: true });
+    }
     child.stdout.setEncoding('utf8');
     child.stderr.setEncoding('utf8');
     child.stdout.on('data', (d) => { out += d; });
@@ -4275,7 +4326,7 @@ function modsearchSearch(query, opts) {
         return finish({ ok: false, error: '增强检索没有返回结果' + (w ? '：' + modsearchFriendly(w) : '') });
       }
       const rel = scoreSourcesRelevance(q, sources);
-      if (!rel.ok) return finish({ ok: false, error: '增强检索结果相关性不足（' + (rel.reason || '未知') + '）' });
+      if (!rel.ok) return finish({ ok: false, gateBlocked: true, error: '增强检索结果相关性不足（' + (rel.reason || '未知') + '）' });
       finish({ ok: true, sources, engine, credits });
     });
   });
@@ -4285,7 +4336,7 @@ function modsearchSearch(query, opts) {
    → 增强检索 ModSearch（免 Key、有月度限额，默认开）
    → 基础检索（内置免费抓取 Bing/DuckDuckGo，可能被反爬挡住，结果会带 lowQuality 标记）。
    后两级是「失败就往下退」，不是「二选一」。 */
-async function searchResults(query) {
+async function searchResults(query, opts) {
   const cfg = loadConfig();
   const cs = cfg.customSearch || {};
   if (cs.enabled && String(cs.urlTemplate || '').trim()) {
@@ -4304,11 +4355,12 @@ async function searchResults(query) {
     };
   }
   if (modsearchOn()) {
-    const mr = await modsearchSearch(query);
+    const mr = await modsearchSearch(query, opts);
     if (mr.ok) return { provider: 'modsearch', sources: mr.sources, answer: '' };
     // 不弹错误、不中断任务：退回基础检索，让模型至少还有一次免费抓取的机会
   }
-  return { provider: 'free', sources: await freeSearchResults(query), answer: '' };
+  const free = await freeSearchBounded(query, opts && opts.freeDeadlineMs);
+  return { provider: 'free', sources: free, answer: '' };
 }
 
 /* ---------------- 搜索通道 B：服务侧（模型商原生 web_search） ----------------
@@ -4412,6 +4464,9 @@ function anthropicSearchResponse(query, result) {
   const answerText = (result.answer || '').trim();
   const citations = sources.map((s) => ({
     type: 'char_location',
+    // 内核 dsh-web-search-deepseek 的 citationSnippets() 靠 url 把摘要并回结果；
+    // 少了这个字段，模型只看得到标题和链接，白丢一整列摘要（增强检索的主要价值就在这列上）。
+    url: s.url,
     cited_text: s.snippet || s.title,
     document_index: 0,
     document_title: s.title || s.url,
@@ -4791,7 +4846,7 @@ function handleRequest(req, res) {
       try { body = JSON.parse(raw || '{}'); } catch (_) { return sendJson(res, 400, { ok: false, error: 'JSON 解析失败' }); }
       const q = String(body.query || '辩论').trim().slice(0, 100) || '辩论';
       const t0 = Date.now();
-      const r = await modsearchSearch(q, { maxResults: 5 });
+      const r = await modsearchSearch(q, { maxResults: 5, ignoreCooldown: true });
       if (!r.ok) return sendJson(res, 200, { ok: false, error: r.error, elapsedMs: Date.now() - t0, quota: modsearchUsage() });
       return sendJson(res, 200, {
         ok: true, query: q, elapsedMs: Date.now() - t0,
@@ -5191,11 +5246,19 @@ function handleRequest(req, res) {
       const userText = (body.messages || []).map((m) => m.content || '').flat().map((b) => b.text || '').join(' ');
       const match = userText.match(/query:\s*(.+)$/i);
       const query = (match ? match[1] : userText).trim().slice(0, 200) || '辩论';
-      return searchResults(query).then((result) => sendJson(res, 200, anthropicSearchResponse(query, result)))
-        .catch(() => sendJson(res, 200, anthropicSearchResponse(query, {
+      /* 内核 web_search 工具的默认预算是 30s（dsh-tool-web 的 searchTimeoutMs），超了直接
+         TOOL_TIMEOUT——那时 agent 拿到的不是「退化成免费抓取」，而是「连免费抓取都没有」。
+         所以这条路上两级都有表：见 BOUNDED_MODSEARCH_OPTS，最坏 16s + 8s = 24s。 */
+      const ctl = new AbortController();
+      res.on('close', () => { if (!res.writableEnded) { try { ctl.abort(); } catch (_) {} } });
+      // 内核可能已经掐断了这条请求（超时/用户中断），这时回写会撞上已销毁的 socket
+      const alive = () => !res.writableEnded && res.socket !== null;
+      return searchResults(query, Object.assign({ signal: ctl.signal }, BOUNDED_MODSEARCH_OPTS))
+        .then((result) => { if (alive()) sendJson(res, 200, anthropicSearchResponse(query, result)); })
+        .catch(() => { if (alive()) sendJson(res, 200, anthropicSearchResponse(query, {
           sources: [{ url: 'https://www.bing.com/search?q=' + encodeURIComponent(query), title: '搜索服务暂不可用', snippet: '本地搜索源暂时不可用，请基于知识库回答。' }],
           answer: '',
-        })));
+        })); });
     }).catch((e) => sendJson(res, 500, { ok: false, error: e.message }));
   }
 
