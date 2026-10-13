@@ -13,6 +13,8 @@
  *   fallback-irrelevant CLI 返回合法但无关 → 相关性打分拦下，退回基础检索
  *   fallback-missing   CLI 文件不存在 → 直接走基础检索
  *   switch-off         开关关掉 → 连 CLI 进程都不该起（stub 落标记文件证明）
+ *   short-query-pass   ★ 两字中文查询（设置页试搜用的就是「辩论」）：结果相关必须放行
+ *   short-query-fail   ★ 同一个「辩论」但结果无关：必须仍然拦下（防止上一项把闸门修成常亮绿灯）
  *   quota-shape        额度账本结构自洽、落在 DATA_DIR 下（ACADEMY_DATA_DIR 隔离生效）
  *
  * 用法：runtime\\node\\node.exe tools/verify-modsearch.js --suite
@@ -64,6 +66,8 @@ if (SUITE) {
     ['switch-off', STUB('marker.js')],
     ['friendly-error', STUB('ipblock.js')],
     ['quota-shape', null],
+    ['short-query-pass', STUB('good.js')],
+    ['short-query-fail', STUB('irrelevant.js')],
     ['engine-real', null],
   ];
   const results = [];
@@ -171,6 +175,33 @@ const DATA_DIR = process.env.ACADEMY_DATA_DIR;
     const ok = !one.ok && /本机网络被免注册通道拒绝/.test(one.error || '') && !/looks suspicious/.test(one.error || '');
     const r = await MS.searchResults('新加坡 高中 辩论 教育 政策');
     return out({ ok: ok && r.provider === 'free', detail: 'error=' + String(one.error || '').slice(0, 40) + ' / provider=' + r.provider });
+  }
+
+  /* ★ 相关性闸门的短查询回归（2026-10-12）。
+     scoreSourcesRelevance 原先把「至少命中 2 个特征词」写死，而两字中文查询整条
+     只能切出 1 个 2-gram → 阈值数学上达不成 → 真相关的结果也被判「0 条相关」，
+     设置页「试搜一次」必红。这里成对锁定：短的能过、短的无关仍拦得住。 */
+  if (kase === 'short-query-pass') {
+    C.saveConfig({ modsearch: { enabled: true } });
+    const one = await MS.search('辩论');
+    const r = await MS.searchResults('辩论');
+    return out({
+      ok: one.ok === true && one.sources.length >= 1 && r.provider === 'modsearch',
+      detail: 'ok=' + one.ok + ' 条数=' + (one.sources ? one.sources.length : 0) + ' provider=' + r.provider
+        + ' err=' + String(one.error || '').slice(0, 40),
+    });
+  }
+
+  if (kase === 'short-query-fail') {
+    // 与上一项**同一个查询词**，只换 CLI 返回的内容：正负对照只差「相关不相关」，
+    // 排除「因为换了词才拦下来」这种假阳性（第一版用「红烧肉」就撞上部分重叠）。
+    C.saveConfig({ modsearch: { enabled: true } });
+    const one = await MS.search('辩论');
+    const r = await MS.searchResults('辩论');
+    return out({
+      ok: one.ok === false && /相关性不足|没有返回结果/.test(one.error || '') && r.provider === 'free',
+      detail: 'ok=' + one.ok + ' err=' + String(one.error || '').slice(0, 40) + ' provider=' + r.provider,
+    });
   }
 
   if (kase === 'quota-shape') {

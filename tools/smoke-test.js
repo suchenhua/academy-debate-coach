@@ -1204,6 +1204,40 @@ async function main() {
           /delete env\.MODSEARCH_NESTED/.test(msServer));
         check('★ 结果过相关性打分；额度按实际消耗记账（失败也记）',
           /modsearchRecord\(credits\);[\s\S]{0,600}?scoreSourcesRelevance\(q, sources\)/.test(msServer));
+
+        /* ★ 相关性打分器：把函数体从 server.js 里摘出来真跑四组输入。
+           钉字符串只会钉住写法，而这里要钉的是**行为**：2026-10-12 设置页「试搜一次」必红，
+           根因是阈值下限写死 2，两字中文查询（「辩论」只能切出 1 个 2-gram）数学上达不到，
+           真相关的结果也被判「0 条相关」；基础检索同样中招（单词查询永远报未找到相关结果）。
+           冒烟约定不联网，所以行为断言放这儿；联网那一段归 tools/verify-modsearch.js。 */
+        {
+          const fnStart = msServer.indexOf('function scoreSourcesRelevance');
+          let body = '', depth = 0, seen = false;
+          for (let k = fnStart; k < msServer.length; k++) {
+            body += msServer[k];
+            if (msServer[k] === '{') { depth++; seen = true; }
+            else if (msServer[k] === '}') { depth--; if (seen && depth === 0) break; }
+          }
+          let score = null;
+          try { score = new Function('return (' + body + ')')(); } catch (_) {}
+          const rel = (srcs, q) => (score ? score(q, srcs) : { ok: false, reason: 'EXTRACT_FAILED' });
+          const A = (t) => ({ title: t, snippet: t + '的简介', url: 'https://example.com/' + encodeURIComponent(t) });
+          const c1 = rel([A('辩论'), A('辩论赛'), A('华语辩论')], '辩论');   // 单个特征词 + 条条相关 → 必须放行（这就是本次翻车的那一支）
+          const c2 = rel([A('红烧肉做法'), A('汽车保养'), A('股市行情')], '辩论'); // 同一个词但无关 → 闸门必须还咬得住
+          const c3 = rel([A('新加坡辩论教育政策'), A('高中辩论赛制'), A('红烧肉菜谱'), A('轮胎保养'), A('股票行情')], '新加坡 高中 辩论 教育 政策'); // 多词：2/5 真相关 = 0.4 ≥ 三成
+          const c4 = rel([], '辩论');                                        // 空结果
+          /* ★ 反向钉：多词查询里每条只沾到一个词时仍应判不相关 ——
+             证明修复只是「阈值不能超过特征词总数」，而不是把闸门整体放宽到 1。 */
+          const c5 = rel([A('辩论赛流程'), A('辩论技巧'), A('辩论名人')], '新加坡 高中 辩论 教育 政策');
+          check('★ 相关性打分器：短中文查询能放行、无关照旧拦、阈值不写死（源码提取真跑）',
+            !!score && c1.ok === true && c1.score === 1 && c2.ok === false
+            && c3.ok === true && c3.score === 0.4
+            && c4.ok === false && /没有任何结果/.test(c4.reason || '')
+            && c5.ok === false && c5.score === 0,
+            'c1=' + c1.ok + '/' + c1.score + ' c2=' + c2.ok + '/' + c2.score
+            + ' c3=' + c3.ok + '/' + c3.score + ' c4=' + c4.ok + '/' + (c4.reason || '')
+            + ' c5=' + c5.ok + '/' + c5.score);
+        }
         check('★ 设置页有增强检索卡：开关 + 限额说明 + 用量行 + 试搜按钮',
           /<span class="gen-label">增强检索（免 Key）<\/span>/.test(indexSrc)
           && /id="modsearchToggle"/.test(indexSrc)

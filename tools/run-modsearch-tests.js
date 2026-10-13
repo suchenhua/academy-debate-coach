@@ -5,8 +5,9 @@
  * 真渲染必须用**隔离数据目录**起服务，跑完一定要把服务关掉（09-19 那次漏杀把用户快捷方式带偏了）。
  * 端口固定 8797，在应用/启动器区间（8787~8792）之外。
  *
- * 用法：node tools/run-modsearch-tests.js [--skip-ui]
+ * 用法：node tools/run-modsearch-tests.js [--skip-ui] [--ui-only]
  *   --skip-ui  只跑引擎级（不起 Electron，快）
+ *   --ui-only 只跑真渲染（engine-real 每次要烧 2 credits，调界面时不需要）
  * 产物：.build/verify-modsearch-ui.json
  */
 'use strict';
@@ -20,6 +21,7 @@ const PORT = Number(process.env.PATROL_PORT || 8797);
 const DATA = path.join(ROOT, '.build', 'modsearch-patrol-data');
 const OUT = path.join(ROOT, '.build', 'verify-modsearch-ui.json');
 const SKIP_UI = process.argv.slice(2).includes('--skip-ui');
+const UI_ONLY = process.argv.slice(2).includes('--ui-only');   // 只跑真渲染：engine-real 每次会烧 2 credits，迭代界面时不需要它
 
 const log = (m) => console.log('[增强检索] ' + m);
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
@@ -47,14 +49,18 @@ async function main() {
   let code = 0;
   let server = null;
   try {
-    // 1) 引擎级（自带隔离目录与子进程编排）
-    log('① 引擎级回归（含一次真实搜索，消耗免注册额度约 2 credits）');
-    const eng = spawnSync(process.execPath, [path.join(__dirname, 'verify-modsearch.js'), '--suite'], {
-      cwd: ROOT, encoding: 'utf8', timeout: 300000,
-    });
-    process.stdout.write(String(eng.stdout || ''));
-    if (String(eng.stderr || '').trim()) process.stdout.write('[stderr] ' + String(eng.stderr).slice(-500) + '\n');
-    if (eng.status !== 0) { log('✗ 引擎级回归未通过（exit=' + eng.status + '）'); code = 1; }
+    // 1) 引擎级（自带隔离目录与子进程编排）—— --ui-only 时整段跳过，别白烧免注册额度
+    if (UI_ONLY) {
+      log('① 已按 --ui-only 跳过引擎级（不烧免注册额度）');
+    } else {
+      log('① 引擎级回归（含一次真实搜索，消耗免注册额度约 2 credits）');
+      const eng = spawnSync(process.execPath, [path.join(__dirname, 'verify-modsearch.js'), '--suite'], {
+        cwd: ROOT, encoding: 'utf8', timeout: 300000,
+      });
+      process.stdout.write(String(eng.stdout || ''));
+      if (String(eng.stderr || '').trim()) process.stdout.write('[stderr] ' + String(eng.stderr).slice(-500) + '\n');
+      if (eng.status !== 0) { log('✗ 引擎级回归未通过（exit=' + eng.status + '）'); code = 1; }
+    }
 
     if (SKIP_UI) { log('已按 --skip-ui 跳过真渲染'); return; }
 
@@ -62,9 +68,24 @@ async function main() {
     fs.rmSync(DATA, { recursive: true, force: true });
     fs.mkdirSync(DATA, { recursive: true });
     fs.mkdirSync(path.dirname(OUT), { recursive: true });
-    log('② 起隔离服务（' + DATA + '，端口 ' + PORT + '）');
+    /* 真渲染这一段用**替身 CLI**，不打真上游：
+       · 「试搜一次」的成功回显是拼出来的 DOM（条数/用时/引擎/credits/样例），之前只验过失败那一支；
+       · 让它每次都真发请求，等于每次回归都烧免注册额度，还受上游 IP 限流摆布（红了分不清是坏了还是被限流）。
+       真实上游那条路归引擎级的 engine-real 用例负责。替身必须与「辩论」相关——
+       不相关的替身会让相关性打分拦下，那就成了测失败分支。 */
+    const UI_STUB = path.join(ROOT, '.build', 'modsearch-ui-stub.js');
+    fs.writeFileSync(UI_STUB,
+      "console.log(JSON.stringify({mode:'search',results:[{source:'web',engine:'ui-stub',status:'ok',warnings:[]," +
+      "attempts:[{engine:'ui-stub',ok:true,durationSeconds:0.2,credits:2}],items:[" +
+      "{title:'辩论赛的基本流程（界面替身样例）',url:'https://example.test/a',snippet:'正方反方交替发言',published_at:''}," +
+      "{title:'华语辩论的常见赛制（界面替身样例）',url:'https://example.test/b',snippet:'奥瑞冈与新加坡制',published_at:''}," +
+      "{title:'Debate formats primer (stub sample)',url:'https://example.test/c',snippet:'Parliamentary and Asian styles',published_at:''}" +
+      "]}]}));\n");
+    log('② 起隔离服务（' + DATA + '，端口 ' + PORT + '，增强检索走界面替身）');
     server = spawn(process.execPath, [path.join(ROOT, 'app', 'server.js'), '--port=' + String(PORT)], {
-      cwd: ROOT, env: Object.assign({}, process.env, { ACADEMY_DATA_DIR: DATA, ACADEMY_NO_OPEN: '1' }), stdio: 'ignore',
+      cwd: ROOT, env: Object.assign({}, process.env, {
+        ACADEMY_DATA_DIR: DATA, ACADEMY_NO_OPEN: '1', ACADEMY_MODSEARCH_CLI: UI_STUB,
+      }), stdio: 'ignore',
     });
     if (!(await waitServer(true))) { log('✗ 服务 20 秒内没起来'); code = 1; return; }
     const electronExe = path.join(ROOT, 'runtime', 'electron', 'dist', 'electron.exe');

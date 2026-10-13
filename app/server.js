@@ -3707,12 +3707,15 @@ function scoreSourcesRelevance(query, sources) {
   }
   if (!terms.length) return { ok: true, score: 1, reason: '' };
   const uniq = Array.from(new Set(terms));
+  // 「至少命中 2 个特征词」只对多特征词查询成立：两字中文查询（如「辩论」）整条查询
+  // 只能切出 1 个 2-gram，写死下限 2 会让阈值永远达不成，相关结果也被判成 0 条。
+  const need = Math.min(uniq.length, Math.max(2, Math.ceil(uniq.length / 4)));
   let hitDocs = 0;
   for (const s of list) {
     const hay = (String(s.title || '') + ' ' + String(s.snippet || '') + ' ' + String(s.url || '')).toLowerCase();
     const hit = uniq.filter((t) => hay.indexOf(t) !== -1).length;
     // 命中超过 1/4 的查询特征词才算相关
-    if (hit >= Math.max(2, Math.ceil(uniq.length / 4))) hitDocs++;
+    if (hit >= need) hitDocs++;
   }
   const ratio = hitDocs / list.length;
   // 相关文档不足三成 → 判定为抓取失败（宁缺勿滥）
