@@ -71,7 +71,8 @@ async function patrolGroup(win, name, sel, enter) {
   for (const it of list) {
     if (!it.visible) { results.push({ id: it.id, text: it.text, verdict: '不可见', why: '跳过' }); continue; }
     if (SKIP_IDS.indexOf(it.id) !== -1 || (it.ds && SKIP_DS.indexOf(it.ds) !== -1)
-      || (it.tool && SKIP_TOOLS.indexOf(it.tool) !== -1)) {
+      || (it.tool && SKIP_TOOLS.indexOf(it.tool) !== -1)
+      || (it.locale && SKIP_LOCALE.indexOf(it.locale) !== -1)) {
       results.push({ id: it.id, text: it.text, verdict: '跳过', why: '有副作用，巡检不点' });
       LOG('    ~ ' + (it.id || it.ds || it.text) + ' 跳过（有副作用）');
       continue;
@@ -125,6 +126,12 @@ const SKIP_DS = ['word', 'pdf', 'markdown']; // 导出当前会话的三个格�
   （当前巡检窗没挂 preload，所以只走到「需要桌面版环境」的兜底提示，没真弹窗；
     哪天给巡检窗补上 preload，护栏就会漏放）。 */
 const SKIP_TOOLS = ['research', 'verify', 'trace'];
+/* 跳过「English」语言按钮：中英互切走 location.reload()（整页重载是设计如此，
+   英文靠词条覆盖，页内反向还原不可靠）。重载会把 window.__patrol 连同 confirm
+   hook 一起抹掉，之后每个组都报 "Cannot read properties of undefined" ——
+   看起来像 11 个组集体断链，其实是巡检自己被重载打断。语言切换的反应与否
+   用 tools/verify-locale.js 单独验，不在这里点。 */
+const SKIP_LOCALE = ['en'];
 
 /* enter 里 openExportMenu 只在导出组用（点开下拉菜单才看得到导出项） */
 const GROUPS = [
@@ -166,6 +173,12 @@ app.whenReady().then(async () => {
 
   const injectPath = path.join(__dirname, 'patrol-inject.js');
   const injectCode = fs.readFileSync(injectPath, 'utf8');
+  /* 页面自己会重新加载（中英互切、导入备份），__patrol 是运行期注入的、不会跟着回来。
+     所以监听 did-finish-load 补注入：否则重载之后的组全部以
+     "Cannot read properties of undefined (reading 'closeAllModals')" 失败，
+     看着像界面断了，其实是巡检脚本丢了。 */
+  const reinject = () => exec(win, injectCode).then((r) => { LOG('[注入] 补注入结果: ' + r); return r; }, (e) => LOG('[注入] 补注入失败: ' + e.message));
+  win.webContents.on('did-finish-load', function () { LOG('[注入] 检测到页面重新加载'); reinject(); });
   let injectRes = '(未执行)';
   try {
     injectRes = await exec(win, injectCode);
@@ -185,8 +198,19 @@ app.whenReady().then(async () => {
       const bad = (r.results || []).filter(function (x) { return x.verdict === '无反应' || x.verdict === '抛错'; }).length;
       LOG('[组] ' + g.name + '  可见 ' + vis + '  可疑 ' + bad);
     } catch (e) {
-      all.push({ groupName: g.name, error: e.message });
-      LOG('[组] ' + g.name + '  失败: ' + e.message);
+      /* 整组 exec 抛错几乎都是「点击触发了整页重载」：等页面回来、补注入，整组重试一次 */
+      LOG('[组] ' + g.name + '  中断: ' + e.message + ' → 等页面重载完成后重试一次');
+      await sleep(3000);
+      await reinject();
+      try {
+        const r2 = await patrolGroup(win, g.name, g.sel, g.enter);
+        all.push(r2);
+        const bad2 = (r2.results || []).filter(function (x) { return x.verdict === '无反应' || x.verdict === '抛错'; }).length;
+        LOG('[组] ' + g.name + ' 重试后  可疑 ' + bad2);
+      } catch (e2) {
+        all.push({ groupName: g.name, error: e.message });
+        LOG('[组] ' + g.name + '  失败(重试后仍中断): ' + e2.message);
+      }
     }
   }
 

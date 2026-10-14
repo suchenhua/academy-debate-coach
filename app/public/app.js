@@ -154,24 +154,42 @@ const state = {
   /* 每个模式各自的"当前对话"指针：切模式时互相不干扰 */
   chatIdByMode: { free: null, prep: null, review: null, judge: null },
   attachments: [], // 待发送的附件（文件卡片）
+  closeBehavior: 'quit', // 点关闭按钮做什么：quit 退出 / tray 收进托盘（真正执行的是 Electron 主进程）
 };
 
 /* ================= 工具函数 ================= */
 function $(sel) { return document.querySelector(sel); }
+/* 图标通道的唯一判据（2026-10-14 前端体检 F5）：整段字符串必须以 icons.js 生成的
+   那种「死形状」开头——属性顺序、stroke-width、#i- 引用全部写死在正则里。
+   旧判据只看前四个字符是不是 <svg，于是正文、文件名、对话标题只要恰好以 <svg 开头
+   就会被交给 HTML 解析器。改成白名单形状后，外部字符串怎么拼都进不了标记通道。 */
+const ICON_SHAPE_RE = /^<svg class="ic(?: [A-Za-z0-9_-]+)*" width="\d+" height="\d+" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1\.75" stroke-linecap="round" stroke-linejoin="round" (?:role="img" aria-label="[^"]*"|aria-hidden="true")><use href="#i-[A-Za-z0-9]+"><\/use><\/svg>/;
+
+/* esc() 的逆运算。调用方习惯把「图标 + 已转义文字」拼在一起交给 el()，
+   现在文字走 textContent，必须先把实体还原回去，否则 &amp; 会显示成字面量。
+   &amp; 放到最后解，与 esc() 先替 & 的顺序严格对应。 */
+function unesc(s) {
+  return s.replace(/&lt;/g, '<').replace(/&gt;/g, '>')
+    .replace(/&quot;/g, '"').replace(/&#39;/g, "'")
+    .replace(/&amp;/g, '&');
+}
+
 function el(tag, cls, text) {
   const n = document.createElement(tag);
   if (cls) n.className = cls;
-  if (text !== undefined) {
-    // 文本走 textContent（默认安全）；只有本文件自己生成的图标 SVG 才认。
-    // 判据收紧到 <svg 开头，避免任何外部字符串被当 HTML 解析。
-    if (typeof text === 'string' && text.charCodeAt(0) === 60 /* '<' */ &&
-        text.slice(0, 4).toLowerCase() === '<svg') {
-      n.innerHTML = text;
-    } else {
-      n.textContent = text;
-    }
-  }
+  if (text !== undefined) richText(n, text);
   return n;
+}
+
+/* 只有「icons.js 图标 + 纯文字」这一种组合允许出现标记，其余一律 textContent。
+   从此没有任何路径把外部字符串交给 HTML 解析器。 */
+function richText(node, value) {
+  if (typeof value !== 'string') { node.textContent = value == null ? '' : String(value); return; }
+  const m = ICON_SHAPE_RE.exec(value);
+  if (!m) { node.textContent = value; return; }
+  node.insertAdjacentHTML('beforeend', m[0]);
+  const rest = value.slice(m[0].length);
+  if (rest) node.appendChild(document.createTextNode(unesc(rest)));
 }
 function esc(s) {
   return String(s ?? '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
@@ -183,6 +201,18 @@ function toast(msg, ms = 2600) {
   t.classList.remove('hidden');
   clearTimeout(t._timer);
   t._timer = setTimeout(() => t.classList.add('hidden'), ms);
+  announce(msg);
+}
+
+/* 读屏播报口（2026-10-14 体检 F6）。
+   逐 token 追加的流式正文不能直接挂 live region —— 那会把读屏刷屏，
+   所以正文区在流式期间静音，只在关键状态切换时从这里播一句话。
+   先清空再赋值：同一条文案连续播报时，不清空就不会被重新宣读。 */
+function announce(msg) {
+  const a = $('#srAnnounce');
+  if (!a || !msg) return;
+  a.textContent = '';
+  setTimeout(() => { try { a.textContent = msg; } catch (_) {} }, 60);
 }
 
 /* ---------- 应用内输入弹窗 ----------
@@ -289,6 +319,71 @@ function askInput(opts) {
     }, 30);
   });
 }
+/* ---------- 对话框可达性（2026-10-14 体检 F4）----------
+   全站弹层共用 .modal / .modal.hidden 这一套显隐约定。缺两件事：
+   1. 没有对话框语义 —— 读屏器不知道「进了对话框」，会继续在背景页面上游走；
+   2. Tab 不封顶 —— 遮罩盖着还能把焦点 Tab 到背后的「设置 / 新对话」按钮，
+      屏幕上看不见焦点落点，只能盲操作。
+   这里按显隐约定统一接管，静态弹窗与 askInput 共用一套，省得每个入口各写一遍。 */
+const DIALOG_FOCUSABLE = 'a[href],button:not([disabled]),input:not([disabled]),'
+  + 'select:not([disabled]),textarea:not([disabled]),[tabindex]:not([tabindex="-1"])';
+
+function visibleModals() {
+  return Array.prototype.filter.call(
+    document.querySelectorAll('.modal'), (m) => !m.classList.contains('hidden'));
+}
+
+function focusablesIn(root) {
+  return Array.prototype.filter.call(root.querySelectorAll(DIALOG_FOCUSABLE), (n) => {
+    if (n.closest('.hidden') && !n.classList.contains('hidden')) return false;
+    return n.offsetWidth || n.offsetHeight || n.getClientRects().length;
+  });
+}
+
+function trapDialogTab(e) {
+  if (e.key !== 'Tab') return;
+  const mods = visibleModals();
+  if (!mods.length) return;                 // 没有弹层开着：完全不管，页面快捷键照旧
+  const modal = mods[mods.length - 1];      // 多个叠放时只管最上面那个
+  const items = focusablesIn(modal);
+  if (!items.length) { e.preventDefault(); return; }
+  const first = items[0];
+  const last = items[items.length - 1];
+  const cur = document.activeElement;
+  if (!modal.contains(cur)) { e.preventDefault(); (e.shiftKey ? last : first).focus(); return; }
+  if (e.shiftKey && cur === first) { e.preventDefault(); last.focus(); }
+  else if (!e.shiftKey && cur === last) { e.preventDefault(); first.focus(); }
+}
+
+function initDialogA11y() {
+  document.addEventListener('keydown', trapDialogTab, true);
+  const mo = new MutationObserver((records) => {
+    for (const r of records) {
+      const modal = r.target;
+      const hidden = modal.classList.contains('hidden');
+      if (modal._dlgHidden === hidden) continue;
+      if (hidden) {
+        // 关闭：把焦点还给打开它的那个按钮，而不是掉回文档开头
+        modal._dlgHidden = true;
+        const prev = modal._dlgReturn;
+        modal._dlgReturn = null;
+        if (prev && document.contains(prev)) { try { prev.focus(); } catch (_) {} }
+      } else {
+        modal._dlgHidden = false;
+        modal._dlgReturn = document.activeElement;
+        // 优先第一个输入控件：askInput 自己会聚焦并全选字段，顺序上互不干扰
+        const field = modal.querySelector('input:not([type=hidden]),textarea,select');
+        const target = field || focusablesIn(modal)[0];
+        if (target) setTimeout(() => { try { target.focus(); } catch (_) {} }, 60);
+      }
+    }
+  });
+  Array.prototype.forEach.call(document.querySelectorAll('.modal'), (m) => {
+    m._dlgHidden = m.classList.contains('hidden');
+    mo.observe(m, { attributes: true, attributeFilter: ['class'] });
+  });
+}
+
 function fmtTime(ts) {
   const d = new Date(ts || Date.now());
   const p = (n) => String(n).padStart(2, '0');
@@ -906,7 +1001,7 @@ function renderMessage(idx, m) {
     details.id = 'thinkBox' + idx;
     details.open = !!m.running;
     const summary = document.createElement('summary');
-    summary.innerHTML = ic('lightbulb',13) + '思考过程' + (m.running ? '' : '（已完成）');
+    summary.innerHTML = ic('sparkle',13) + '思考过程' + (m.running ? '' : '（已完成）');
     details.appendChild(summary);
     const body = el('div', 'md think-md');
     body.id = 'thinkMd' + idx;
@@ -1208,7 +1303,7 @@ function updateRunningMessage(patch) {
         details.id = 'thinkBox' + idx;
         details.open = true;
         const summary = document.createElement('summary');
-        summary.innerHTML = ic('lightbulb',13) + '思考过程';
+        summary.innerHTML = ic('sparkle',13) + '思考过程';
         details.appendChild(summary);
         const body = el('div', 'md think-md');
         body.id = 'thinkMd' + idx;
@@ -2016,7 +2111,49 @@ function setActiveProviderCard(base) {
 }
 function currentProviderBaseUrl() {
   const val = ($('#baseUrlInput').value || '').trim() || 'https://api.deepseek.com';
+  syncEndpointHint(val);
   return val;
+}
+
+/* 服务商地址 = 「你的 Key 和全部对话内容发往哪台主机」，敏感度与 Key 同级（体检报告 F3）。
+   两道防线：地址框旁边常驻显示目标主机；主机不在已知名单里就必须先确认才允许写入。 */
+function endpointHostOf(url) {
+  let u = String(url || '').trim();
+  if (!u) return '';
+  if (!/^https?:\/\//i.test(u)) u = 'https://' + u;
+  try { return new URL(u).host.toLowerCase(); } catch (_) { return u; }
+}
+
+function knownEndpointHosts() {
+  const set = new Set();
+  const add = (u) => { const h = endpointHostOf(u); if (h) set.add(h); };
+  Object.keys(WIZARD_PROVIDERS).forEach((k) => add(WIZARD_PROVIDERS[k] && WIZARD_PROVIDERS[k].baseUrl));
+  providerCards().forEach((c) => add(c.dataset.baseurl || ''));
+  (state.profiles || []).forEach((x) => add(x.baseUrl || ''));
+  add(state.status && state.status.baseUrl);
+  return set;
+}
+
+function syncEndpointHint(url) {
+  const hint = $('#endpointHint');
+  if (!hint) return;
+  const host = endpointHostOf(url);
+  if (!host) { hint.textContent = ''; hint.className = 'endpoint-hint'; return; }
+  const known = knownEndpointHosts().has(host);
+  hint.textContent = '🔒 Key 与对话内容将发往：' + host + (known ? '' : '（陌生主机）');
+  hint.className = 'endpoint-hint' + (known ? '' : ' warn');
+}
+
+function confirmEndpointChange(url) {
+  const host = endpointHostOf(url);
+  syncEndpointHint(url);
+  if (!host) return true;
+  if (knownEndpointHosts().has(host)) return true;
+  const cur = endpointHostOf((state.status && state.status.baseUrl) || '');
+  const msg = '服务商地址指向陌生主机：' + host + '\n'
+    + (cur ? '当前发往：' + cur + '\n' : '')
+    + '\n保存后，你的 API Key 和全部对话内容都会发送到这台主机。\n确认继续吗？';
+  return window.confirm(msg);
 }
 function bindProviderCards() {
   providerCards().forEach((card) => {
@@ -2026,11 +2163,13 @@ function bindProviderCards() {
         const cur = ($('#baseUrlInput').value || '').trim() || 'https://api.deepseek.com';
         $('#baseUrlInput').value = cur;
         setActiveProviderCard(cur);
+        syncEndpointHint(cur);
         setTimeout(() => { const i = $('#baseUrlInput'); if (i) { i.focus(); i.select(); } }, 50);
       } else {
         const bu = card.dataset.baseurl;
         $('#baseUrlInput').value = bu;
         setActiveProviderCard(bu);
+        syncEndpointHint(bu);
       }
     };
   });
@@ -2048,7 +2187,8 @@ async function setSearchMode(mode) {
     const r = await fetchJSON('/api/config', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ searchProvider: mode, model: currentModelValue(), baseUrl: currentBaseUrlValue() }),
+      // 只提交搜索方式：地址/模型可能正在编辑中，带上会绕过 F3 的变更确认
+      body: JSON.stringify({ searchProvider: mode }),
     });
     if (!r.ok) throw new Error(r.error || '保存失败');
     syncSearchModeChoices({ searchMode: r.searchMode });
@@ -2113,6 +2253,7 @@ function loadProfileIntoEditor(p) {
   const base = p.baseUrl || 'https://api.deepseek.com';
   $('#baseUrlInput').value = base;
   setActiveProviderCard(base);
+  syncEndpointHint(base);
   const out = $('#settingsResult');
   if (out) { out.textContent = ''; out.className = 'settings-result'; }
 }
@@ -2126,6 +2267,7 @@ function clearProfileEditor() {
   const base = 'https://api.deepseek.com';
   $('#baseUrlInput').value = base;
   setActiveProviderCard(base);
+  syncEndpointHint(base);
   const sel = $('#modelSelect'); if (sel) sel.classList.add('hidden');
   const out = $('#settingsResult');
   if (out) { out.textContent = ''; out.className = 'settings-result'; }
@@ -2202,6 +2344,10 @@ async function saveCurrentProfile() {
   const model = ($('#modelInput').value || '').trim() || 'deepseek-flash';
   const baseUrl = currentProviderBaseUrl();
   const out = $('#settingsResult');
+  if (!confirmEndpointChange(baseUrl)) {
+    if (out) { out.textContent = '已取消：未确认服务商地址。'; out.className = 'settings-result err'; }
+    return;
+  }
   if (!apiKey && !state.editingProfileId) {
     if (out) { out.textContent = '请填写 API Key。'; out.className = 'settings-result err'; }
     return;
@@ -2220,9 +2366,9 @@ async function saveCurrentProfile() {
       });
     }
     if (!r.ok) throw new Error(r.error || '保存失败');
-    if (out) { out.textContent = '已保存' + (r.activated ? '并已启用' : ''); out.className = 'settings-result ok'; }
     await loadProfilesUI();
     await refreshStatus();
+    if (out) { out.textContent = '已保存' + (r.activated ? '并已启用' : '') + ' · 发往 ' + endpointHostOf(baseUrl); out.className = 'settings-result ok'; }
   } catch (e) {
     if (out) { out.textContent = '' + e.message; out.className = 'settings-result err'; }
   }
@@ -2363,39 +2509,94 @@ function currentBaseUrlValue() {
 }
 
 /* ================= 聊天请求（SSE） ================= */
-async function streamChat(mode, text, history, onEvent) {
-  const res = await fetch('/api/chat/stream', {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ mode, text, history }),
-  });
+const STREAM_CONNECT_MS = 120000;
+const STREAM_QUEUE_MS = 1800000;
+const STREAM_IDLE_MS = 90000;
+let activeStreamAbort = null;
+
+function withTimeout(promise, ms, label) {
+  let t;
+  return Promise.race([
+    promise.finally(() => clearTimeout(t)),
+    new Promise((_, reject) => { t = setTimeout(() => reject(new Error(label + '超时')), ms); }),
+  ]);
+}
+
+function stopReasonMsg(reason) {
+  if (reason === 'connect') return '无法建立连接，服务端可能未响应';
+  if (reason === 'queued') return '排队超时：前面有任务未完成';
+  if (reason === 'running') return (typeof I18N !== 'undefined' && I18N.t) ? I18N.t('ai.timeout') : '本次请求超时，请重试';
+  return '已停止';
+}
+
+async function streamChat(mode, text, history, onEvent, opts) {
+  opts = opts || {};
+  let phase = 'connect';
+  let timer = null;
+  let stopReason = null;
+  const ac = new AbortController();
+  function arm() {
+    clearTimeout(timer);
+    const ms = phase === 'connect' ? STREAM_CONNECT_MS : phase === 'queued' ? STREAM_QUEUE_MS : STREAM_IDLE_MS;
+    timer = setTimeout(() => { stopReason = phase; try { ac.abort(); } catch (_) {} }, ms);
+  }
+  function release() { clearTimeout(timer); if (activeStreamAbort && activeStreamAbort.ctrl === ac) activeStreamAbort = null; }
+  activeStreamAbort = { ctrl: ac, stop: (reason) => { stopReason = reason || 'manual'; try { ac.abort(); } catch (_) {} } };
+  arm();
+  let res;
+  try {
+    res = await fetch('/api/chat/stream', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ mode, text, history }),
+      signal: ac.signal,
+    });
+  } catch (e) {
+    release();
+    if (stopReason) throw new Error(stopReasonMsg(stopReason));
+    throw new Error((e && e.message) || '无法建立连接');
+  }
   if (!res.ok || !res.body) {
+    release();
     let msg = 'HTTP ' + res.status;
     try { const j = await res.json(); msg = j.message || j.error || msg; } catch (_) {}
     throw new Error(msg);
   }
+  phase = 'queued';
+  arm();
   const reader = res.body.getReader();
   const decoder = new TextDecoder('utf-8');
   let buffer = '';
-  while (true) {
-    const { done, value } = await reader.read();
-    if (done) break;
-    buffer += decoder.decode(value, { stream: true });
-    const parts = buffer.split('\n\n');
-    buffer = parts.pop() || '';
-    for (const part of parts) {
-      let event = 'message';
-      let dataStr = '';
-      for (const line of part.split('\n')) {
-        if (line.startsWith('event:')) event = line.slice(6).trim();
-        else if (line.startsWith('data:')) dataStr += line.slice(5).trim();
+  try {
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      buffer += decoder.decode(value, { stream: true });
+      const parts = buffer.split('\n\n');
+      buffer = parts.pop() || '';
+      for (const part of parts) {
+        let event = 'message';
+        let dataStr = '';
+        for (const line of part.split('\n')) {
+          if (line.startsWith('event:')) event = line.slice(6).trim();
+          else if (line.startsWith('data:')) dataStr += line.slice(5).trim();
+        }
+        if (!dataStr) continue;
+        let data;
+        try { data = JSON.parse(dataStr); } catch (_) { continue; }
+        if (event === 'start') phase = 'running';
+        else if (event === 'queued') phase = 'queued';
+        arm();
+        if (onEvent) onEvent(event, data);
       }
-      if (!dataStr) continue;
-      let data;
-      try { data = JSON.parse(dataStr); } catch (_) { continue; }
-      if (onEvent) onEvent(event, data);
     }
+  } catch (e) {
+    release();
+    if (stopReason) throw new Error(stopReasonMsg(stopReason));
+    throw e;
   }
+  release();
+  if (stopReason) throw new Error(stopReasonMsg(stopReason));
 }
 
 function sendMessage() {
@@ -2538,10 +2739,23 @@ function startTurn(text) {
     if (event !== 'delta' && event !== 'reasoning' && event !== 'tool') updateRunningMessage({ statusText: lastStatus });
   }).catch((err) => {
     const m = state.messages.find((x) => x.running);
-    if (m) { m.error = err.message || '请求失败'; m.running = false; }
-      persistChat();
-      finishRun();
-      renderMessages();
+    if (m) {
+      m.streamText = undefined;
+      resetSmoothStream();
+      const partial = cleanMemoryText((streamed || '').trim());
+      if (m.cancelled) {
+        m.text = partial || '（已停止）';
+      } else {
+        m.text = partial || m.text || undefined;
+        m.error = err.message || '请求失败';
+      }
+      m.running = false;
+      m.time = Date.now();
+    }
+    persistChat();
+    finishRun();
+    if (m && m.cancelled && !m.error) toast('已停止');
+    renderMessages();
   });
 }
 
@@ -2637,12 +2851,14 @@ function finishRun() {
 }
 
 function stopRun() {
-  fetchJSON('/api/cancel', { method: 'POST' })
-    .then(() => {
-      const m = state.messages.find((x) => x.running);
-      if (m) updateRunningMessage({ statusText: '正在停止…' });
-    })
-    .catch((e) => toast(e.message));
+  const m = state.messages.find((x) => x.running);
+  if (m) {
+    m.cancelled = true;
+    updateRunningMessage({ statusText: '正在停止…' });
+  }
+  // 先本地断开 SSE，再通知服务端：服务端不可达时界面也不会卡在"运行中"
+  if (activeStreamAbort) { try { activeStreamAbort.stop('manual'); } catch (_) {} }
+  withTimeout(fetchJSON('/api/cancel', { method: 'POST' }), 5000, '停止请求').catch((e) => toast(e.message));
 }
 
 /* ================= 导出 ================= */
@@ -3385,9 +3601,15 @@ function syncAgentChoices() {
   const stepsSel = document.getElementById('stepsDisplayChoices');
   const busySel = document.getElementById('busyBehaviorChoices');
   const sendSel = document.getElementById('sendHotkeyChoices');
+  const closeSel = document.getElementById('closeBehaviorChoices');
   if (stepsSel) stepsSel.value = state.stepsDisplay;
   if (busySel) busySel.value = state.busyBehavior;
   if (sendSel) sendSel.value = sendHotkeyMode();
+  if (closeSel) closeSel.value = state.closeBehavior;
+  /* 浏览器模式（独立端口启动、安卓移植）没有桌面窗口可关，这一行只在 Electron 里出现。
+     必须用 .hidden 类：.gen-row 自带 display:flex，会把 [hidden] 的 UA 样式顶掉 */
+  const closeRow = document.getElementById('closeBehaviorRow');
+  if (closeRow) closeRow.classList.toggle('hidden', !window.academyElectron);
 }
 
 async function loadAgentChoices() {
@@ -3397,6 +3619,7 @@ async function loadAgentChoices() {
     if (STEPS_MODES.includes(c.stepsDisplay)) state.stepsDisplay = c.stepsDisplay;
     if (c.busyBehavior === 'interrupt' || c.busyBehavior === 'queue') state.busyBehavior = c.busyBehavior;
     if (c.sendHotkey === 'enter' || c.sendHotkey === 'ctrlEnter') state.sendHotkey = c.sendHotkey;
+    if (c.closeBehavior === 'tray' || c.closeBehavior === 'quit') state.closeBehavior = c.closeBehavior;
     syncAgentChoices();
   } catch (_) {}
 }
@@ -3437,6 +3660,18 @@ async function setSendHotkey(mode) {
   } catch (e) { syncAgentChoices(); toast('设置失败：' + e.message); }
 }
 
+/* 关闭按钮的行为：写完 config 就交给主进程（它直接读 data/config.json），下一条关闭动作立即生效，不必重启 */
+async function setCloseBehavior(mode) {
+  if (mode !== 'quit' && mode !== 'tray') return;
+  try {
+    const r = await fetchJSON('/api/config', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ closeBehavior: mode }) });
+    if (!r || !r.ok) throw new Error((r && r.error) || '保存失败');
+    state.closeBehavior = mode;
+    syncAgentChoices();
+    toast(mode === 'tray' ? '关闭窗口时：最小化到系统托盘（右键托盘图标可退出）' : '关闭窗口时：直接退出程序');
+  } catch (e) { syncAgentChoices(); toast('设置失败：' + e.message); }
+}
+
 function bindAgentChoices() {
   const stepsSel = document.getElementById('stepsDisplayChoices');
   if (stepsSel) stepsSel.onchange = () => setStepsDisplay(stepsSel.value);
@@ -3444,6 +3679,8 @@ function bindAgentChoices() {
   if (busySel) busySel.onchange = () => setBusyBehavior(busySel.value);
   const sendSel = document.getElementById('sendHotkeyChoices');
   if (sendSel) sendSel.onchange = () => setSendHotkey(sendSel.value);
+  const closeSel = document.getElementById('closeBehaviorChoices');
+  if (closeSel) closeSel.onchange = () => setCloseBehavior(closeSel.value);
 }
 
 /* ================= 记忆治理：三个开关 + 否决清单 + 任务记录 ================= */
@@ -5248,14 +5485,16 @@ try { bindMemToggles(); } catch (_) {}
       $('#apiKeyInput').value = '';
       $('#apiKeyInput').placeholder = 'sk-...';
       const out = $('#settingsResult');
-      if (out) { out.textContent = 'Key 已清除（保存时留空即保持无 Key）。'; out.className = 'settings-result ok'; }
       await loadProfilesUI();
       await refreshStatus();
+      if (out) { out.textContent = 'Key 已清除（保存时留空即保持无 Key）。'; out.className = 'settings-result ok'; }
     } catch (e) {
       const out = $('#settingsResult');
       if (out) { out.textContent = '' + e.message; out.className = 'settings-result err'; }
     }
   };
+  const baseInput = $('#baseUrlInput');
+  if (baseInput) baseInput.addEventListener('input', () => syncEndpointHint(baseInput.value));
   const btnLoad = $('#btnLoadModels');
   if (btnLoad) btnLoad.onclick = loadModels;
   const modelSel = $('#modelSelect');
@@ -5265,6 +5504,11 @@ try { bindMemToggles(); } catch (_) {}
     const model = currentModelValue();
     const baseUrl = currentBaseUrlValue();
     const out = $('#settingsResult');
+    if (!confirmEndpointChange(baseUrl)) {
+      out.textContent = '已取消：未确认服务商地址。';
+      out.className = 'settings-result err';
+      return;
+    }
     out.textContent = '正在连接 ' + baseUrl + ' …';
     out.className = 'settings-result';
     try {
@@ -5414,9 +5658,13 @@ async function wizardTestAndSave() {
     if (out) { out.textContent = 'API 地址要以 http:// 或 https:// 开头。'; out.className = 'settings-result err'; }
     return;
   }
+  if (!confirmEndpointChange(baseUrl)) {
+    if (out) { out.textContent = '已取消：未确认服务商地址。'; out.className = 'settings-result err'; }
+    return;
+  }
   try {
     if (btn) { btn.disabled = true; btn.textContent = '正在验证…'; }
-    if (out) { out.textContent = '正在连接 DeepSeek 验证 Key…'; out.className = 'settings-result'; }
+    if (out) { out.textContent = '正在连接 ' + endpointHostOf(baseUrl) + ' 验证 Key…'; out.className = 'settings-result'; }
     // 1) 验证
     const r = await fetchJSON('/api/test-key', {
       method: 'POST', headers: { 'Content-Type': 'application/json' },
@@ -5429,9 +5677,9 @@ async function wizardTestAndSave() {
       body: JSON.stringify({ name: profileName, baseUrl, model, apiKey: key }),
     });
     if (!save.ok) throw new Error(save.error || '保存失败');
-    if (out) { out.textContent = '验证通过，已保存！'; out.className = 'settings-result ok'; }
     await refreshStatus();
     await loadProfilesUI();
+    if (out) { out.textContent = '验证通过，已保存！'; out.className = 'settings-result ok'; }
     setTimeout(() => showWizardStep(4), 500);
   } catch (e) {
     if (out) { out.textContent = '' + e.message; out.className = 'settings-result err'; }
@@ -5449,6 +5697,7 @@ function init() {
     console.error('[Academy] 绑定控件失败（请刷新页面或 Ctrl+F5 强制刷新）:', e);
   }
   try { initScrollFollow(); } catch (e) { console.error('[Academy] 滚动跟随初始化失败:', e); }
+  try { initDialogA11y(); } catch (e) { console.error('[Academy] 对话框可达性初始化失败:', e); }
   // 应用外观 + 界面语言
   try { applyTheme(); } catch (_) {}
   try { applyChatFs(); } catch (_) {}

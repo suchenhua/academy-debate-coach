@@ -458,6 +458,9 @@ function defaultConfig() {
     stepsDisplay: 'standard', busyBehavior: 'queue', reasoningEffort: 'high',
     // 微信式发送热键：ctrlEnter = Ctrl+Enter 发送、Enter 换行；enter = Enter 发送、Ctrl/Shift+Enter 换行
     sendHotkey: 'ctrlEnter',
+    // 点标题栏关闭按钮做什么（quit = 退出整个应用，tray = 收进系统托盘）：
+    // 只有 Electron 主进程用得到，它直接读这份 config.json，改完不必重启就生效。
+    closeBehavior: 'quit',
     // 界面语言（zh-CN|zh-TW|en）：主窗 setLocale 同步写入；
     // 阅读器/工具窗等独立进程没有 localStorage，从这里取「语言上下文」（文件关联启动也能拿到）。
     locale: 'zh-CN',
@@ -508,7 +511,23 @@ function loadConfig() {
 
 /* 搜索 Key 只用设置里明确填写的；绝不自动读取本机 DSH 凭证，避免误扣用户 DeepSeek 余额 */
 
-function saveConfig(patch) {
+/* 服务商地址（baseUrl）决定了「API Key 和全部对话内容发往哪里」，
+   性质上比模型名敏感得多。每次变更留一行审计记录：只记地址与来源，
+   绝不记 Key、绝不记对话内容（体检报告 F3）。 */
+const ENDPOINT_AUDIT_FILE = path.join(DATA_DIR, 'endpoint-audit.log');
+
+function logEndpointChange(prev, next, source) {
+  const from = normalizeBaseUrl(prev);
+  const to = normalizeBaseUrl(next);
+  if (from === to) return;
+  let host = to;
+  try { host = new URL(to).host; } catch (_) {}
+  const line = new Date().toISOString() + '\tfrom=' + from + '\tto=' + to + '\thost=' + host + '\tsource=' + (source || 'config') + '\n';
+  fs.appendFile(ENDPOINT_AUDIT_FILE, line, () => {});
+}
+
+function saveConfig(patch, source) {
+  const prevBaseUrl = loadConfig().baseUrl;
   const next = Object.assign(loadConfig(), patch);
   if (patch.baseUrl !== undefined) next.baseUrl = normalizeBaseUrl(patch.baseUrl);
   next.model = String(next.model || DEFAULT_MODEL).trim();
@@ -520,6 +539,7 @@ function saveConfig(patch) {
   if (patch.stepsDisplay !== undefined) next.stepsDisplay = ['simple', 'standard', 'detailed', 'full'].includes(patch.stepsDisplay) ? patch.stepsDisplay : 'standard';
   if (patch.busyBehavior !== undefined) next.busyBehavior = patch.busyBehavior === 'interrupt' ? 'interrupt' : 'queue';
   if (patch.sendHotkey !== undefined) next.sendHotkey = patch.sendHotkey === 'enter' ? 'enter' : 'ctrlEnter';
+  if (patch.closeBehavior !== undefined) next.closeBehavior = patch.closeBehavior === 'tray' ? 'tray' : 'quit';
   if (patch.reasoningEffort !== undefined) next.reasoningEffort = ['off', 'low', 'high', 'max'].includes(patch.reasoningEffort) ? patch.reasoningEffort : 'high';
   if (patch.locale !== undefined) next.locale = ['zh-CN', 'zh-TW', 'en'].includes(patch.locale) ? patch.locale : 'zh-CN';
   if (patch.modsearch !== undefined) {
@@ -528,6 +548,7 @@ function saveConfig(patch) {
     next.modsearch = m;
   }
   writeJsonAtomic(CONFIG_FILE, next);
+  if (patch.baseUrl !== undefined) logEndpointChange(prevBaseUrl, next.baseUrl, source);
   writeDshSettings(next.model, next.baseUrl, effectiveSearchKey(next), resolveSearchProvider(next), next.reasoningEffort);
   return next;
 }
@@ -698,7 +719,7 @@ function profilePublic(p) {
 }
 
 /* 把选定的 profile 写进 config.json（当前生效）+ settings.yaml（DSH 内核用） */
-function activateProfile(profile) {
+function activateProfile(profile, source) {
   if (!profile) return null;
   const cfg = saveConfig({
     apiKey: profile.apiKey || '',
@@ -706,7 +727,7 @@ function activateProfile(profile) {
     baseUrl: profile.baseUrl || DEFAULT_BASE_URL,
     searchApiKey: loadConfig().searchApiKey,
     searchProvider: loadConfig().searchProvider,
-  });
+  }, source || 'profile:activate');
   return { cfg, profile: profilePublic(profile) };
 }
 
@@ -4658,6 +4679,23 @@ function fetchModels({ apiKey, baseUrl } = {}) {
   });
 }
 
+/* CSP：应用完全本地，页面里的内联 <script>/onclick 是构建方式的一部分，
+   所以 script-src 仍需 'unsafe-inline'（先保证 XSS 没有注入面，见 app.js 的 el() 图标白名单）；
+   这里收紧的是"外联"这一侧——不发 frame、不加载第三方资源、请求只能回本机。 */
+const CSP_HEADER = [
+  "default-src 'self'",
+  "script-src 'self' 'unsafe-inline' https://cdn.sheetjs.com",
+  "style-src 'self' 'unsafe-inline'",
+  "img-src 'self' data: blob:",
+  "font-src 'self' data:",
+  "connect-src 'self'",
+  "worker-src 'self' blob:",
+  "object-src 'none'",
+  "base-uri 'none'",
+  "frame-ancestors 'none'",
+  "form-action 'none'",
+].join('; ') + ';';
+
 /* ---------------- 静态文件 ---------------- */
 const MIME = {
   '.html': 'text/html; charset=utf-8',
@@ -4695,11 +4733,13 @@ function serveStatic(req, res, urlPath) {
     if (err) return sendJson(res, 404, { ok: false, error: 'not found' });
     const ext = path.extname(filePath).toLowerCase();
     const body = injectVersion(data, filePath);
-    res.writeHead(200, {
+    const headers = {
       'Content-Type': MIME[ext] || 'application/octet-stream',
       'Cache-Control': 'no-store',
       'Content-Length': body.length,
-    });
+    };
+    if (ext === '.html' || ext === '.js' || ext === '.css') headers['Content-Security-Policy'] = CSP_HEADER;
+    res.writeHead(200, headers);
     res.end(body);
   });
 }
@@ -5454,9 +5494,9 @@ function handleRequest(req, res) {
           saveProfiles({ activeId: b.profiles.activeId || null, profiles: b.profiles.profiles });
           result.profiles = b.profiles.profiles.length;
           const active = b.profiles.profiles.find((x) => x.id === b.profiles.activeId) || b.profiles.profiles[0];
-          if (active) activateProfile(active);
+          if (active) activateProfile(active, 'backup:restore');
         } else if (b.config && typeof b.config === 'object') {
-          saveConfig(b.config);
+          saveConfig(b.config, 'backup:restore');
         }
       } catch (_) {}
       return sendJson(res, 200, { ok: true, result, backupDir: path.basename(backupDir) });
@@ -5629,7 +5669,7 @@ function handleRequest(req, res) {
       const next = { activeId: activeId || id, profiles };
       saveProfiles(next);
       // 新建即激活：让用户马上能用
-      const act = activateProfile(newProfile);
+      const act = activateProfile(newProfile, 'profile:create');
       return sendJson(res, 200, { ok: true, id, profile: profilePublic(newProfile), activeId: id, activated: true, cfg: act ? act.cfg : undefined });
     }).catch((e) => sendJson(res, 500, { ok: false, error: e.message }));
   }
@@ -5643,6 +5683,7 @@ function handleRequest(req, res) {
       const idx = profiles.findIndex((x) => x.id === pid);
       if (idx < 0) return sendJson(res, 404, { ok: false, error: '配置不存在' });
       const cur = profiles[idx];
+      const prevBaseUrlForAudit = cur.baseUrl;
       // 逐字段更新：只改传了的字段，没传的保持原值（改模型时不该把 Key 清掉）
       if (body.name !== undefined && String(body.name).trim()) cur.name = String(body.name).trim();
       if (body.model !== undefined && String(body.model).trim()) cur.model = String(body.model).trim();
@@ -5653,8 +5694,10 @@ function handleRequest(req, res) {
       else if (body.apiKey !== undefined && String(body.apiKey).trim()) { cur.apiKey = String(body.apiKey).trim(); }
       profiles[idx] = cur;
       saveProfiles({ activeId, profiles });
+      // 未生效的配置也要留痕：改服务商地址本身就是敏感操作
+      if (body.baseUrl !== undefined) logEndpointChange(prevBaseUrlForAudit, cur.baseUrl, 'profile-edit:' + (cur.name || pid));
       // 若更新的是当前生效配置，同步到 config.json
-      if (activeId === pid) activateProfile(cur);
+      if (activeId === pid) activateProfile(cur, 'profile-edit-active:' + (cur.name || pid));
       return sendJson(res, 200, { ok: true, profile: profilePublic(cur) });
     }).catch((e) => sendJson(res, 500, { ok: false, error: e.message }));
   }
@@ -5670,9 +5713,9 @@ function handleRequest(req, res) {
     saveProfiles({ activeId: nextActive, profiles });
     if (nextActive) {
       const nxt = profiles.find((x) => x.id === nextActive);
-      if (nxt) activateProfile(nxt);
+      if (nxt) activateProfile(nxt, 'profile:delete-next');
     } else {
-      saveConfig({ apiKey: '', model: DEFAULT_MODEL, baseUrl: DEFAULT_BASE_URL });
+      saveConfig({ apiKey: '', model: DEFAULT_MODEL, baseUrl: DEFAULT_BASE_URL }, 'profile:delete-reset');
     }
     return sendJson(res, 200, { ok: true, activeId: nextActive });
   }
@@ -5686,7 +5729,7 @@ function handleRequest(req, res) {
       const hit = profiles.find((x) => x.id === id);
       if (!hit) return sendJson(res, 404, { ok: false, error: '配置不存在' });
       saveProfiles({ activeId: id, profiles });
-      const act = activateProfile(hit);
+      const act = activateProfile(hit, 'profile:activate');
       return sendJson(res, 200, { ok: true, activeId: id, profile: profilePublic(hit), cfg: act ? act.cfg : undefined });
     }).catch((e) => sendJson(res, 500, { ok: false, error: e.message }));
   }
@@ -5719,9 +5762,10 @@ function handleRequest(req, res) {
         stepsDisplay: body.stepsDisplay !== undefined ? body.stepsDisplay : loadConfig().stepsDisplay,
         busyBehavior: body.busyBehavior !== undefined ? body.busyBehavior : loadConfig().busyBehavior,
         sendHotkey: body.sendHotkey !== undefined ? body.sendHotkey : loadConfig().sendHotkey,
+        closeBehavior: body.closeBehavior !== undefined ? body.closeBehavior : loadConfig().closeBehavior,
         reasoningEffort: body.reasoningEffort !== undefined ? body.reasoningEffort : loadConfig().reasoningEffort,
         locale: body.locale !== undefined ? body.locale : loadConfig().locale,
-      });
+      }, 'settings');
       return sendJson(res, 200, {
         ok: true, hasKey: !!cfg.apiKey, keyMasked: maskKey(cfg.apiKey),
         model: cfg.model, baseUrl: cfg.baseUrl,

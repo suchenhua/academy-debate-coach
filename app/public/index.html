@@ -5,9 +5,9 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>逻敏 · Academy 辩论教练</title>
   <link rel="stylesheet" href="/tokens.css?v=4.0.0" />
-  <link rel="stylesheet" href="/style.css?v=3.28.16" />
+  <link rel="stylesheet" href="/style.css?v=3.28.17" />
   <link rel="stylesheet" href="/ui.css?v=4.1.0" />
-  <script src="/icons.js?v=4.0.0"></script>
+  <script src="/icons.js?v=4.0.1"></script>
   <link rel="icon" href="data:image/svg+xml,<svg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 100 100%22><text y=%22.9em%22 font-size=%2290%22>🎓</text></svg>" />
 </head>
 <body>
@@ -21,7 +21,7 @@
         </div>
       </div>
       <div class="topbar-actions">
-        <span id="statusPill" class="status-pill status-warn">检测引擎中…</span>
+        <span id="statusPill" class="status-pill status-warn" role="status">检测引擎中…</span>
         <button id="btnTools" class="btn ghost" title="打开工具箱"><svg class="ic" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><use href="#i-toolbox"></use></svg>工具箱</button>
         <button id="btnNew" class="btn ghost" title="新建对话"><svg class="ic" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><use href="#i-plus"></use></svg>新对话</button>
         <button id="btnSettings" class="btn primary" title="设置"><svg class="ic" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><use href="#i-settings"></use></svg>设置</button>
@@ -73,7 +73,8 @@
           </div>
         </div>
 
-        <div id="messages" class="messages"></div>
+        <!-- 流式逐 token 追加由 app.js 在 running 期间静音，只在轮次结束时播报 -->
+        <div id="messages" class="messages" role="log" aria-live="polite" aria-relevant="additions" aria-label="对话内容"></div>
 
         <div class="composer-wrap">
           <div class="to-bottom-layer">
@@ -135,10 +136,10 @@
   </div>
 
   <!-- 设置弹窗（二级导航：左侧分组标签 + 右侧面板） -->
-  <div id="settingsModal" class="modal hidden">
+  <div id="settingsModal" class="modal hidden" role="dialog" aria-modal="true" aria-labelledby="settingsTitle">
     <div class="modal-box settings-box">
       <div class="modal-head">
-        <h2><svg class="ic" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><use href="#i-settings"></use></svg>设置</h2>
+        <h2 id="settingsTitle"><svg class="ic" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><use href="#i-settings"></use></svg>设置</h2>
         <span id="settingsBadge" class="settings-badge"></span>
         <button class="modal-close" data-close="settingsModal"><svg class="ic" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><use href="#i-close"></use></svg></button>
       </div>
@@ -200,6 +201,7 @@
                 <div class="set-step">
                   <div class="set-step-title">API 地址（OpenAI 兼容）</div>
                   <input type="text" id="baseUrlInput" placeholder="https://api.deepseek.com" autocomplete="off" />
+                  <p class="endpoint-hint" id="endpointHint" role="status"></p>
                   <small class="field-hint">一般不用改：选服务商时已自动填好。手填到域名或 /v1 即可，程序会自动补 /chat/completions。</small>
                 </div>
                 <div class="set-step">
@@ -330,6 +332,14 @@
                 <small class="field-hint">
                   微信式发送热键：<b>Ctrl + Enter 发送</b>时按 Enter 换行；<b>Enter 发送</b>时换行改用 <b>Ctrl + Enter</b> 或 <b>Shift + Enter</b>。
                 </small>
+              </div>
+              <div class="gen-row gen-row-wrap" id="closeBehaviorRow">
+                <span class="gen-label">关闭窗口时</span>
+                <select class="gen-select" id="closeBehaviorChoices">
+                  <option value="quit">直接退出程序</option>
+                  <option value="tray">最小化到系统托盘</option>
+                </select>
+                <small class="field-hint">点标题栏关闭按钮：<b>直接退出程序</b> = 连本地服务一起关掉；<b>最小化到系统托盘</b> = 只收起窗口，Agent 继续在后台跑；双击托盘图标（或再点一次桌面快捷方式）唤回窗口，右键托盘图标选「退出」才真正关掉程序。</small>
               </div>
             </div>
             <div class="general-section" style="margin-top:14px">
@@ -700,7 +710,7 @@ whenToUse: 可选：触发条件描述。
   </div>
 
   <!-- 应用内输入弹窗（替代 window.prompt —— Electron 不支持 prompt） -->
-  <div id="inputModal" class="modal hidden">
+  <div id="inputModal" class="modal hidden" role="dialog" aria-modal="true" aria-labelledby="inputModalTitle">
     <div class="modal-box small">
       <div class="modal-head">
         <h2 id="inputModalTitle">请输入</h2>
@@ -718,10 +728,10 @@ whenToUse: 可选：触发条件描述。
   </div>
 
   <!-- 工具弹窗 -->
-  <div id="toolsModal" class="modal hidden">
+  <div id="toolsModal" class="modal hidden" role="dialog" aria-modal="true" aria-labelledby="toolsTitle">
     <div class="modal-box small">
       <div class="modal-head">
-        <h2><svg class="ic" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><use href="#i-toolbox"></use></svg>工具箱</h2>
+        <h2 id="toolsTitle"><svg class="ic" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><use href="#i-toolbox"></use></svg>工具箱</h2>
         <button class="modal-close" data-close="toolsModal"><svg class="ic" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><use href="#i-close"></use></svg></button>
       </div>
       <div class="modal-body">
@@ -731,10 +741,10 @@ whenToUse: 可选：触发条件描述。
   </div>
 
   <!-- 产物空间弹窗 -->
-  <div id="deliverModal" class="modal hidden">
+  <div id="deliverModal" class="modal hidden" role="dialog" aria-modal="true" aria-labelledby="deliverTitle">
     <div class="modal-box deliver-box">
       <div class="modal-head">
-        <h2><svg class="ic" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><use href="#i-package"></use></svg>产物空间</h2>
+        <h2 id="deliverTitle"><svg class="ic" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><use href="#i-package"></use></svg>产物空间</h2>
         <button class="modal-close" data-close="deliverModal"><svg class="ic" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><use href="#i-close"></use></svg></button>
       </div>
       <div class="modal-body">
@@ -797,10 +807,10 @@ whenToUse: 可选：触发条件描述。
   </div>
 
   <!-- 长程记忆弹窗 -->
-  <div id="memoryModal" class="modal hidden">
+  <div id="memoryModal" class="modal hidden" role="dialog" aria-modal="true" aria-labelledby="memoryTitle">
     <div class="modal-box memory-box">
       <div class="modal-head">
-        <h2><svg class="ic" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><use href="#i-memory"></use></svg>记忆中心</h2>
+        <h2 id="memoryTitle"><svg class="ic" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><use href="#i-memory"></use></svg>记忆中心</h2>
         <button class="modal-close" data-close="memoryModal"><svg class="ic" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><use href="#i-close"></use></svg></button>
       </div>
       <div class="modal-body">
@@ -827,10 +837,10 @@ whenToUse: 可选：触发条件描述。
   </div>
 
   <!-- 个人资料库弹窗 -->
-  <div id="libraryModal" class="modal hidden">
+  <div id="libraryModal" class="modal hidden" role="dialog" aria-modal="true" aria-labelledby="libraryTitle">
     <div class="modal-box library-box">
       <div class="modal-head">
-        <h2><svg class="ic" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><use href="#i-library"></use></svg>个人资料库</h2>
+        <h2 id="libraryTitle"><svg class="ic" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><use href="#i-library"></use></svg>个人资料库</h2>
         <button class="modal-close" data-close="libraryModal"><svg class="ic" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><use href="#i-close"></use></svg></button>
       </div>
       <div class="modal-body">
@@ -898,7 +908,7 @@ whenToUse: 可选：触发条件描述。
   </div>
 
 <!-- 首次使用欢迎引导 -->
-  <div id="welcomeModal" class="modal hidden">
+  <div id="welcomeModal" class="modal hidden" role="dialog" aria-modal="true" aria-labelledby="wizardTitle">
     <div class="modal-box wizard-box">
       <div class="modal-head">
         <h2 id="wizardTitle">欢迎使用逻敏 · 辩论教练</h2>
@@ -1006,13 +1016,15 @@ whenToUse: 可选：触发条件描述。
     </div>
   </div>
 
-  <div id="toast" class="toast hidden"></div>
+  <div id="toast" class="toast hidden" role="status" aria-live="polite"></div>
+  <!-- 读屏播报专用（体检 F6）：正文区在流式期间静音，关键状态从这里播一句话 -->
+  <div id="srAnnounce" class="sr-only" role="status" aria-live="polite" aria-atomic="true"></div>
   <div id="dropOverlay" class="drop-overlay hidden">
     <div class="drop-overlay-box"><svg class="ic" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><use href="#i-attach"></use></svg>松开上传文件</div>
   </div>
 
   <!-- Markdown 阅读器 -->
-  <div id="mdModal" class="modal hidden">
+  <div id="mdModal" class="modal hidden" role="dialog" aria-modal="true" aria-labelledby="mdReaderTitle">
     <div class="modal-box md-reader-box">
       <div class="modal-head">
         <h2 id="mdReaderTitle"><svg class="ic" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><use href="#i-book"></use></svg>Markdown 阅读器</h2>
@@ -1036,9 +1048,9 @@ whenToUse: 可选：触发条件描述。
       </div>
     </div>
   </div>
-  <script src="/locale.js?v=1.5.1"></script>
+  <script src="/locale.js?v=1.5.2"></script>
   <!-- Codex 风格「模型 + 推理等级」控件：必须早于 app.js（app.js 的 initComposerGear 要用它） -->
   <script src="/effort-slider.js?v=1.0.0"></script>
-  <script src="/app.js?v=3.42.0"></script>
+  <script src="/app.js?v=3.43.2"></script>
 </body>
 </html>

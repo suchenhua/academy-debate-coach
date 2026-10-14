@@ -1230,5 +1230,14 @@ body.sidebar-collapsed .sidebar-toggle { left: 54px; transform: translateY(-50%)
 .runs-state { color: #555; }
 .runs-meta { color: #777; }
 
+/* ---- 无障碍与服务商地址提示（2026-10-14 前端体检 F3/F6） ---- */
+/* 只给读屏器用：不能 display:none（那会从无障碍树里一起消失），也不能影响布局 */
+.sr-only {
+  position: absolute; width: 1px; height: 1px; margin: -1px; padding: 0;
+  overflow: hidden; clip: rect(0 0 0 0); clip-path: inset(50%); white-space: nowrap; border: 0;
+}
+.endpoint-hint { min-height: 1em; margin: 4px 0 0; font-size: 12px; color: var(--muted, #7a8499); }
+.endpoint-hint.warn { color: #b3261e; font-weight: 600; }
+
 /* DSH 移植：完全展开档位的参数行 */
 .tool-detail.tool-args { opacity: .68; }

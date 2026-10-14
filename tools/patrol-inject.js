@@ -89,6 +89,8 @@
         ds: el.dataset ? (el.dataset.export || el.dataset.go || '') : '',
         /* 独立工具窗启动按钮的稳定标识（文案会随简繁切换变字，不能靠文案判定） */
         tool: (el.dataset && el.dataset.tool) || '',
+        /* 界面语言按钮：中英互切会整页 reload，注入层会被抹掉 */
+        locale: (el.dataset && el.dataset.localeVal) || '',
         /* 文案：跳过 SVG —— svg 的 textContent 返回的是它内部的标记串，
            直接取会把 '&lt;svg class="ic" width="13"...&gt;' 当成按钮文案，
            既看不懂、又会让「同文案不同元素」的判断失真。

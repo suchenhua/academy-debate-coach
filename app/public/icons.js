@@ -107,8 +107,9 @@
       if (window.console) console.warn('[icons] 未知图标:', name);
       return '';
     }
-    var size = opt.size || 18;
-    var cls = 'ic' + (opt.cls ? ' ' + opt.cls : '');
+
+    var size = Math.min(64, Math.max(8, parseInt(opt.size, 10) || 18));
+    var cls = 'ic' + (opt.cls ? ' ' + String(opt.cls).replace(/[^A-Za-z0-9_-]/g, '') : '');
     var title = opt.title ? ' role="img" aria-label="' + String(opt.title).replace(/"/g, '&quot;') + '"' : ' aria-hidden="true"';
     return '<svg class="' + cls + '" width="' + size + '" height="' + size +
       '" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75"' +

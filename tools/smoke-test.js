@@ -864,9 +864,9 @@ async function main() {
             && /^Engine ready · /.test(applyR('引擎就绪 · deepseek-chat'))
             && applyR('1,234 字') === '1,234 chars'
             && applyR('⏳ 排队第 1 位 · 对话').includes('Chat'));
-          check('Phase5.4-5.9/6.0/6.2 缓存版本号已提升（locale v1.5.1 / app v3.42.0 / style 3.28.16 / ui 4.1.0）',
-            htmlSrc.includes('/locale.js?v=1.5.1') && htmlSrc.includes('/app.js?v=3.42.0')
-            && htmlSrc.includes('/style.css?v=3.28.16') && htmlSrc.includes('/ui.css?v=4.1.0'));
+          check('Phase5.4-5.9/6.0/6.2 缓存版本号已提升（locale v1.5.2 / app v3.43.2 / style 3.28.17 / icons 4.0.1 / ui 4.1.0）',
+            htmlSrc.includes('/locale.js?v=1.5.2') && htmlSrc.includes('/app.js?v=3.43.2')
+            && htmlSrc.includes('/style.css?v=3.28.17') && htmlSrc.includes('/ui.css?v=4.1.0'));
           check('Phase5.5 英文观察器同步执行且吞掉自触发记录（切模式不闪中文）',
             locSrc.includes('enObserver.takeRecords()')
             && !/setTimeout\(\s*\(\)\s*=>\s*\{[^}]*applyEnglishUI/s.test(locSrc));
@@ -909,7 +909,7 @@ async function main() {
             && require('fs').readFileSync(path.join(ROOT, 'app', 'tool-window.js'), 'utf8').includes("--lang=")
             && ['app/research/renderer.html', 'app/verify/renderer.html', 'app/trace/renderer.html',
                 'app/md-reader/renderer.html'].every((f) => require('fs').readFileSync(path.join(ROOT, f), 'utf8').includes('applyEnglishUI'))
-            && ['app/public/tools/简易流水单-Flowing-Tool.html', 'app/public/tools/辩案工作台-Case-Workbench.html'].every((f) => require('fs').readFileSync(path.join(ROOT, f), 'utf8').includes('/locale.js?v=1.5.1')));
+            && ['app/public/tools/简易流水单-Flowing-Tool.html', 'app/public/tools/辩案工作台-Case-Workbench.html'].every((f) => require('fs').readFileSync(path.join(ROOT, f), 'utf8').includes('/locale.js?v=1.5.2')));
           // Phase 6.2：MD 阅读器语言上下文接线（config.locale 落盘 + 阅读器按 config 取语言）
           const serverSrc62 = require('fs').readFileSync(path.join(ROOT, 'app', 'server.js'), 'utf8');
           const appSrc62 = require('fs').readFileSync(path.join(ROOT, 'app', 'public', 'app.js'), 'utf8');

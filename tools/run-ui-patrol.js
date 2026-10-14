@@ -74,9 +74,15 @@ async function main() {
     }
     const r = spawnSync(electronExe, [path.join(__dirname, 'ui-patrol.js'), ROOT, OUT], {
       cwd: ROOT,
-      env: Object.assign({}, process.env, { ACADEMY_DATA_DIR: DATA, PATROL_PORT: String(PORT) }),
+      env: Object.assign({}, process.env, {
+        ACADEMY_DATA_DIR: DATA,
+        PATROL_PORT: String(PORT),
+        /* 每组每个元素约 2.5 秒，18 个组全跑完远超 7 分钟；
+           看门狗必须比 spawnSync 超时先动，否则 Electron 被硬杀、日志截断 */
+        PATROL_TIMEOUT_MS: '1500000'
+      }),
       stdio: 'ignore',
-      timeout: 480000
+      timeout: 1560000
     });
     if (r.error) { log('✗ Electron 执行失败: ' + r.error.message); process.exitCode = 1; return; }
     if (r.status !== 0) { log('✗ Electron 退出码 ' + r.status + '（看日志：' + path.join(DATA, 'patrol.log') + '）'); process.exitCode = 1; return; }
