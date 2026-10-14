@@ -14,10 +14,43 @@ if (process.platform === 'win32') {
 }
 
 const ROOT = path.join(__dirname, '..');
+const REAL_DATA = path.join(ROOT, 'data');
 let PORT = 8899;
+/* 隔离数据目录（2026-10-14 缺陷整改）
+   主服务器原先直接跑真实 data/：第 7 步与 7c 会 POST /api/memory/clear，服务端
+   （server.js）把 memory.md 写成空、删掉全部每日流水，还往资料库塞测试件。
+   旧写法靠「测前备份进内存、测后写回」兜底——进程被 kill 或崩溃夹在两次写入之间，
+   用户记忆就真丢了。现在把真实 data 复制成 .build/smoke-data 当种子，读写全落在
+   副本上；真实用户数据零接触。--data=<dir> 换副本位置，--reuse-data 跳过重建。 */
+let DATA = path.join(ROOT, '.build', 'smoke-data');
 for (const a of process.argv.slice(2)) {
   const m = String(a).match(/^--port=(\d+)$/);
   if (m) PORT = Number(m[1]);
+  const dm = String(a).match(/^--data=(.+)$/);
+  if (dm) DATA = path.resolve(dm[1]);
+}
+const REUSE_DATA = process.argv.includes('--reuse-data');
+// 快照/内核投影/浏览器态等大而不影响断言的目录不复制（副本要小、要能自建）
+const SEED_SKIP_TOP = /^(_auto_backup|_backup_|_locale_probe|_smoke_|electron-user-data|modsearch-home|\.dsh|__)/;
+function prepareSmokeData() {
+  const fsMod = require('fs');
+  if (REUSE_DATA && fsMod.existsSync(DATA)) return 'reused';
+  try { fsMod.rmSync(DATA, { recursive: true, force: true }); } catch (_) {}
+  fsMod.mkdirSync(DATA, { recursive: true });
+  if (!fsMod.existsSync(REAL_DATA)) return 'seeded-empty';
+  let copied = 0;
+  fsMod.cpSync(REAL_DATA, DATA, {
+    recursive: true,
+    filter: (src) => {
+      const rel = path.relative(REAL_DATA, src);
+      if (!rel) return true;
+      const top = rel.split(path.sep)[0];
+      if (SEED_SKIP_TOP.test(top)) return false;
+      if (src !== REAL_DATA && !rel.includes(path.sep)) copied++;
+      return true;
+    },
+  });
+  return 'seeded:' + copied + ' top-level entries';
 }
 
 const results = [];
@@ -28,8 +61,10 @@ function check(name, ok, detail) {
 
 async function main() {
   const serverJs = path.join(ROOT, 'app', 'server.js');
+  const seedMode = prepareSmokeData();
+  console.log('冒烟数据目录（隔离副本）: ' + DATA + '\n  种子: ' + seedMode + '\n');
   let child = spawn(process.execPath, [serverJs, '--port=' + PORT], {
-    env: Object.assign({}, process.env, { ACADEMY_NO_OPEN: '1' }),
+    env: Object.assign({}, process.env, { ACADEMY_DATA_DIR: DATA, ACADEMY_NO_OPEN: '1' }),
     stdio: ['ignore', 'pipe', 'pipe'],
     windowsHide: true,
   });
@@ -109,7 +144,7 @@ async function main() {
     /* 2.6 启动自动备份：data/_auto_backup/ 里应有含 memory.md 的快照 */
     {
       const fsMod = require('fs');
-      const abDir = path.join(ROOT, 'data', '_auto_backup');
+      const abDir = path.join(DATA, '_auto_backup');
       const dirs = (() => { try { return fsMod.readdirSync(abDir).filter((n) => /^\d{4}-\d{2}-\d{2}/.test(n)); } catch (_) { return []; } })();
       const latest = dirs.length ? dirs[dirs.length - 1] : '';
       const hasMem = !!latest && fsMod.existsSync(path.join(abDir, latest, 'memory.md'));
@@ -210,7 +245,7 @@ async function main() {
     /* 4b. 用量账本（append-only）：删对话不应抹掉历史消耗 */
     {
       const fsMod = require('fs');
-      const uf = path.join(ROOT, 'data', 'usage.jsonl');
+      const uf = path.join(DATA, 'usage.jsonl');
       const had = fsMod.existsSync(uf);
       const backup = had ? fsMod.readFileSync(uf, 'utf8') : '';
       const stamp = Date.now();
@@ -450,7 +485,7 @@ async function main() {
       // ⑤ 删除只删索引：对话文件必须还在
       r = await j('POST', '/api/cases/delete', { id: caseId });
       check('删除辩题', r.status === 200 && r.d.ok);
-      const chatFile = require('path').join(ROOT, 'data', 'chats', tChat.id + '.json');
+      const chatFile = require('path').join(DATA, 'chats', tChat.id + '.json');
       check('删除辩题后对话文件保留', require('fs').existsSync(chatFile));
       r = await j('GET', '/api/cases');
       check('辩题列表已移除', !(r.d.cases || []).some((x) => x.id === caseId));
@@ -526,8 +561,8 @@ async function main() {
     {
       const fsMod = require('fs');
       const pathMod = require('path');
-      const memFile = pathMod.join(ROOT, 'data', 'memory.md');
-      const memDir = pathMod.join(ROOT, 'data', 'memory');
+      const memFile = pathMod.join(DATA, 'memory.md');
+      const memDir = pathMod.join(DATA, 'memory');
       // 备份真实记忆
       const bakLong = fsMod.existsSync(memFile) ? fsMod.readFileSync(memFile, 'utf8') : null;
       const bakDir = {};
@@ -592,7 +627,7 @@ async function main() {
         // 7b4. ★ FORGET 撤回端到端（Phase 2）：经驱动器直调撤回内核，
         // 数据目录隔离到 data/_smoke_memtest（测后即删），真实 archive 零风险。
         {
-          const testDir = pathMod.join(ROOT, 'data', '_smoke_memtest');
+          const testDir = pathMod.join(DATA, '_smoke_memtest');
           try { fsMod.rmSync(testDir, { recursive: true, force: true }); } catch (_) {}
           fsMod.mkdirSync(pathMod.join(testDir, 'memory'), { recursive: true });
           fsMod.writeFileSync(pathMod.join(testDir, 'memory.md'), [
@@ -644,7 +679,7 @@ async function main() {
           const { pathToFileURL } = require('url');
           const gateUrl = pathToFileURL(pathMod.join(ROOT, 'runtime', 'academy-write-gate.mjs')).href;
           const savedRoot = process.env.ACADEMY_WRITE_ROOT, savedMode = process.env.DSH_PERMISSION_MODE;
-          process.env.ACADEMY_WRITE_ROOT = pathMod.join(ROOT, 'data', 'deliverables');
+          process.env.ACADEMY_WRITE_ROOT = pathMod.join(DATA, 'deliverables');
           delete process.env.DSH_PERMISSION_MODE;
           try {
             const handlers = [];
@@ -653,10 +688,27 @@ async function main() {
             const pre = handlers.filter(function (h) { return h[0] === 'tools/pre-execute'; })[0];
             check('A档 普通模式订阅 tools/pre-execute', !!pre);
             const call = async function (name, args) { return pre ? await pre[1]({ name: name, arguments: args }, async function () { return { kind: 'allow' }; }) : { kind: 'missing' }; };
-            const a1 = await call('write', { file_path: pathMod.join(ROOT, 'data', 'deliverables', 'x.md') });
+            const a1 = await call('write', { file_path: pathMod.join(DATA, 'deliverables', 'x.md') });
             check('A档 产物区绝对路径放行', a1.kind === 'allow');
-            const a2 = await call('edit', { file_path: 'data/deliverables/y.md' });
-            check('A档 产物区相对路径放行', a2.kind === 'allow');
+            /* 守卫用 path.resolve 按进程 cwd 解析相对路径，内核 cwd=ROOT：
+               副本数据目录下合法的相对写法是「相对 ROOT 的副本路径」，不是 data/…。 */
+            const relData = pathMod.relative(ROOT, DATA).split(pathMod.sep).join('/');
+            const a2 = await call('edit', { file_path: relData + '/deliverables/y.md' });
+            check('A档 产物区相对路径放行（隔离数据目录）', a2.kind === 'allow', 'root=' + relData);
+            /* 默认安装语义（DATA_DIR === ROOT/data）：内核写的相对路径必须是 data/deliverables/。
+               这里只把守卫的环境变量取成生产值来判路径，不落任何真实文件。
+               WRITE_ROOT 跟 ACADEMY_DATA_DIR 走而相对路径跟 cwd 走 —— 两者一旦分家，
+               这条就是误拒（已知缺陷，待拍板：门呼应按数据目录解析相对路径）。 */
+            process.env.ACADEMY_WRITE_ROOT = pathMod.join(REAL_DATA, 'deliverables');
+            const modProd = await import(gateUrl + '?p=' + Date.now());
+            const handlersProd = [];
+            modProd.apply({ on: function (ev, fn) { handlersProd.push([ev, fn]); } });
+            const preProd = handlersProd.filter(function (h) { return h[0] === 'tools/pre-execute'; })[0];
+            const callProd = async function (name, args) {
+              return preProd ? await preProd[1]({ name: name, arguments: args }, async function () { return { kind: 'allow' }; }) : { kind: 'missing' };
+            };
+            const a3 = await callProd('edit', { file_path: 'data/deliverables/y.md' });
+            check('A档 默认安装下相对产物路径放行', a3.kind === 'allow');
             const d1 = await call('write', { file_path: pathMod.join(ROOT, 'runtime', 'persona.patch.yml') });
             check('A档 越界写被拒且带说理', d1.kind === 'deny' && /写区限制/.test(String(d1.reason)));
             const d2 = await call('write', { file_path: 'AGENTS.md' });
@@ -689,7 +741,7 @@ async function main() {
           check('C档 runDsh 接线快照（仅正式对话）', srv.indexOf('function snapshotDeliverables(') !== -1 && /\^task-/.test(srv));
           check('C档 前端还原中心在位', fsMod.readFileSync(pathMod.join(ROOT, 'app', 'public', 'index.html'), 'utf8').indexOf('btnDeliverSnap') !== -1
             && fsMod.readFileSync(pathMod.join(ROOT, 'app', 'public', 'app.js'), 'utf8').indexOf('loadDeliverSnapshots') !== -1);
-          const testDir = pathMod.join(ROOT, 'data', '_smoke_shadow');
+          const testDir = pathMod.join(DATA, '_smoke_shadow');
           try { fsMod.rmSync(testDir, { recursive: true, force: true }); } catch (_) {}
           const dd = pathMod.join(testDir, 'deliverables');
           fsMod.mkdirSync(pathMod.join(dd, 'sub'), { recursive: true });
@@ -728,7 +780,7 @@ async function main() {
 {
   const pathMod = require('path');
   const fsMod = require('fs');
-  const testDir = pathMod.join(ROOT, 'data', '_smoke_phase4');
+  const testDir = pathMod.join(DATA, '_smoke_phase4');
   try { fsMod.rmSync(testDir, { recursive: true, force: true }); } catch (_) {}
   fsMod.mkdirSync(testDir, { recursive: true });
   const envT = Object.assign({}, process.env, { ACADEMY_DATA_DIR: testDir, ACADEMY_NO_OPEN: '1' });
@@ -782,7 +834,7 @@ async function main() {
 {
   const pathMod = require('path');
   const fsMod = require('fs');
-  const testDir = pathMod.join(ROOT, 'data', '_smoke_phase5');
+  const testDir = pathMod.join(DATA, '_smoke_phase5');
   try { fsMod.rmSync(testDir, { recursive: true, force: true }); } catch (_) {}
   fsMod.mkdirSync(testDir, { recursive: true });
   const envT = Object.assign({}, process.env, { ACADEMY_DATA_DIR: testDir, ACADEMY_NO_OPEN: '1' });
@@ -934,7 +986,7 @@ async function main() {
         // 7c. 清空全部记忆：长期 + 流水都应清掉（含每日文件删除）；清空前应自动留快照
         {
           const fsMod = require('fs');
-          const abDir = path.join(ROOT, 'data', '_auto_backup');
+          const abDir = path.join(DATA, '_auto_backup');
           // 注：快照目录有滚动上限（AUTO_BACKUP_KEEP=10），份数到顶后新快照会挤掉最旧的，
           // 所以不能断言「数量增长」，只能断言「最新一份 before-clear 的时间戳变新了」。
           const latestBC = () => {
@@ -977,7 +1029,7 @@ async function main() {
           require('fs').utimesSync(oldDay, old, old);
 
           child = spawn(process.execPath, [serverJs, '--port=' + PORT], {
-            env: Object.assign({}, process.env, { ACADEMY_NO_OPEN: '1' }),
+            env: Object.assign({}, process.env, { ACADEMY_DATA_DIR: DATA, ACADEMY_NO_OPEN: '1' }),
             stdio: ['ignore', 'pipe', 'pipe'],
             windowsHide: true,
           });
@@ -1597,6 +1649,26 @@ async function main() {
       const serverSrc = fsMod.readFileSync(path.join(ROOT, 'app', 'server.js'), 'utf8');
       check('★ server 支持 ACADEMY_DATA_DIR 隔离', serverSrc.indexOf('ACADEMY_DATA_DIR') !== -1);
       check('★ server 资料库读取走 dataAbs（隔离不漏）', serverSrc.indexOf('function dataAbs(') !== -1);
+      /* ★ 自审：本脚本自己的主服务器也必须跑在隔离副本上。少了它，第 7c 步
+         /api/memory/clear 就会清空真实 memory.md 与全部每日流水。字面量一律拼接
+         构造，否则这条断言会把自己源码里写的正则也数进去（第一次就栽在这）。 */
+      const selfSrc = fsMod.readFileSync(path.join(ROOT, 'tools', 'smoke-test.js'), 'utf8');
+      const selfLines = selfSrc.split('\n');
+      const GUARD = 'ACADEMY_' + 'DATA_DIR: DATA';
+      const REALREF = 'path.join(ROOT, ' + "'data'";
+      const PMREF = 'pathMod.join(ROOT, ' + "'data'";
+      let spawnSeen = 0, spawnGuarded = 0;
+      for (let i = 0; i < selfLines.length; i++) {
+        if (!/spawn\(process\.execPath, \[serverJs,/.test(selfLines[i])) continue;
+        spawnSeen++;
+        if (selfLines.slice(i, i + 3).join('\n').indexOf(GUARD) !== -1) spawnGuarded++;
+      }
+      check('★ 冒烟主服务器已隔离（每个主 server spawn 都挂隔离数据目录）',
+        spawnSeen === 2 && spawnGuarded === spawnSeen, 'spawn=' + spawnSeen + ' guarded=' + spawnGuarded);
+      /* 真实 data 只允许出现在种子定义那一行（REAL_DATA），其它一律走副本 DATA */
+      const realRefs = selfLines.filter((l) => l.indexOf(REALREF) !== -1 || l.indexOf(PMREF) !== -1);
+      check('★ 冒烟仅种子定义处引用真实 data（其余读写全走隔离副本）',
+        realRefs.length === 1 && realRefs[0].indexOf('REAL_DATA') !== -1, realRefs.join(' | ').slice(0, 120));
       /* 巡检三件套在位（runner / 注入 / 巡检本体），丢一个巡检就跑不起来 */
       check('巡检工具三件套存在',
         fsMod.existsSync(path.join(ROOT, 'tools', 'run-ui-patrol.js')) &&
