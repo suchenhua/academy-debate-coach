@@ -3,7 +3,8 @@
  * Academy 辩论教练 · Electron 桌面版主进程
  *
  * 用 Electron（自带 Chromium）把本地 Web 应用封装成
- * 独立桌面窗口：无浏览器标签栏/地址栏、关窗即退。
+ * 独立桌面窗口：无浏览器标签栏/地址栏；关窗行为可配
+ *（直接退出 / 最小化到托盘，见设置 → 通用 → 关闭窗口时）。
  *
  * 流程：
  *   1. 若本地 server 还没起来，用内置 node 隐藏启动 server.js
@@ -16,7 +17,7 @@
  * ----------------------------------------------- */
 'use strict';
 
-const { app, BrowserWindow, ipcMain, dialog, Menu, shell } = require('electron');
+const { app, BrowserWindow, ipcMain, dialog, Menu, shell, Tray } = require('electron');
 const { spawn, exec } = require('child_process');
 const http = require('http');
 const path = require('path');
@@ -28,9 +29,13 @@ const { SELF: INSTANCE_ROOT } = require('./instance-id');
 const ROOT = path.resolve(__dirname, '..');
 const NODE = path.join(ROOT, 'runtime', 'node', 'node.exe');
 const SERVER = path.join(ROOT, 'app', 'server.js');
-const DATA_DIR = path.join(ROOT, 'data');
+/* 与 server.js 同一口径：ACADEMY_DATA_DIR 把用户数据整体指到别处（测试/巡检用）。
+   主进程要是写死 ROOT/data，隔离数据目录跑测试时就会读到另一份 config.json。 */
+const DATA_DIR = process.env.ACADEMY_DATA_DIR ? path.resolve(process.env.ACADEMY_DATA_DIR) : path.join(ROOT, 'data');
 const ICON = path.join(ROOT, 'appicon.ico');
+const CONFIG_FILE = path.join(DATA_DIR, 'config.json');
 const LOG_FILE = path.join(DATA_DIR, 'electron-launch.log');
+const WINDOW_TITLE = 'Academy 辩论教练 · 逻敏';
 
 const DEFAULT_PORT = 8787;
 
@@ -183,6 +188,76 @@ let mainWindow = null;
    8787~8792 区间里可能有另一条线（Pro/Flash 双开）的服务，会连错。 */
 let serverPort = 0;
 
+/* —— 关闭窗口行为（设置 → 通用 → 关闭窗口时）——
+   quit：点关闭 = 退出整个应用（默认，沿用历史行为）；tray：窗口收进系统托盘，server 继续跑。
+   主进程直接读 data/config.json：改完立刻生效、不必重启，也不必给 server 加新接口。 */
+let tray = null;
+let trayHintShown = false;
+let allowClose = false;   // 已经落过盘、放行真正关闭
+let isQuitting = false;   // 退出意图已确立（托盘菜单/系统退出/僵尸自清），此后再来的 close 不再改判成隐藏
+
+function uiGeneral() {
+  let cfg = {};
+  try { cfg = JSON.parse(fs.readFileSync(CONFIG_FILE, 'utf8')); } catch (_) {}
+  return {
+    closeBehavior: cfg.closeBehavior === 'tray' ? 'tray' : 'quit',
+    locale: ['zh-CN', 'zh-TW', 'en'].includes(cfg.locale) ? cfg.locale : 'zh-CN',
+  };
+}
+
+const TRAY_TEXT = {
+  'zh-CN': { show: '显示主窗口', quit: '退出', hint: '已最小化到托盘', hintBody: '点托盘图标唤回窗口，右键托盘图标可退出。' },
+  'zh-TW': { show: '顯示主視窗', quit: '結束', hint: '已最小化到托盤', hintBody: '點托盤圖示喚回視窗，右鍵托盤圖示可結束。' },
+  en: { show: 'Show window', quit: 'Quit', hint: 'Minimised to the tray', hintBody: 'Click the tray icon to restore the window, right-click it to quit.' },
+};
+const trayText = (key) => (TRAY_TEXT[uiGeneral().locale] || TRAY_TEXT['zh-CN'])[key];
+
+function showMainWindow() {
+  if (!mainWindow || mainWindow.isDestroyed()) return;
+  if (mainWindow.isMinimized()) mainWindow.restore();
+  mainWindow.show();
+  mainWindow.focus();
+}
+
+/* 托盘图标是「隐藏态」的唯一出口，建不出来就必须按直接退出处理，
+   否则窗口消失了又没图标可点 —— 用户只会看到「软件打不开了」。 */
+function ensureTray() {
+  if (tray) return tray;
+  if (!fs.existsSync(ICON)) { log('没有托盘图标（' + ICON + '），本次关闭按直接退出处理'); return null; }
+  try {
+    tray = new Tray(ICON);
+    tray.setToolTip(WINDOW_TITLE);
+    tray.setContextMenu(Menu.buildFromTemplate([
+      { label: trayText('show'), click: showMainWindow },
+      { type: 'separator' },
+      { label: trayText('quit'), click: quitApplication },
+    ]));
+    tray.on('click', showMainWindow);
+    tray.on('double-click', showMainWindow);
+    log('系统托盘图标已创建');
+    return tray;
+  } catch (e) {
+    log('创建系统托盘图标失败: ' + e.message);
+    try { if (tray) tray.destroy(); } catch (_) {}
+    tray = null;
+    return null;
+  }
+}
+
+function destroyTray() {
+  if (!tray) return;
+  try { tray.destroy(); } catch (_) {}
+  tray = null;
+}
+
+/* 托盘菜单「退出」：走与点关闭按钮完全相同的通道（先落盘、再由 close 处理器放行），
+   这里只登记退出意图，不再手动 destroy —— destroy 会跳过落盘。 */
+function quitApplication() {
+  isQuitting = true;
+  if (mainWindow && !mainWindow.isDestroyed()) mainWindow.close();
+  else { destroyTray(); app.quit(); }
+}
+
 // 单实例锁：双击多次只开一个窗口，重复启动时聚焦已有窗口。
 const gotLock = app.requestSingleInstanceLock();
 if (!gotLock) {
@@ -190,8 +265,8 @@ if (!gotLock) {
 } else {
   app.on('second-instance', (_e, argv) => {
     if (mainWindow) {
-      if (mainWindow.isMinimized()) mainWindow.restore();
-      mainWindow.focus();
+      // 托盘隐藏态下再点桌面快捷方式 = 唤回窗口（show 对已可见窗口无副作用）
+      showMainWindow();
       // 若新实例带 --open 文件，清洗后再转发给前端阅读器
       const openFile = pickOpenFile(argv);
       if (openFile) {
@@ -219,7 +294,7 @@ function createWindow(url) {
     height: 840,
     minWidth: 960,
     minHeight: 640,
-    title: 'Academy 辩论教练 · 逻敏',
+    title: WINDOW_TITLE,
     autoHideMenuBar: true,
     icon: fs.existsSync(ICON) ? ICON : undefined,
     webPreferences: {
@@ -245,8 +320,8 @@ function createWindow(url) {
     try { if (/^https?:\/\//i.test(target)) shell.openExternal(target); } catch (_) {}
   });
 
-  // 关窗前先让前端把未落盘的数据同步写入（小白场景：绝不丢对话）
-  let allowClose = false;
+  /* 关窗前先让前端把未落盘的数据同步写入（小白场景：绝不丢对话）。
+     落盘之后才决定去留：最小化到托盘同样要落盘 —— 隐藏期间 Agent 还在写对话。 */
   mainWindow.on('close', async (e) => {
     if (allowClose) return;
     e.preventDefault();
@@ -255,11 +330,25 @@ function createWindow(url) {
         'typeof flushChatsSync === "function" ? (flushChatsSync(), true) : true', true
       );
     } catch (_) {}
+    if (!isQuitting && uiGeneral().closeBehavior === 'tray') {
+      if (ensureTray()) {
+        mainWindow.hide();
+        if (!trayHintShown && process.platform === 'win32') {
+          trayHintShown = true;
+          try {
+            tray.displayBalloon({ iconType: 'info', title: trayText('hint'), content: trayText('hintBody') });
+          } catch (_) {}
+        }
+        log('按设置最小化到托盘（server 与单实例锁保持运行）');
+        return;
+      }
+    }
     allowClose = true;
     try { mainWindow.close(); } catch (_) {}
   });
 
   mainWindow.on('closed', () => {
+    destroyTray();
     cleanup();
     mainWindow = null;
     app.quit();
@@ -308,6 +397,10 @@ function createWindow(url) {
 app.on('window-all-closed', () => {
   app.quit();
 });
+
+/* 从系统/任务管理器以外的一切退出路径（app.quit、托盘退出、僵尸自清）都先登记意图：
+   没有这一步，app.quit 触发的 close 会被当成「点关闭」而改成隐藏窗口，应用就永远退不掉。 */
+app.on('before-quit', () => { isQuitting = true; });
 
 /* PDF 导出：渲染进程传入 HTML，用隐藏窗口 printToPDF 后弹保存框 */
 ipcMain.handle('pdf:export', async (_event, { html, title } = {}) => {
@@ -640,6 +733,16 @@ app.whenReady().then(async () => {
     } else {
       log('文件关联打开失败: ' + chk.error);
     }
+  }
+
+  /* 仅测试用：设置 ACADEMY_TEST_CLOSE_MS 后，到点走一次与「点关闭按钮」完全相同的代码路径 ——
+     托盘只能由主窗口的 close 事件触发，渲染层碰不到，只能这样真机验证两种关闭行为。 */
+  const testClose = Number(process.env.ACADEMY_TEST_CLOSE_MS || 0);
+  if (testClose > 0) {
+    setTimeout(() => {
+      log('测试模式：模拟点击关闭按钮（closeBehavior=' + uiGeneral().closeBehavior + '）');
+      if (mainWindow && !mainWindow.isDestroyed()) mainWindow.close();
+    }, testClose);
   }
 
   // 仅测试用：设置 ACADEMY_AUTO_QUIT_MS 后，到点自动正常退出并清理自启 server。
