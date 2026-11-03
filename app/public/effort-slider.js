@@ -42,7 +42,7 @@
   var MIN_HEIGHT_SLOTS = 3;
 
   /* 颜色锚点：第二档以前是纯净的蓝，之后才渐入紫，最高档到深紫。 */
-  var COLOR_BLUE = [77, 147, 248];
+  var COLOR_BLUE = [18, 10, 143];
   var COLOR_VIOLET = [147, 51, 234];
   var COLOR_DEEP = [76, 29, 149];
   var COLOR_TEXT_VIOLET = [139, 92, 246];
@@ -94,7 +94,7 @@
   /** 位置 → 数值文字色；Off 档返回空串（= 清掉内联色，回到设计系统原色）。 */
   function valueColorFor(pct, level) {
     if (isOffLevel(level)) return '';
-    return rgbOf(mixColor(COLOR_BLUE, COLOR_TEXT_VIOLET, energyFor(pct)));
+    return 'var(--c-accent-text)';
   }
   /** 位置 → 能量强度 0..1：第二档以前为 0（干净的蓝），之后线性渐入。 */
   function energyFor(pct) { return clamp01((clamp01(pct) - ENERGY_START) / (1 - ENERGY_START)); }

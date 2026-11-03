@@ -458,9 +458,11 @@ function defaultConfig() {
     stepsDisplay: 'standard', busyBehavior: 'queue', reasoningEffort: 'high',
     // 微信式发送热键：ctrlEnter = Ctrl+Enter 发送、Enter 换行；enter = Enter 发送、Ctrl/Shift+Enter 换行
     sendHotkey: 'ctrlEnter',
-    // 点标题栏关闭按钮做什么（quit = 退出整个应用，tray = 收进系统托盘）：
+    // 点标题栏关闭按钮做什么（ask = 弹框问「最小化到托盘 / 直接关闭」，quit = 直接退出，tray = 收进托盘）：
     // 只有 Electron 主进程用得到，它直接读这份 config.json，改完不必重启就生效。
-    closeBehavior: 'quit',
+    closeBehavior: 'ask',
+    // 一次性迁移标记：关闭行为加「每次询问」这一版起出厂默认从 quit 改成 ask，老配置抬一次就不再动（见 migrateCloseAsk）
+    closeAskMigrated: true,
     // 界面语言（zh-CN|zh-TW|en）：主窗 setLocale 同步写入；
     // 阅读器/工具窗等独立进程没有 localStorage，从这里取「语言上下文」（文件关联启动也能拿到）。
     locale: 'zh-CN',
@@ -503,6 +505,23 @@ function defaultModsearch() {
   return { enabled: true };
 }
 
+/* 一次性迁移：关闭窗口时的出厂默认从「直接退出」改成「每次询问」。
+   上一版设置项只有 quit/tray 两项，老用户的 config.json 里那个 quit 多半是出厂值而不是
+   主动选择 —— 不抬的话，升级后点关闭仍然毫无提示，等于这个功能没送到。抬一次即止：
+   写回 closeAskMigrated，之后用户在弹框里勾「记住我的选择」或在设置里改过，都不会被再次覆盖。 */
+function migrateCloseAsk() {
+  const raw = readJson(CONFIG_FILE, null);
+  if (!raw || typeof raw !== 'object') return;      // 没有配置文件 = 全新安装，defaultConfig 已是 ask
+  if (raw.closeAskMigrated === true) return;
+  if (raw.closeBehavior === 'tray') {               // 自己选过托盘的人尊重原选择，只补标记
+    raw.closeAskMigrated = true;
+  } else {
+    raw.closeBehavior = 'ask';
+    raw.closeAskMigrated = true;
+  }
+  writeJsonAtomic(CONFIG_FILE, raw);
+}
+
 function loadConfig() {
   const cfg = Object.assign(defaultConfig(), readJson(CONFIG_FILE, {}));
   cfg.baseUrl = normalizeBaseUrl(cfg.baseUrl);
@@ -539,7 +558,7 @@ function saveConfig(patch, source) {
   if (patch.stepsDisplay !== undefined) next.stepsDisplay = ['simple', 'standard', 'detailed', 'full'].includes(patch.stepsDisplay) ? patch.stepsDisplay : 'standard';
   if (patch.busyBehavior !== undefined) next.busyBehavior = patch.busyBehavior === 'interrupt' ? 'interrupt' : 'queue';
   if (patch.sendHotkey !== undefined) next.sendHotkey = patch.sendHotkey === 'enter' ? 'enter' : 'ctrlEnter';
-  if (patch.closeBehavior !== undefined) next.closeBehavior = patch.closeBehavior === 'tray' ? 'tray' : 'quit';
+  if (patch.closeBehavior !== undefined) next.closeBehavior = ['ask', 'tray', 'quit'].includes(patch.closeBehavior) ? patch.closeBehavior : 'ask';
   if (patch.reasoningEffort !== undefined) next.reasoningEffort = ['off', 'low', 'high', 'max'].includes(patch.reasoningEffort) ? patch.reasoningEffort : 'high';
   if (patch.locale !== undefined) next.locale = ['zh-CN', 'zh-TW', 'en'].includes(patch.locale) ? patch.locale : 'zh-CN';
   if (patch.modsearch !== undefined) {
@@ -603,17 +622,13 @@ function writeDshSettings(model, baseUrl, searchApiKey, searchProvider, reasonin
   // 搜索服务：server=走当前模型提供方的服务侧搜索（Anthropic /messages 兼容）；
   // free=App 本地搜索代理（免费 Bing/DuckDuckGo）
   const isOfficialDeepSeek = normalizeBaseUrl(base).includes('api.deepseek.com');
-  const searchSection = (provider === 'server' && effectiveSearch) ? [
-    '# 服务侧搜索：走当前模型提供方（当前模型 baseURL + Key 直连）',
-    'web-search-deepseek:',
-    '  apiKey: ' + esc(effectiveSearch),
-    isOfficialDeepSeek
-      ? '  baseURL: ' + esc('https://api.deepseek.com/anthropic/v1')
-      : '  baseURL: ' + esc(base),
-    '  model: ' + esc(modelId),
-    '  maxUses: 8',
-  ] : [
-    '# 端侧搜索：App 本地搜索代理（免费 Bing/DuckDuckGo，0 扣费）',
+  /* 内核的 web-search-deepseek 插件只会调 Anthropic 的 web_search_20250305，而那套协议
+     DeepSeek 已下线。统一指向本地代理：代理内部再按「服务侧 / 端侧」决定走 DeepSeek
+     Search API 还是免费抓取，对内核始终是同一套线格式。 */
+  const searchSection = [
+    provider === 'server'
+      ? '# 服务侧搜索：本地代理 → DeepSeek 官方 Search API（同一把 Key，按次计费）'
+      : '# 端侧搜索：App 本地搜索代理（免费 Bing/DuckDuckGo，0 扣费）',
     'web-search-deepseek:',
     '  apiKey: local-search',
     '  baseURL: ' + esc('http://127.0.0.1:' + (actualPort || DEFAULT_PORT) + '/internal/web-search'),
@@ -667,15 +682,64 @@ function writeDshSettings(model, baseUrl, searchApiKey, searchProvider, reasonin
   fs.writeFileSync(SETTINGS_FILE, yaml, 'utf8');
 }
 
-/* ---------------- 多配置模型档案（profiles） ---------------- */
-/* 每个 profile = 一套「服务商 + Key + 模型」组合，可新增/编辑/删除，随时切换生效。
-   config.json 保持为「当前生效」的展开形式（兼容旧版本 + 启动同步 settings.yaml）。 */
+/* ---------------- 多配置模型档案（profiles = 服务商） ---------------- */
+/* 每个 profile = **一家服务商**（地址 + Key），下挂一张**模型列表** + 当前选中的那个模型。
+   为什么改成这样（2026-10-15 子涵）：「一个服务商只能选一个模型」不好用 ——
+   同一家的 flash / pro / reasoner 得建好几套配置、每套还要粘一遍 Key。
+   现在对齐 DSH 设置→模型的逻辑：一家服务商一行，行内可编辑，模型列表可增删改、随时切换。
+   向后兼容：老的 { model: 'x' } 档案在读入时自动补成 models=[{id:'x'}]。
+   config.json 仍是「当前生效」的展开形式（兼容旧版本 + 启动同步 settings.yaml）。 */
 const PROFILES_FILE = path.join(DATA_DIR, 'profiles.json');
+
+/* 模型条目规范化：id 必填且唯一（同名后者覆盖），其余字段只认白名单。
+   contextWindow/maxTokens 允许缺省 —— DSH 里模型条目也是「能拿到就带、拿不到就留空」，
+   绝不为了填满字段编造容量数字。 */
+function normalizeModelEntry(raw) {
+  if (!raw) return null;
+  const src = (typeof raw === 'string') ? { id: raw } : raw;
+  const id = String(src.id || '').trim().slice(0, 200);
+  if (!id) return null;
+  const out = { id };
+  const name = String(src.name || '').trim().slice(0, 200);
+  if (name && name !== id) out.name = name;
+  for (const k of ['contextWindow', 'maxTokens']) {
+    const n = Number(src[k]);
+    if (Number.isFinite(n) && n > 0) out[k] = Math.floor(n);
+  }
+  return out;
+}
+
+function normalizeModels(list) {
+  const out = [];
+  const seen = new Set();
+  for (const raw of (Array.isArray(list) ? list : [])) {
+    const m = normalizeModelEntry(raw);
+    if (!m || seen.has(m.id)) continue;
+    seen.add(m.id);
+    out.push(m);
+  }
+  return out;
+}
+
+/* 读档案时补齐模型列表：没有 models 的老档案用它原来那个 model 当列表，
+   列表非空但 model 不在列表里时，把 model 并进去（否则界面上会出现「选中的模型不在列表里」）。 */
+function ensureProfileModels(p) {
+  const models = normalizeModels(p.models);
+  const model = String(p.model || '').trim();
+  if (!models.length) {
+    if (model) models.push({ id: model });
+  } else if (model && !models.some((m) => m.id === model)) {
+    models.push({ id: model });
+  }
+  p.models = models;
+  p.model = model && models.some((m) => m.id === model) ? model : (models[0] ? models[0].id : '');
+  return p;
+}
 
 function loadProfiles() {
   const data = readJson(PROFILES_FILE, {});
   let profiles = Array.isArray(data.profiles) ? data.profiles : [];
-  // 旧数据迁移：config.json 里有 Key 且 profiles 为空时，把它作为一个档案
+  // 旧数据迁移：config.json 里有 Key 且 profiles 为空时，把它作为一家服务商
   if (!profiles.length) {
     const cfg = loadConfig();
     if (cfg.apiKey && cfg.apiKey.trim()) {
@@ -688,9 +752,12 @@ function loadProfiles() {
         created: Date.now(),
       });
       data.activeId = 'cfg_default';
+      profiles = profiles.map(ensureProfileModels);
       saveProfiles({ activeId: data.activeId, profiles });
+      return { activeId: data.activeId, profiles };
     }
   }
+  profiles = profiles.map(ensureProfileModels);
   return { activeId: data.activeId || (profiles.length ? profiles[0].id : null), profiles };
 }
 
@@ -706,11 +773,16 @@ function maskKeyShow(key) {
 }
 
 function profilePublic(p) {
+  const models = normalizeModels(p.models);
+  const model = String(p.model || '').trim() || (models[0] ? models[0].id : '');
   return {
     id: p.id,
     name: p.name || p.baseUrl,
     baseUrl: p.baseUrl || DEFAULT_BASE_URL,
-    model: p.model || DEFAULT_MODEL,
+    // model：当前选中的那一个（DSH 的 agent-default-model.model 语义）
+    model: model || DEFAULT_MODEL,
+    // models：这家服务商名下可选的模型清单（DSH 的 provider.models 语义）
+    models: models.length ? models : [{ id: model || DEFAULT_MODEL }],
     keyMasked: maskKeyShow(p.apiKey),
     hasKey: !!(p.apiKey && String(p.apiKey).trim()),
     provider: p.provider || '',
@@ -3912,6 +3984,20 @@ function customSearchResults(query, cs) {
    用户可以改任意字段；跑不通就点「测试」看具体报错。 */
 const SEARCH_PRESETS = [
   {
+    id: 'deepseek',
+    name: 'DeepSeek 官方搜索（与模型同一把 Key）',
+    urlTemplate: 'https://api.deepseek.com/v1/tools/search',
+    method: 'POST',
+    headers: 'Authorization: Bearer {apiKey}\nContent-Type: application/json',
+    bodyTemplate: '{"query":"{queryRaw}","count":8}',
+    resultsPath: 'results',
+    titlePath: 'title',
+    urlPath: 'url',
+    snippetPath: 'snippet',
+    signup: 'https://api-docs.deepseek.com/guides/search',
+    note: '2026-11 起 DeepSeek 把联网搜索独立成 POST /v1/tools/search，用同一把 API Key，按成功请求计费（$0.75/1000 次）。Key 直接填模型那把即可。',
+  },
+  {
     id: 'tavily',
     name: 'Tavily（AI 搜索，有免费额度）',
     urlTemplate: 'https://api.tavily.com/search',
@@ -4096,35 +4182,19 @@ async function gatherSearchSources(cfg, nativeQuery, seedQueries) {
   const sources = [];
   let via = 'free';
 
-  // ① 优先：模型商原生 web_search（DeepSeek 官方，质量高）
-  const nativeBase = searchServerBase(cfg);
-  if (nativeBase && key) {
-    try {
-      const r2 = await postJsonTimeout(nativeBase + '/messages', {
-        'x-api-key': key,
-        'authorization': 'Bearer ' + key,
-        'anthropic-version': '2023-06-01',
-        'accept': 'application/json',
-      }, {
-        model: cfg.model || DEFAULT_MODEL,
-        max_tokens: 4096,
-        messages: [{ role: 'user', content: [{ type: 'text', text: 'Perform a web search for the query: ' + String(nativeQuery || '').slice(0, 200) }] }],
-        tools: [{ type: 'web_search_20250305', name: 'web_search', max_uses: 5 }],
-      }, 60000);
-      const blocks = (r2 && Array.isArray(r2.content)) ? r2.content : [];
-      for (const b of blocks) {
-        if (!b || b.type !== 'web_search_tool_result') continue;
-        for (const item of (b.content || [])) {
-          if (!item || item.type !== 'web_search_result' || !item.url || seenUrl.has(item.url)) continue;
-          seenUrl.add(item.url);
-          sources.push({ url: item.url, title: String(item.title || '').slice(0, 120), snippet: '' });
-          if (sources.length >= 12) break;
-        }
+  // ① 优先：DeepSeek 官方 Search API（与模型同一把 Key，召回质量高）
+  try {
+    const r2 = await deepseekSearchResults(nativeQuery, { count: 10 });
+    if (r2.ok) {
+      for (const src of r2.sources) {
+        if (!src.url || seenUrl.has(src.url)) continue;
+        seenUrl.add(src.url);
+        sources.push({ url: src.url, title: String(src.title || '').slice(0, 120), snippet: String(src.snippet || '').slice(0, 300) });
         if (sources.length >= 12) break;
       }
       if (sources.length) via = 'native';
-    } catch (_) { /* 原生搜索不可用 → 静默走端侧 */ }
-  }
+    }
+  } catch (_) { /* 原生搜索不可用 → 静默走端侧 */ }
 
   // ② 回退/补充：端侧免费搜索（任何服务商通用）
   if (sources.length < 5) {
@@ -4384,13 +4454,57 @@ async function searchResults(query, opts) {
   return { provider: 'free', sources: free, answer: '' };
 }
 
-/* ---------------- 搜索通道 B：服务侧（模型商原生 web_search） ----------------
-   直连当前模型商 Anthropic 兼容接口的 web_search_20250305 server tool，
-   协议与 DSH 内核 @deepseek-ai/dsh-web-search-deepseek 插件一致。
-   目前只有 DeepSeek 官方接口提供该能力，其他服务商请用端侧。 */
-function searchServerBase(cfg) {
+/* ---------------- 搜索通道 B：服务侧（DeepSeek 官方 Search API） ----------------
+   2026-11 起 DeepSeek 把联网搜索从「Anthropic Messages 的 web_search_20250305 工具」
+   独立成了裸 JSON 接口：POST https://api.deepseek.com/v1/tools/search，
+   用同一把 API Key（Bearer）鉴权，按成功请求计费（$0.75 / 1000 次）。
+   旧协议现在直接调会失败，所以统一改走新接口；返回值映射成内部 sources。 */
+const DEEPSEEK_SEARCH_URL = process.env.ACADEMY_DEEPSEEK_SEARCH_URL || 'https://api.deepseek.com/v1/tools/search';
+
+function deepseekSearchKey(cfg) {
   const c = cfg || loadConfig();
-  return isDeepSeekBase(c) ? 'https://api.deepseek.com/anthropic/v1' : '';
+  return isDeepSeekBase(c) ? String(c.apiKey || '').trim() : '';
+}
+
+async function deepseekSearchResults(query, opts) {
+  const cfg = loadConfig();
+  const key = String((opts && opts.key) || deepseekSearchKey(cfg) || '').trim();
+  if (!key) return { ok: false, error: '服务侧搜索需要 DeepSeek API Key：请把模型服务商设为 DeepSeek 并填 Key；也可以在「设置 → 高级 → 自定义搜索服务」选 DeepSeek 预设、填同一把 Key。' };
+  const q = String(query || '').trim().slice(0, 128);
+  if (!q) return { ok: false, error: '搜索词为空' };
+  const count = Math.min(20, Math.max(1, Number((opts && opts.count) || 10)));
+  let body;
+  try {
+    body = await postJsonTimeout(DEEPSEEK_SEARCH_URL, {
+      'authorization': 'Bearer ' + key,
+      'accept': 'application/json',
+    }, { query: q, count, need_content: false }, Number((opts && opts.timeoutMs) || 25000));
+  } catch (e) {
+    return { ok: false, error: 'DeepSeek 搜索失败：' + e.message };
+  }
+  const list = Array.isArray(body && body.results) ? body.results : [];
+  const sources = [];
+  const seen = new Set();
+  for (const item of list) {
+    if (!item || typeof item !== 'object') continue;
+    const url = String(item.url || '').trim();
+    if (!url || !/^https?:\/\//i.test(url) || seen.has(url)) continue;
+    seen.add(url);
+    const src = {
+      url,
+      title: String(item.title || '').slice(0, 160) || url,
+      snippet: String(item.snippet || item.summary || '').slice(0, 320),
+      engine: 'deepseek',
+      score: Number(item.rerank_score) || 0,
+    };
+    if (item.date) src.publishedAt = String(item.date);
+    if (item.site_name) src.site = String(item.site_name).slice(0, 60);
+    src.tags = classifySearchSource(src);
+    sources.push(src);
+    if (sources.length >= 12) break;
+  }
+  if (!sources.length) return { ok: false, error: 'DeepSeek 搜索没有返回结果（可能是搜索词太窄，或该账号余额不足）' };
+  return { ok: true, provider: 'deepseek', sources };
 }
 
 function postJsonTimeout(target, headers, payload, timeoutMs) {
@@ -4424,59 +4538,9 @@ function postJsonTimeout(target, headers, payload, timeoutMs) {
 
 /* 服务侧搜资料：返回 ok:false 表示不可用/失败（前端展示原因并提示可切端侧） */
 async function serverSearchResults(query) {
-  const cfg = loadConfig();
-  const key = String(cfg.apiKey || '').trim();
-  if (!key) return { ok: false, error: '未配置 API Key，服务侧搜索不可用。请到 ⚙ 设置 填写 Key，或改用端侧（免费）搜索。' };
-  const base = searchServerBase(cfg);
-  if (!base) return { ok: false, error: '服务侧搜索目前只支持 DeepSeek 官方接口；当前服务商请用端侧（免费）搜索。' };
-  const q = String(query || '').trim().slice(0, 200);
-  if (!q) return { ok: false, error: '搜索词为空' };
-  let body;
-  try {
-    body = await postJsonTimeout(base + '/messages', {
-      'x-api-key': key,
-      'authorization': 'Bearer ' + key,
-      'anthropic-version': '2023-06-01',
-      'accept': 'application/json',
-    }, {
-      model: cfg.model || DEFAULT_MODEL,
-      max_tokens: 4096,
-      messages: [{ role: 'user', content: [{ type: 'text', text: 'Perform a web search for the query: ' + q }] }],
-      tools: [{ type: 'web_search_20250305', name: 'web_search', max_uses: 5 }],
-    });
-  } catch (e) {
-    return { ok: false, error: '服务侧搜索失败：' + e.message };
-  }
-  const blocks = (body && Array.isArray(body.content)) ? body.content : [];
-  // 摘录不在 web_search_result 里，而在 text 块的 citations[]（url → cited_text）
-  const snippets = new Map();
-  for (const b of blocks) {
-    if (!b || b.type !== 'text') continue;
-    for (const cite of b.citations || []) {
-      if (cite && cite.url && cite.cited_text && !snippets.has(cite.url)) snippets.set(cite.url, cite.cited_text);
-    }
-  }
-  const sources = [];
-  const seen = new Set();
-  for (const b of blocks) {
-    if (!b || b.type !== 'web_search_tool_result') continue;
-    for (const item of b.content || []) {
-      if (!item || item.type !== 'web_search_result' || !item.url || seen.has(item.url)) continue;
-      seen.add(item.url);
-      const s = { url: item.url };
-      if (item.title) s.title = String(item.title).slice(0, 120);
-      const snip = snippets.get(item.url);
-      if (snip) s.snippet = String(snip).slice(0, 260);
-      else if (item.snippet) s.snippet = String(item.snippet).slice(0, 260);
-      if (item.page_age) s.publishedAt = String(item.page_age);
-      s.tags = classifySearchSource(s);
-      sources.push(s);
-    }
-  }
-  if (!sources.length) {
-    return { ok: false, error: '服务侧搜索没有返回结构化结果（当前模型可能不支持原生搜索）。可改用端侧（免费）搜索。' };
-  }
-  return { ok: true, provider: 'server', sources, answer: '' };
+  const r = await deepseekSearchResults(query, { count: 10 });
+  if (!r.ok) return r;
+  return { ok: true, provider: 'deepseek', sources: r.sources, answer: '' };
 }
 
 /* 把搜索结果包装成 DeepSeek Anthropic Messages 兼容响应，供内置 web_search 调用 */
@@ -5293,7 +5357,19 @@ function handleRequest(req, res) {
       res.on('close', () => { if (!res.writableEnded) { try { ctl.abort(); } catch (_) {} } });
       // 内核可能已经掐断了这条请求（超时/用户中断），这时回写会撞上已销毁的 socket
       const alive = () => !res.writableEnded && res.socket !== null;
-      return searchResults(query, Object.assign({ signal: ctl.signal }, BOUNDED_MODSEARCH_OPTS))
+      /* 服务侧：先走 DeepSeek 官方 Search API（新接口，同一把 Key），不可用再退回
+         自定义服务 / 免费抓取。整条链仍受内核 30s 预算约束（这里给 12s 上限）。 */
+      const route = (async () => {
+        try {
+          const cfg = loadConfig();
+          if (resolveSearchProvider(cfg) === 'server') {
+            const r = await deepseekSearchResults(query, { count: 10, timeoutMs: 12000 });
+            if (r.ok) return { provider: 'deepseek', sources: r.sources, answer: '' };
+          }
+        } catch (_) {}
+        return searchResults(query, Object.assign({ signal: ctl.signal }, BOUNDED_MODSEARCH_OPTS));
+      })();
+      return route
         .then((result) => { if (alive()) sendJson(res, 200, anthropicSearchResponse(query, result)); })
         .catch(() => { if (alive()) sendJson(res, 200, anthropicSearchResponse(query, {
           sources: [{ url: 'https://www.bing.com/search?q=' + encodeURIComponent(query), title: '搜索服务暂不可用', snippet: '本地搜索源暂时不可用，请基于知识库回答。' }],
@@ -5660,15 +5736,21 @@ function handleRequest(req, res) {
       const { activeId, profiles } = loadProfiles();
       const name = String(body.name || '').trim() || ('配置 ' + (profiles.length + 1));
       const baseUrl = normalizeBaseUrl(String(body.baseUrl || DEFAULT_BASE_URL));
-      const model = String(body.model || 'deepseek-chat').trim();
+      const models = normalizeModels(body.models);
+      const model = String(body.model || '').trim();
+      if (model && !models.some((m) => m.id === model)) models.push({ id: model });
       const apiKey = String(body.apiKey || '').trim();
       if (!apiKey) return sendJson(res, 400, { ok: false, error: '请填写 API Key' });
       const id = newProfileId();
-      const newProfile = { id, name, baseUrl, model, apiKey, provider: body.provider || '', created: Date.now() };
+      const newProfile = ensureProfileModels({ id, name, baseUrl, model, models, apiKey, provider: body.provider || '', created: Date.now() });
       profiles.push(newProfile);
-      const next = { activeId: activeId || id, profiles };
+      /* 新建即激活：让用户马上能用。
+         这里必须把 activeId 一起指到新配置 —— 原来写的是 activeId || id，
+         于是「已经有一家生效时再新建」会出现：config.json 被新配置覆盖（真的切过去了），
+         但 profiles.json 的 activeId 还指着老的那家 ——
+         顶栏徽标显示新模型、对话框模型席显示老模型，两边对不上（2026-10-15 发现并修）。 */
+      const next = { activeId: id, profiles };
       saveProfiles(next);
-      // 新建即激活：让用户马上能用
       const act = activateProfile(newProfile, 'profile:create');
       return sendJson(res, 200, { ok: true, id, profile: profilePublic(newProfile), activeId: id, activated: true, cfg: act ? act.cfg : undefined });
     }).catch((e) => sendJson(res, 500, { ok: false, error: e.message }));
@@ -5686,12 +5768,17 @@ function handleRequest(req, res) {
       const prevBaseUrlForAudit = cur.baseUrl;
       // 逐字段更新：只改传了的字段，没传的保持原值（改模型时不该把 Key 清掉）
       if (body.name !== undefined && String(body.name).trim()) cur.name = String(body.name).trim();
+      // models 是**按值整体替换**的数组（与 DSH 模型列表编辑器一致）：
+      // 传了就整张换掉，没传才保留 —— 否则「删掉一个模型」永远删不掉。
+      if (body.models !== undefined) cur.models = normalizeModels(body.models);
       if (body.model !== undefined && String(body.model).trim()) cur.model = String(body.model).trim();
       if (body.baseUrl !== undefined && String(body.baseUrl).trim()) cur.baseUrl = normalizeBaseUrl(String(body.baseUrl).trim());
       if (body.provider !== undefined) cur.provider = String(body.provider || '');
       // apiKey === null 表示显式清空；undefined 表示不改；空串按「不改」处理（前端留空=保留旧 Key）
       if (body.apiKey === null) { cur.apiKey = ''; }
       else if (body.apiKey !== undefined && String(body.apiKey).trim()) { cur.apiKey = String(body.apiKey).trim(); }
+      // 兜底：选中的模型必须真的在清单里；否则回落到第一个，绝不留「选中的模型不在列表里」
+      ensureProfileModels(cur);
       profiles[idx] = cur;
       saveProfiles({ activeId, profiles });
       // 未生效的配置也要留痕：改服务商地址本身就是敏感操作
@@ -6667,6 +6754,7 @@ function startServer() {
     // 期间任何请求都答不了；而 electron-main 是等 /api/status 成功才建窗口 —— 那会把窗口出现
     // 硬生生推迟「全部重建 + 全量备份」的时长。索引是持久化镜像，晚几百毫秒刷新无影响。
     setImmediate(() => { runStartupMaintenance(); });
+    try { migrateCloseAsk(); } catch (_) {}
     try {
       const bootCfg = loadConfig();
       writeDshSettings(bootCfg.model, bootCfg.baseUrl, effectiveSearchKey(bootCfg), resolveSearchProvider(bootCfg), bootCfg.reasoningEffort); // 启动时同步搜索/模型配置

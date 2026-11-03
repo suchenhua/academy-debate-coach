@@ -154,7 +154,7 @@ const state = {
   /* 每个模式各自的"当前对话"指针：切模式时互相不干扰 */
   chatIdByMode: { free: null, prep: null, review: null, judge: null },
   attachments: [], // 待发送的附件（文件卡片）
-  closeBehavior: 'quit', // 点关闭按钮做什么：quit 退出 / tray 收进托盘（真正执行的是 Electron 主进程）
+  closeBehavior: 'ask', // 点关闭按钮做什么：ask 每次询问 / quit 退出 / tray 收进托盘（真正执行的是 Electron 主进程）
 };
 
 /* ================= 工具函数 ================= */
@@ -333,6 +333,52 @@ function visibleModals() {
     document.querySelectorAll('.modal'), (m) => !m.classList.contains('hidden'));
 }
 
+/* ---------- 弹层退场动画（2026-10-15）----------
+   弹层原来只有进场动画：进场淡入放大，退场是 display:none 硬消失。
+   这里给个统一的关闭入口：先挂 .is-closing 播退场，动画期间**不动焦点、不锁交互**
+   （Apple：「让用户可取消动态效果。尽量不要让用户等待动画完成才能执行操作」），
+   到点再真正加 .hidden。
+
+   三条硬约束：
+   1. 动画时长必须从 CSS 变量读 —— 在 tokens.css 一处改，这里跟着走，不会对不上。
+   2. prefers-reduced-motion 下时长会被令牌压到 ~80ms，自动跟着变快，不用另写分支。
+   3. 被「立刻又打开」打断时（比如连点），必须取消上一次的收尾定时器，
+      否则定时器到点会把刚打开的弹层又藏起来 —— 那会变成"点了没反应"。 */
+function motionMs(varName, fallback) {
+  try {
+    const v = getComputedStyle(document.documentElement).getPropertyValue(varName).trim();
+    if (!v) return fallback;
+    if (v.endsWith('ms')) return parseFloat(v) || fallback;
+    if (v.endsWith('s')) return (parseFloat(v) || 0) * 1000 || fallback;
+  } catch (_) {}
+  return fallback;
+}
+
+function closeModalAnimated(modal) {
+  if (!modal || modal.classList.contains('hidden')) return;
+  if (modal._closeTimer) { clearTimeout(modal._closeTimer); modal._closeTimer = null; }
+  modal.classList.remove('is-closing');
+  // 强制重排：连续开关时保证动画能重新开始（否则第二次不播）
+  void modal.offsetWidth;
+  modal.classList.add('is-closing');
+  const ms = motionMs('--dur-slow', 240);
+  modal._closeTimer = setTimeout(() => {
+    modal._closeTimer = null;
+    modal.classList.remove('is-closing');
+    modal.classList.add('hidden');
+  }, ms);
+}
+
+/* 打开弹层：清掉可能还在跑的退场态，否则会带着 .is-closing 显示成半透明 */
+function openModalAnimated(modal) {
+  if (!modal) return;
+  if (modal._closeTimer) { clearTimeout(modal._closeTimer); modal._closeTimer = null; }
+  modal.classList.remove('is-closing');
+  modal.classList.add('hidden');
+  void modal.offsetWidth;
+  modal.classList.remove('hidden');
+}
+
 function focusablesIn(root) {
   return Array.prototype.filter.call(root.querySelectorAll(DIALOG_FOCUSABLE), (n) => {
     if (n.closest('.hidden') && !n.classList.contains('hidden')) return false;
@@ -344,7 +390,11 @@ function trapDialogTab(e) {
   if (e.key !== 'Tab') return;
   const mods = visibleModals();
   if (!mods.length) return;                 // 没有弹层开着：完全不管，页面快捷键照旧
-  const modal = mods[mods.length - 1];      // 多个叠放时只管最上面那个
+  /* 多个叠放时只管最上面那个。判「最上面」用 z-index（关窗确认 1100，普通弹层 50、设置 1000），
+     同值再按 DOM 先后 —— 只按 DOM 顺序会让「后插入但被压在下面」的弹窗抢走 Tab：
+     实测欢迎页向导开着时点关闭，Tab 会跑到向导的按钮上，屏幕上看不见焦点。 */
+  const zOf = (m) => Number(getComputedStyle(m).zIndex) || 0;
+  const modal = mods.reduce((top, m) => (zOf(m) >= zOf(top) ? m : top), mods[0]);
   const items = focusablesIn(modal);
   if (!items.length) { e.preventDefault(); return; }
   const first = items[0];
@@ -371,9 +421,11 @@ function initDialogA11y() {
       } else {
         modal._dlgHidden = false;
         modal._dlgReturn = document.activeElement;
-        // 优先第一个输入控件：askInput 自己会聚焦并全选字段，顺序上互不干扰
+        // 显式声明优先（如关闭确认把焦点放在「最小化到托盘」这个安全默认上），
+        // 其次才是第一个输入控件：askInput 自己会聚焦并全选字段，顺序上互不干扰
+        const marked = modal.querySelector('[data-autofocus]');
         const field = modal.querySelector('input:not([type=hidden]),textarea,select');
-        const target = field || focusablesIn(modal)[0];
+        const target = marked || field || focusablesIn(modal)[0];
         if (target) setTimeout(() => { try { target.focus(); } catch (_) {} }, 60);
       }
     }
@@ -1905,6 +1957,14 @@ function switchMode(mode) {
   updateModeUI();
   $('#input').value = ''; // 切换模式不残留任何自动填充
   updateCharCount();
+  /* 模式切换给主区一个淡入：让用户看得见"内容换了"，而不是瞬间静默替换。
+     Apple：「有目的地添加动态效果」—— 这条动效的"目的"就是告诉用户上下文变了。 */
+  const main = document.querySelector('.main');
+  if (main) {
+    main.classList.remove('mode-enter');
+    void main.offsetWidth;   // 强制重排：连续切换时动画能重播，而不是偶尔静默
+    main.classList.add('mode-enter');
+  }
   renderMessages();
   renderHistory();
   focusInput();
@@ -1972,8 +2032,8 @@ function openSettings() {
     $('#settingsResult').textContent = '';
     $('#settingsResult').className = 'settings-result';
   }
-  $('#settingsModal').classList.remove('hidden');
-  $('#modelSelect').classList.add('hidden');
+  openModalAnimated($('#settingsModal'));
+  closeModelPicker();
   // 打开设置默认落到「AI 模型」面板；若用户点了别的分组（如通用），保留其选择
   try {
     const activeNav = document.querySelector('.settings-nav-item.active');
@@ -2002,7 +2062,7 @@ function switchSettingsPane(pane) {
 /* ———— 关于应用 ———— */
 const ABOUT_LICENSE_URL = 'https://creativecommons.org/licenses/by-nc-sa/4.0/deed.zh';
 function renderAboutPane() {
-  const ver = (state.status && state.status.version) || '2.4.2';
+  const ver = (state.status && state.status.version) || '2.5.0';
   const edition = String((state.status && state.status.edition) || 'Flash').trim();
   const v = 'v' + String(ver).replace(/^v/i, '') + (edition ? ' ' + edition : '');
   const elVer = $('#aboutVersion');
@@ -2221,21 +2281,30 @@ function renderSettingsBadge(s) {
 /* state.profiles / state.activeProfileId / state.editingProfileId */
 state.profiles = [];
 state.activeProfileId = null;
-state.editingProfileId = null; // null=新建；否则编辑该 id
+state.editingProfileId = null; // null=新增草稿；否则编辑该 id
+state.editorOpen = false;      // 行内编辑卡是否展开（一次只开一张）
 
-async function loadProfilesUI() {
+/* opts.keepEditor = 保留行内编辑卡里正在改的草稿（切换模型时不能把用户没保存的编辑冲掉）。 */
+async function loadProfilesUI(opts) {
+  const keepEditor = !!(opts && opts.keepEditor);
   try {
     const r = await fetchJSON('/api/profiles');
     if (!r.ok) throw new Error(r.error || '获取配置失败');
     state.profiles = r.profiles || [];
     state.activeProfileId = r.activeId || null;
-    // 若当前没有编辑目标，编辑器载入当前生效配置
-    if (!state.editingProfileId) {
-      const cur = state.profiles.find((p) => p.id === state.activeProfileId) || state.profiles[0];
-      if (cur) loadProfileIntoEditor(cur);
-      else clearProfileEditor();
+    /* 首次运行姿态（对齐 DSH）：一台能用的服务商都没有时，直接把编辑卡摊开当「设置卡」，
+       而不是让用户对着一个空列表找入口。已经有一家可用时，行默认收起，点「编辑」再展开。 */
+    if (!keepEditor && !state.editorOpen) {
+      const anyUsable = state.profiles.some((p) => p.hasKey);
+      if (!anyUsable) { loadProfileIntoEditor(null); state.editorOpen = true; }
     }
-    renderProfilesList();
+    if (state.editingProfileId && !state.profiles.some((p) => p.id === state.editingProfileId)) {
+      // 正在编辑的那家被删了：干净收起，别留着指向空气的编辑卡
+      closeProfileEditor();
+    }
+    const box = $('#providerEditor');
+    if (box) box.classList.toggle('hidden', !state.editorOpen);
+    renderProviderRows();
     refreshComposerModelSelect();
     syncComposerGear();
   } catch (e) {
@@ -2243,93 +2312,311 @@ async function loadProfilesUI() {
   }
 }
 
+/* 编辑器里正在编辑的模型列表（草稿）。保存前只活在前端 ——
+   「获取可用模型」勾选一堆、再删掉几个，最后点保存才整张写回服务端。 */
+state.editorModels = [];
+state.editorModelId = '';
+
+/** 取某家服务商的模型清单（公开视图已保证至少有一个）。 */
+function modelsOf(p) {
+  if (!p) return [];
+  const list = Array.isArray(p.models) ? p.models : [];
+  if (list.length) return list;
+  return p.model ? [{ id: p.model }] : [];
+}
+
+/** 把一家服务商载入行内编辑卡。p 为 null = 新增草稿。 */
 function loadProfileIntoEditor(p) {
-  if (!p) return;
-  state.editingProfileId = p.id;
-  $('#profileNameInput').value = p.name || '';
+  state.editingProfileId = p ? p.id : null;
+  state.editorModels = p ? modelsOf(p).map((m) => Object.assign({}, m)) : [];
+  state.editorModelId = p ? (p.model || (state.editorModels[0] && state.editorModels[0].id) || '') : '';
+  $('#profileNameInput').value = p ? (p.name || '') : '';
   $('#apiKeyInput').value = '';
-  $('#apiKeyInput').placeholder = p.hasKey ? ('当前: ' + (p.keyMasked || '已配置') + '，留空保持不变') : 'sk-...';
-  $('#modelInput').value = p.model || 'deepseek-flash';
-  const base = p.baseUrl || 'https://api.deepseek.com';
+  $('#apiKeyInput').placeholder = (p && p.hasKey) ? ('当前: ' + (p.keyMasked || '已配置') + '，留空保持不变') : 'sk-...';
+  const base = (p && p.baseUrl) || 'https://api.deepseek.com';
   $('#baseUrlInput').value = base;
   setActiveProviderCard(base);
   syncEndpointHint(base);
+  const title = $('#editorTitle');
+  if (title) title.textContent = p ? ('编辑：' + (p.name || p.baseUrl)) : '添加服务商';
+  closeModelPicker();
+  renderModelRows();
   const out = $('#settingsResult');
   if (out) { out.textContent = ''; out.className = 'settings-result'; }
+}
+
+/** 收起编辑卡（clearEditor=true 时同时清空草稿）。 */
+function closeProfileEditor() {
+  state.editingProfileId = null;
+  state.editorModels = [];
+  state.editorModelId = '';
+  closeModelPicker();
+  const box = $('#providerEditor');
+  if (box) box.classList.add('hidden');
+  renderProviderRows();
 }
 
 function clearProfileEditor() {
+  state.editorModels = [];
+  state.editorModelId = '';
+  closeModelPicker();
+  if ($('#providerEditor')) $('#providerEditor').classList.add('hidden');
   state.editingProfileId = null;
-  $('#profileNameInput').value = '';
-  $('#apiKeyInput').value = '';
-  $('#apiKeyInput').placeholder = 'sk-...';
-  $('#modelInput').value = '';
-  const base = 'https://api.deepseek.com';
-  $('#baseUrlInput').value = base;
-  setActiveProviderCard(base);
-  syncEndpointHint(base);
-  const sel = $('#modelSelect'); if (sel) sel.classList.add('hidden');
-  const out = $('#settingsResult');
-  if (out) { out.textContent = ''; out.className = 'settings-result'; }
+  renderProviderRows();
 }
 
-function renderProfilesList() {
-  const box = $('#profilesListBody');
+/** 打开编辑卡做「新增」。 */
+function openProfileEditorForNew() {
+  loadProfileIntoEditor(null);
+  const box = $('#providerEditor');
+  if (box) { box.classList.remove('hidden'); box.scrollIntoView({ block: 'nearest' }); }
+  renderProviderRows();
+}
+
+/** 打开编辑卡编辑某一家服务商。 */
+function openProfileEditorFor(id) {
+  const p = state.profiles.find((x) => x.id === id);
+  if (!p) return;
+  loadProfileIntoEditor(p);
+  const box = $('#providerEditor');
+  if (box) { box.classList.remove('hidden'); box.scrollIntoView({ block: 'nearest' }); }
+  renderProviderRows();
+}
+
+/* ———— 模型列表：草稿的增删改 + 选哪个用来对话 ———— */
+function renderModelRows() {
+  const box = $('#modelRows');
+  const countEl = $('#modelListCount');
+  if (countEl) countEl.textContent = state.editorModels.length ? ('共 ' + state.editorModels.length + ' 个') : '';
   if (!box) return;
   box.innerHTML = '';
-  if (!state.profiles.length) {
-    box.appendChild(el('div', 'profile-empty', '还没有配置，点「＋ 新建」添加第一套。'));
+  if (!state.editorModels.length) {
+    box.appendChild(el('div', 'model-empty', '还没有模型。点「获取可用模型」自动拉取，或在下面手动添加。'));
     return;
   }
-  for (const p of state.profiles) {
-    const item = el('div', 'profile-item' + (p.id === state.activeProfileId ? ' active' : '') + (p.id === state.editingProfileId ? ' editing' : ''), '');
-    const main = el('button', 'profile-item-main', '');
-    const nameRow = el('span', 'profile-item-name', '');
-    nameRow.textContent = (p.id === state.activeProfileId ? '● ' : '') + (p.name || '未命名');
-    main.appendChild(nameRow);
-    const meta = el('span', 'profile-item-meta', p.model + ' · ' + (p.keyMasked || '无Key'));
-    main.appendChild(meta);
-    main.onclick = () => activateProfileClient(p.id);
-    item.appendChild(main);
-    const ops = el('span', 'profile-item-ops', '');
-    const edit = el('button', 'profile-op', ic('edit',13));
-    edit.title = '编辑';
-    edit.onclick = (e) => { e.stopPropagation(); loadProfileIntoEditor(p); renderProfilesList(); };
-    const del = el('button', 'profile-op danger', ic('trash',13));
-    del.title = '删除';
-    del.onclick = (e) => { e.stopPropagation(); deleteProfileClient(p.id); };
-    ops.appendChild(edit);
+  for (const m of state.editorModels) {
+    const row = el('div', 'model-row-item' + (m.id === state.editorModelId ? ' active' : ''), '');
+    /* 圆点 = 「对话时用哪个」。点它即选中（与 DSH 的单选语义一致）。 */
+    const pick = el('button', 'model-pick', '');
+    pick.type = 'button';
+    pick.title = m.id === state.editorModelId ? '当前用于对话' : '设为对话时使用';
+    pick.setAttribute('aria-pressed', m.id === state.editorModelId ? 'true' : 'false');
+    pick.onclick = () => { state.editorModelId = m.id; renderModelRows(); };
+    row.appendChild(pick);
+    const name = el('span', 'model-name', m.id);
+    row.appendChild(name);
+    const meta = [];
+    if (m.name && m.name !== m.id) meta.push(m.name);
+    if (m.contextWindow) meta.push('上下文 ' + Math.round(m.contextWindow / 1024) + 'K');
+    if (meta.length) row.appendChild(el('span', 'model-meta', meta.join(' · ')));
+    const ops = el('span', 'model-ops', '');
+    const del = el('button', 'profile-op danger', ic('trash', 13));
+    del.type = 'button';
+    del.title = '从列表移除';
+    del.onclick = (e) => {
+      e.stopPropagation();
+      state.editorModels = state.editorModels.filter((x) => x.id !== m.id);
+      if (state.editorModelId === m.id) state.editorModelId = state.editorModels[0] ? state.editorModels[0].id : '';
+      renderModelRows();
+    };
     ops.appendChild(del);
-    item.appendChild(ops);
-    box.appendChild(item);
+    row.appendChild(ops);
+    box.appendChild(row);
   }
 }
 
-async function activateProfileClient(id) {
+/** 手动添加一个模型名（只认非空、去重）。 */
+function addModelFromInput() {
+  const inp = $('#modelInput');
+  const id = (inp && inp.value || '').trim();
+  if (!id) return;
+  if (state.editorModels.some((m) => m.id === id)) {
+    state.editorModelId = id;
+    renderModelRows();
+    if (inp) inp.value = '';
+    return;
+  }
+  state.editorModels.push({ id });
+  if (!state.editorModelId) state.editorModelId = id;
+  if (inp) inp.value = '';
+  renderModelRows();
+}
+
+/* ———— 「获取可用模型」：可搜索、可多选，点「添加所选」才写进列表 ———— */
+state.pickerModels = [];
+
+function closeModelPicker() {
+  const box = $('#modelPicker');
+  if (box) box.classList.add('hidden');
+  state.pickerModels = [];
+  const list = $('#modelPickList');
+  if (list) list.innerHTML = '';
+}
+
+/** 打开选择器，展示候选模型（默认全不勾；服务商没返回就如实说）。 */
+function openModelPicker(candidates) {
+  state.pickerModels = candidates.map((m) => ({ id: m.id, name: m.name || '', ownedBy: m.ownedBy || '', checked: false }));
+  const box = $('#modelPicker');
+  if (!box) return;
+  box.classList.remove('hidden');
+  const search = $('#modelPickSearch');
+  if (search) search.value = '';
+  renderModelPicker('');
+  const st = $('#modelPickStatus');
+  if (st) st.textContent = '获取到 ' + candidates.length + ' 个模型，勾选后点「添加所选」。';
+}
+
+/** 渲染候选清单；query 过滤时**不清除**隐藏项的勾选（与 DSH 一致）。 */
+function renderModelPicker(query) {
+  const list = $('#modelPickList');
+  if (!list) return;
+  const q = String(query || '').trim().toLowerCase();
+  list.innerHTML = '';
+  let visible = 0;
+  for (let i = 0; i < state.pickerModels.length; i += 1) {
+    const m = state.pickerModels[i];
+    /* 搜索同时匹配 id 与显示名（与 DSH 的选择器一致） */
+    const hay = (m.id + ' ' + (m.name || '') + ' ' + (m.ownedBy || '')).toLowerCase();
+    if (q && hay.indexOf(q) === -1) continue;
+    visible += 1;
+    const row = el('label', 'mp-item' + (m.checked ? ' checked' : ''), '');
+    const cb = document.createElement('input');
+    cb.type = 'checkbox';
+    cb.checked = !!m.checked;
+    cb.onchange = () => { m.checked = cb.checked; row.classList.toggle('checked', cb.checked); };
+    row.appendChild(cb);
+    row.appendChild(el('span', 'mp-name', m.id));
+    if (m.ownedBy) row.appendChild(el('span', 'mp-owned', m.ownedBy));
+    list.appendChild(row);
+  }
+  if (!visible) list.appendChild(el('div', 'mp-empty', q ? '没有匹配的模型。' : '服务商没有返回任何模型。'));
+}
+
+/** 全选/取消全选：只作用于**当前可见**的结果，避免误勾隐藏项。 */
+function setVisibleChecks(checked) {
+  const list = $('#modelPickList');
+  if (!list) return;
+  const boxes = list.querySelectorAll('.mp-item input[type="checkbox"]');
+  const q = ($('#modelPickSearch') && $('#modelPickSearch').value) || '';
+  const ql = q.trim().toLowerCase();
+  let vi = 0;
+  for (const m of state.pickerModels) {
+    const hay = (m.id + ' ' + (m.name || '') + ' ' + (m.ownedBy || '')).toLowerCase();
+    if (ql && hay.indexOf(ql) === -1) continue;
+    const node = boxes[vi];
+    vi += 1;
+    if (!node) continue;
+    m.checked = checked;
+    node.checked = checked;
+    node.closest('.mp-item').classList.toggle('checked', checked);
+  }
+}
+
+/** 把勾选的候选并进草稿模型列表（已存在的保留用户改过的字段）。 */
+function addPickedModels() {
+  const picked = state.pickerModels.filter((m) => m.checked);
+  if (!picked.length) {
+    const st = $('#modelPickStatus');
+    if (st) st.textContent = '还没有勾选任何模型。';
+    return;
+  }
+  let added = 0;
+  for (const m of picked) {
+    if (state.editorModels.some((x) => x.id === m.id)) continue;
+    const entry = { id: m.id };
+    /* 服务商公布了显示名就带上（有的家 id 很长、name 才是人读的） */
+    if (m.name && m.name !== m.id) entry.name = m.name;
+    state.editorModels.push(entry);
+    added += 1;
+  }
+  if (!state.editorModelId && state.editorModels.length) state.editorModelId = state.editorModels[0].id;
+  closeModelPicker();
+  renderModelRows();
+  const st = $('#settingsResult');
+  if (st) { st.textContent = '已添加 ' + added + ' 个模型' + (added < picked.length ? '（其余已存在）' : ''); st.className = 'settings-result ok'; }
+}
+
+/* ———— 服务商行（对齐 DSH：已配置的在上，未配置的在下） ———— */
+function renderProviderRows() {
+  const box = $('#providerRows');
+  if (!box) return;
+  box.innerHTML = '';
+  const configured = state.profiles.filter((p) => p.hasKey);
+  const unconfigured = state.profiles.filter((p) => !p.hasKey);
+  if (!state.profiles.length) {
+    box.appendChild(el('li', 'provider-empty', '还没有服务商。点下面的「添加服务商」选一家、填好 Key。'));
+    return;
+  }
+  for (const p of [...configured, ...unconfigured]) {
+    const li = el('li', 'provider-row' + (p.id === state.activeProfileId ? ' active' : '') + (p.id === state.editingProfileId ? ' editing' : ''), '');
+    const head = el('div', 'pr-head', '');
+    const idBox = el('span', 'pr-identity', '');
+    idBox.appendChild(el('span', 'pr-name', p.name || p.baseUrl));
+    /* 密钥状态点：只有「确认配了 Key」才亮绿点；没配就红点（与 DSH 的实心点语义一致）。 */
+    const dot = el('span', 'pr-dot' + (p.hasKey ? ' ok' : ' missing'), '');
+    dot.title = p.hasKey ? ('API Key 已配置 · ' + (p.keyMasked || '')) : '还没填 API Key';
+    dot.setAttribute('role', 'img');
+    dot.setAttribute('aria-label', dot.title);
+    idBox.appendChild(dot);
+    if (p.id === state.activeProfileId) idBox.appendChild(el('span', 'pr-tag', '对话中'));
+    head.appendChild(idBox);
+    const actions = el('span', 'pr-actions', '');
+    const edit = el('button', 'btn ghost small', '编辑');
+    edit.type = 'button';
+    edit.onclick = () => openProfileEditorFor(p.id);
+    actions.appendChild(edit);
+    const del = el('button', 'btn ghost small danger-inline', '删除');
+    del.type = 'button';
+    del.onclick = () => deleteProfileClient(p.id);
+    actions.appendChild(del);
+    head.appendChild(actions);
+    li.appendChild(head);
+    /* 副行：地址 + 这家有几个模型 + 当前选中的那个 */
+    const meta = el('div', 'pr-meta', '');
+    meta.appendChild(el('span', 'pr-host', endpointHostOf(p.baseUrl)));
+    const ms = modelsOf(p);
+    meta.appendChild(el('span', 'pr-models', ms.length + ' 个模型'));
+    meta.appendChild(el('span', 'pr-current', '当前：' + (p.model || '未选')));
+    li.appendChild(meta);
+    box.appendChild(li);
+  }
+}
+
+/* 激活一家服务商；带 modelId 时同时把它设为该家当前使用的模型。
+   这就是「一家服务商一次请求 = 一个模型」的落点：写 config.json 的 model 字段。 */
+async function activateProfileClient(id, modelId) {
+  const p0 = state.profiles.find((x) => x.id === id);
   try {
-    const r = await fetchJSON('/api/profiles/activate', {
+    let r = await fetchJSON('/api/profiles/activate', {
       method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ id }),
     });
     if (!r.ok) throw new Error(r.error || '切换失败');
     state.activeProfileId = r.activeId;
-    const p = state.profiles.find((x) => x.id === id);
-    loadProfileIntoEditor(p || null);
-    renderProfilesList();
-    refreshComposerModelSelect();
+    /* 切模型：先改档案里的「当前模型」，再让它生效 —— 顺序反了会先按旧模型发一次请求。 */
+    if (modelId && p0 && modelId !== p0.model) {
+      const pr = await fetchJSON('/api/profiles/' + encodeURIComponent(id), {
+        method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ model: modelId }),
+      });
+      if (!pr.ok) throw new Error(pr.error || '切换模型失败');
+    }
+    /* 从服务端重新拉一次，保证列表里的「当前：x」是服务端归一化后的真实值。 */
+    await loadProfilesUI({ keepEditor: true });
     await refreshStatus();
     syncComposerGear();
-    toast('已切换到：' + (p ? p.name : ''));
+    const p = state.profiles.find((x) => x.id === id) || p0;
+    toast(modelId ? ('已切换：' + (p ? p.name : '') + ' · ' + modelId) : ('已切换到：' + (p ? p.name : '')));
   } catch (e) {
     toast('切换失败：' + e.message);
   }
 }
 
 async function deleteProfileClient(id) {
-  if (!confirm('删除这套配置？')) return;
+  const p = state.profiles.find((x) => x.id === id);
+  if (!confirm('删除这家服务商配置？\n\n' + ((p && p.name) || '') + '\n（Key 会一并从本机删除）')) return;
   try {
     const r = await fetchJSON('/api/profiles/' + encodeURIComponent(id), { method: 'DELETE' });
     if (!r.ok) throw new Error(r.error || '删除失败');
-    if (state.editingProfileId === id) state.editingProfileId = null;
+    if (state.editingProfileId === id) closeProfileEditor();
     await loadProfilesUI();
     await refreshStatus();
     toast('已删除');
@@ -2341,7 +2628,6 @@ async function deleteProfileClient(id) {
 async function saveCurrentProfile() {
   const name = ($('#profileNameInput').value || '').trim();
   const apiKey = ($('#apiKeyInput').value || '').trim();
-  const model = ($('#modelInput').value || '').trim() || 'deepseek-flash';
   const baseUrl = currentProviderBaseUrl();
   const out = $('#settingsResult');
   if (!confirmEndpointChange(baseUrl)) {
@@ -2352,60 +2638,132 @@ async function saveCurrentProfile() {
     if (out) { out.textContent = '请填写 API Key。'; out.className = 'settings-result err'; }
     return;
   }
+  if (!state.editorModels.length) {
+    if (out) { out.textContent = '至少要有 1 个模型：点「获取可用模型」或在下面手动添加。'; out.className = 'settings-result err'; }
+    return;
+  }
+  /* 整张草稿原样写回（只挑服务端认识的白名单字段）。
+     不能只发 {id}：服务端模型条目还认 name / contextWindow / maxTokens，
+     丢了的话「获取可用模型」带回来的显示名与容量会在保存时被静默抹掉。 */
+  const models = state.editorModels.map((m) => {
+    const out2 = { id: m.id };
+    if (m.name && m.name !== m.id) out2.name = m.name;
+    if (m.contextWindow) out2.contextWindow = m.contextWindow;
+    if (m.maxTokens) out2.maxTokens = m.maxTokens;
+    return out2;
+  });
+  const model = state.editorModelId || models[0].id;
   try {
     let r;
     if (state.editingProfileId) {
       r = await fetchJSON('/api/profiles/' + encodeURIComponent(state.editingProfileId), {
         method: 'PUT', headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ name: name || undefined, model, baseUrl, apiKey: apiKey || undefined }),
+        body: JSON.stringify({ name: name || undefined, models, model, baseUrl, apiKey: apiKey || undefined }),
       });
     } else {
       r = await fetchJSON('/api/profiles', {
         method: 'POST', headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ name: name || undefined, baseUrl, model, apiKey }),
+        body: JSON.stringify({ name: name || undefined, baseUrl, models, model, apiKey }),
       });
     }
     if (!r.ok) throw new Error(r.error || '保存失败');
+    /* 改的就是「当前生效的这家」时，服务端 PUT 已经把它重新写进 config.json + settings.yaml，
+       这里不用再发一次 activate（多发一次只会多一次往返和一个多余的 toast）。 */
     await loadProfilesUI();
     await refreshStatus();
-    if (out) { out.textContent = '已保存' + (r.activated ? '并已启用' : '') + ' · 发往 ' + endpointHostOf(baseUrl); out.className = 'settings-result ok'; }
+    if (out) {
+      out.textContent = '已保存' + (r.activated ? '并已启用' : '') + ' · ' + models.length + ' 个模型 · 发往 ' + endpointHostOf(baseUrl);
+      out.className = 'settings-result ok';
+    }
   } catch (e) {
     if (out) { out.textContent = '' + e.message; out.className = 'settings-result err'; }
   }
 }
 
-/* 控件菜单里的「模型」行：枚举配置档案。收起态的席按钮显示的是当前档案（syncComposerGear）。 */
-function refreshComposerModelSelect() {
-  const sel = $('#composerModelSelect');
-  if (!sel) return;
-  sel.innerHTML = '';
-  for (const p of state.profiles) {
-    const o = document.createElement('option');
-    o.value = p.id;
-    o.textContent = (p.id === state.activeProfileId ? '● ' : '') + (p.name || '未命名') + ' · ' + p.model;
-    sel.appendChild(o);
-  }
-  if (state.activeProfileId) sel.value = state.activeProfileId;
-  sel.disabled = !state.profiles.length;
+/* ———— 对话框模型席：按服务商分组的模型列表（对齐 DSH 的 model 面板） ———— */
+/* 触发按钮上显示的是**当前实际生效**的模型名；点开后按服务商分组列出全部可选模型。
+   选中的写回 dossier（一家服务商一次只能用一个模型），并立刻生效。 */
+
+/** 当前生效的「服务商 + 模型」（state.status 是服务端归一化后的权威值）。 */
+function currentSelection() {
+  const p = (state.profiles || []).find((x) => x.id === state.activeProfileId) || null;
+  return { profile: p, model: (p && p.model) || (state.status && state.status.model) || '' };
 }
+
+/** 分组：每一家服务商 = 一组，组内是它名下可选的模型。 */
+function modelGroups() {
+  return (state.profiles || []).map((p) => ({ id: p.id, name: p.name || p.baseUrl, models: modelsOf(p) }))
+    .filter((g) => g.models.length);
+}
+
+async function refreshComposerModelSelect() {
+  renderComposerGearMenu();
+}
+
+/** 渲染对话框上的模型席（收起态文字 + 展开后的分组列表）。 */
+function renderComposerGearMenu() {
+  const seat = $('#gearModel');
+  if (seat) {
+    const cur = currentSelection();
+    seat.textContent = cur.model || '未配置';
+  }
+  const list = $('#gearModelList');
+  if (!list) return;
+  list.innerHTML = '';
+  const groups = modelGroups();
+  if (!groups.length) {
+    list.appendChild(el('div', 'gear-model-empty', '还没有可用的模型，去设置里添加服务商。'));
+    return;
+  }
+  const cur = currentSelection();
+  let selectedBtn = null;
+  for (const g of groups) {
+    const sec = el('div', 'gear-model-group', '');
+    const head = el('div', 'gear-model-group-title', g.name);
+    head.title = g.name;
+    sec.appendChild(head);
+    for (const m of g.models) {
+      const on = !!cur.profile && cur.profile.id === g.id && m.id === cur.model;
+      const btn = el('button', 'gear-model-option' + (on ? ' selected' : ''), '');
+      btn.type = 'button';
+      btn.setAttribute('role', 'menuitemradio');
+      btn.setAttribute('aria-checked', on ? 'true' : 'false');
+      btn.appendChild(el('span', 'gmo-name', m.id));
+      const check = el('span', 'gmo-check', '');
+      /* ic() 返回的是 SVG 字符串，必须经 setIcon 解析成节点 —— appendChild 只收 Node。 */
+      if (on) setIcon(check, 'check', 14);
+      btn.appendChild(check);
+      btn.onclick = () => { activateProfileClient(g.id, m.id); };
+      sec.appendChild(btn);
+      if (on) selectedBtn = btn;
+    }
+    list.appendChild(sec);
+  }
+  /* 当前选中的那个滚进可视区：模型多了以后，分组列表会超出 max-height，
+     不滚的话打开菜单看到的是一堆没选中的模型，得自己往下找。 */
+  if (selectedBtn && selectedBtn.scrollIntoView) {
+    try { selectedBtn.scrollIntoView({ block: 'nearest' }); } catch (_) {}
+  }
+}
+
+/* 兼容旧调用点：控件菜单原先是个 <select>，现在改成分组列表，不需要额外绑定。 */
 async function bindComposerModelSelect() {
-  const sel = $('#composerModelSelect');
-  if (!sel) return;
-  sel.onchange = () => {
-    if (sel.value) activateProfileClient(sel.value);
-  };
+  renderComposerGearMenu();
 }
 /* 模型 + 推理等级：一个控件（Codex 风格滑条，见 effort-slider.js 与本文件 initComposerGear）
    旧的两个并排下拉（composerModelSelect / composerEffortSelect）已并入这里；
    思考强度的存取契约不变（config.reasoningEffort），只是入口换成了滑条。 */
 
-/** 当前配置档案的显示名（席按钮左侧那半）。 */
+/** 席按钮上显示的模型名：当前服务商选中的那个模型（DSH 的触发按钮只显示模型名）。 */
 function composerGearModelName() {
-  const p = (state.profiles || []).find((x) => x.id === state.activeProfileId);
-  return p ? (p.name || '未命名') + ' · ' + p.model : '未配置';
+  const cur = currentSelection();
+  return cur.model || '未配置';
 }
 /** 把权威状态推进控件：档位只认 state.status（服务端归一化过的值）。 */
 function syncComposerGear() {
+  const valueEl = $('#gearModelValue');
+  if (valueEl) valueEl.textContent = composerGearModelName();
+  renderComposerGearMenu();
   if (!window.AcademyEffort) return;
   window.AcademyEffort.sync({
     effort: (state.status && state.status.reasoningEffort) || 'high',
@@ -2431,44 +2789,19 @@ function initComposerGear() {
   syncComposerGear();
 }
 
-/* 静默自动拉取模型列表（打开设置时若已有 Key） */
-let _autoModelTimer = null;
-async function autoLoadModelsSilent() {
-  if (_autoModelTimer) { clearTimeout(_autoModelTimer); }
-  _autoModelTimer = setTimeout(async () => {
-    try {
-      const key = ($('#apiKeyInput').value || '').trim() || (state.status && state.status.hasKey ? '__saved__' : '');
-      if (!key) return;
-      const r = await fetchJSON('/api/models', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ baseUrl: currentProviderBaseUrl() }) });
-      if (r.ok && r.models && r.models.length) {
-        const sel = $('#modelSelect');
-        sel.innerHTML = '';
-        const cur = currentModelValue();
-        for (const m of r.models) {
-          const o = document.createElement('option');
-          o.value = m.id;
-          o.textContent = m.id + (m.ownedBy ? '  (' + m.ownedBy + ')' : '');
-          sel.appendChild(o);
-        }
-        sel.classList.remove('hidden');
-        if (cur && [...sel.options].some((o) => o.value === cur)) sel.value = cur;
-        // 当前输入框为空时，取第一个模型
-        if (!$('#modelInput').value.trim() && sel.value) $('#modelInput').value = sel.value;
-      }
-    } catch (_) { /* 静默失败 */ }
-  }, 400);
-}
+/* 「获取可用模型」：拉服务商的 /models，落进可搜索多选的选择器。
+   不直接写进列表 —— 点「添加所选」才写（与 DSH 的「获取可用模型 → 添加所选」一致）。 */
 async function loadModels() {
   const out = $('#settingsResult');
-  const apiKey = $('#apiKeyInput').value.trim();
+  const apiKey = ($('#apiKeyInput').value || '').trim();
   const baseUrl = currentProviderBaseUrl();
-  if (!apiKey && !(state.status && state.status.hasKey)) {
-    out.textContent = '请先填写 API Key，再获取模型列表。';
-    out.className = 'settings-result err';
+  const hasSaved = !!(state.status && state.status.hasKey);
+  if (!apiKey && !hasSaved) {
+    if (out) { out.textContent = '请先填写 API Key，再获取模型列表。'; out.className = 'settings-result err'; }
     return;
   }
-  out.textContent = '正在获取模型列表…';
-  out.className = 'settings-result';
+  closeModelPicker();
+  if (out) { out.textContent = '正在获取模型列表…'; out.className = 'settings-result'; }
   try {
     const body = { baseUrl };
     if (apiKey) body.apiKey = apiKey;
@@ -2477,31 +2810,24 @@ async function loadModels() {
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(body),
     });
-    if (!r.ok) { out.textContent = '' + (r.error || '获取失败'); out.className = 'settings-result err'; return; }
-    const sel = $('#modelSelect');
-    sel.innerHTML = '';
-    if (!r.models || !r.models.length) { out.textContent = '服务商未返回模型，请手动输入模型名。'; out.className = 'settings-result'; return; }
-    const current = currentModelValue();
-    for (const m of r.models) {
-      const o = document.createElement('option');
-      o.value = m.id;
-      o.textContent = m.id + (m.ownedBy ? '  (' + m.ownedBy + ')' : '');
-      sel.appendChild(o);
+    if (!r.ok) {
+      if (out) { out.textContent = '' + (r.error || '获取失败'); out.className = 'settings-result err'; }
+      return;
     }
-    sel.classList.remove('hidden');
-    if (current && [...sel.options].some((o) => o.value === current)) sel.value = current;
-    // 同步到输入框
-    if (sel.value) $('#modelInput').value = sel.value;
-    out.textContent = '获取到 ' + r.models.length + ' 个模型，请在下拉中选择（也可手动输入）。';
-    out.className = 'settings-result ok';
+    if (!r.models || !r.models.length) {
+      if (out) { out.textContent = '服务商没有返回模型，请在下面手动添加模型名。'; out.className = 'settings-result'; }
+      return;
+    }
+    if (out) { out.textContent = ''; out.className = 'settings-result'; }
+    openModelPicker(r.models);
   } catch (e) {
-    out.textContent = '' + e.message;
-    out.className = 'settings-result err';
+    if (out) { out.textContent = '' + e.message; out.className = 'settings-result err'; }
   }
 }
 
+/* 兼容旧调用点：以前这里读的是「模型输入框」的值，现在是编辑卡里选中的那个模型。 */
 function currentModelValue() {
-  return $('#modelInput').value.trim() || 'deepseek-flash';
+  return state.editorModelId || (state.editorModels[0] && state.editorModels[0].id) || 'deepseek-flash';
 }
 
 function currentBaseUrlValue() {
@@ -3247,20 +3573,20 @@ async function deliverConvert(it, target) {
 const DELIVER_PDF_CSS =
   'html{color-scheme:light}' +
   'body{font-family:"Microsoft YaHei","PingFang SC",sans-serif;margin:0;color:#1c2434;line-height:1.6;font-size:14.5px;background:#fff}' +
-  'h1{font-size:1.6em;color:#1F3864}' +
-  'h2{font-size:1.35em;color:#2F5496}' +
+  'h1{font-size:1.6em;color:#120A8F}' +
+  'h2{font-size:1.35em;color:#120A8F}' +
   'h3{font-size:1.15em;color:#333}' +
   'h1,h2,h3{border-bottom:1px solid #e5e7ee;padding-bottom:.3em;margin-top:1.4em;page-break-after:avoid}' +
   'p{margin:.6em 0;orphans:2;widows:2}' +
   'pre{background:#f5f7fb;padding:12px;border-radius:6px;overflow:hidden;font-size:12px;white-space:pre-wrap;word-break:break-all;page-break-inside:avoid}' +
   'code{background:#f0f2f7;padding:1px 5px;border-radius:4px;font-size:.92em}' +
-  'blockquote{border-left:3px solid #8496B0;margin:8px 0;padding:2px 14px;color:#445066}' +
+  'blockquote{border-left:3px solid #9A9AA0;margin:8px 0;padding:2px 14px;color:#4A4A50}' +
   'table{border-collapse:collapse;margin:10px 0;width:100%}' +
   'tr{page-break-inside:avoid}' +
-  'th,td{border:1px solid #d5dae6;padding:5px 10px}' +
-  'th{background:#eef1f8}' +
+  'th,td{border:1px solid #D8D8DE;padding:5px 10px}' +
+  'th{background:#F2F2F5}' +
   'ul,ol{margin:.5em 0;padding-left:1.6em}li{margin:.25em 0}' +
-  'a{color:#0563C1}';
+  'a{color:#120A8F}';
 
 async function deliverPdf(it) {
   try {
@@ -3619,7 +3945,7 @@ async function loadAgentChoices() {
     if (STEPS_MODES.includes(c.stepsDisplay)) state.stepsDisplay = c.stepsDisplay;
     if (c.busyBehavior === 'interrupt' || c.busyBehavior === 'queue') state.busyBehavior = c.busyBehavior;
     if (c.sendHotkey === 'enter' || c.sendHotkey === 'ctrlEnter') state.sendHotkey = c.sendHotkey;
-    if (c.closeBehavior === 'tray' || c.closeBehavior === 'quit') state.closeBehavior = c.closeBehavior;
+    if (c.closeBehavior === 'ask' || c.closeBehavior === 'tray' || c.closeBehavior === 'quit') state.closeBehavior = c.closeBehavior;
     syncAgentChoices();
   } catch (_) {}
 }
@@ -3662,14 +3988,90 @@ async function setSendHotkey(mode) {
 
 /* 关闭按钮的行为：写完 config 就交给主进程（它直接读 data/config.json），下一条关闭动作立即生效，不必重启 */
 async function setCloseBehavior(mode) {
-  if (mode !== 'quit' && mode !== 'tray') return;
+  if (mode !== 'ask' && mode !== 'quit' && mode !== 'tray') return;
   try {
     const r = await fetchJSON('/api/config', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ closeBehavior: mode }) });
     if (!r || !r.ok) throw new Error((r && r.error) || '保存失败');
     state.closeBehavior = mode;
     syncAgentChoices();
-    toast(mode === 'tray' ? '关闭窗口时：最小化到系统托盘（右键托盘图标可退出）' : '关闭窗口时：直接退出程序');
+    toast(mode === 'tray' ? '关闭窗口时：最小化到系统托盘（右键托盘图标可退出）'
+      : mode === 'quit' ? '关闭窗口时：直接退出程序'
+      : '关闭窗口时：每次关闭都先问你（最小化到托盘 / 直接关闭）');
   } catch (e) { syncAgentChoices(); toast('设置失败：' + e.message); }
+}
+
+/* ================= 关闭窗口确认（应用内弹窗） =================
+   主进程在「关闭窗口时 = 每次询问」时把问题发到渲染层，这里用应用自己的 .modal 问，
+   再把答案经 IPC 发回去。为什么不用系统原生消息框：它跟 App 的视觉语言是两套，
+   长文案换行、按钮顺序、勾选框都不可控，用户一眼就看出「这不是这个软件的东西」。 */
+let closeConfirmToken = null;
+
+function showCloseConfirm(token) {
+  closeConfirmToken = token;
+  const modal = document.getElementById('closeConfirmModal');
+  const remember = document.getElementById('closeConfirmRemember');
+  if (remember) remember.checked = false;
+  if (!modal) { answerCloseConfirm('cancel'); return; }
+  modal.classList.remove('hidden');
+  /* 先回「已显示」：主进程等这句，2.5s 收不到才回退系统弹框 */
+  try { window.academyElectron.answerCloseConfirm({ token, shown: true }); } catch (_) {}
+  /* 默认焦点放「最小化到托盘」：回车＝安全选项。刚显示时浏览器可能把焦点丢给先出现的勾选框，
+     所以立刻聚焦一次、60ms 再补一次（幂等）。 */
+  const focusTray = () => {
+    const b = document.getElementById('closeConfirmTray');
+    if (!b) return;
+    try { b.focus({ preventScroll: true }); } catch (_) { try { b.focus(); } catch (_) {} }
+  };
+  focusTray();
+  setTimeout(focusTray, 60);
+}
+
+function hideCloseConfirm() {
+  const modal = document.getElementById('closeConfirmModal');
+  if (modal) modal.classList.add('hidden');
+}
+
+function answerCloseConfirm(choice) {
+  const token = closeConfirmToken;
+  if (!token) return;
+  const remember = document.getElementById('closeConfirmRemember');
+  const rememberChecked = !!(remember && remember.checked);
+  closeConfirmToken = null;
+  hideCloseConfirm();
+  try { window.academyElectron.answerCloseConfirm({ token, choice, remember: rememberChecked }); } catch (_) {}
+}
+
+function bindCloseConfirm() {
+  const trayBtn = document.getElementById('closeConfirmTray');
+  const quitBtn = document.getElementById('closeConfirmQuit');
+  const cancelBtn = document.getElementById('closeConfirmCancel');
+  const xBtn = document.getElementById('closeConfirmX');
+  if (trayBtn) trayBtn.onclick = () => answerCloseConfirm('tray');
+  if (quitBtn) quitBtn.onclick = () => answerCloseConfirm('quit');
+  if (cancelBtn) cancelBtn.onclick = () => answerCloseConfirm('cancel');
+  if (xBtn) xBtn.onclick = () => answerCloseConfirm('cancel');
+  /* Esc = 取消、Tab 只在弹窗内循环（只在弹窗开着时接管，别影响别的弹窗） */
+  document.addEventListener('keydown', (e) => {
+    if (!closeConfirmToken) return;
+    if (e.key === 'Escape') { e.preventDefault(); e.stopPropagation(); answerCloseConfirm('cancel'); return; }
+    if (e.key === 'Tab') {
+      const modal = document.getElementById('closeConfirmModal');
+      if (!modal) return;
+      const items = Array.prototype.filter.call(
+        modal.querySelectorAll('button, input, [tabindex]:not([tabindex="-1"])'),
+        (n) => n.offsetWidth || n.offsetHeight || n.getClientRects().length
+      );
+      if (!items.length) return;
+      const first = items[0], last = items[items.length - 1], cur = document.activeElement;
+      if (!modal.contains(cur)) { e.preventDefault(); (e.shiftKey ? last : first).focus(); return; }
+      if (e.shiftKey && cur === first) { e.preventDefault(); last.focus(); }
+      else if (!e.shiftKey && cur === last) { e.preventDefault(); first.focus(); }
+    }
+  }, true);
+  if (window.academyElectron && typeof window.academyElectron.onCloseConfirm === 'function') {
+    window.academyElectron.onCloseConfirm((token) => showCloseConfirm(token));
+    window.academyElectron.onCloseConfirmCancel(() => { closeConfirmToken = null; hideCloseConfirm(); });
+  }
 }
 
 function bindAgentChoices() {
@@ -4257,7 +4659,7 @@ function bindSkillsUI() {
   const bSave = $('#btnSkillEditorSave'); if (bSave) bSave.onclick = skillSaveFromEditor;
 }
 async function openMemory() {
-  $('#memoryModal').classList.remove('hidden');
+  openModalAnimated($('#memoryModal'));
   $('#memoryMeta').textContent = '（加载中…）';
   try {
     const res = await fetch('/api/memory');
@@ -4560,7 +4962,7 @@ async function libApi(pathname, body) {
 }
 
 async function openLibrary() {
-  $('#libraryModal').classList.remove('hidden');
+  openModalAnimated($('#libraryModal'));
   await refreshLibrary();
 }
 
@@ -5363,7 +5765,7 @@ try { bindMemToggles(); } catch (_) {}
   // 叉号关闭：先逐按钮绑定，再用 document 级事件委托兜底，
   // 即使个别按钮绑定失败/后续动态添加的弹窗，点击也一定生效
   document.querySelectorAll('.modal-close').forEach((b) => {
-    b.onclick = () => { const m = document.getElementById(b.dataset.close); if (m) m.classList.add('hidden'); };
+    b.onclick = () => { const m = document.getElementById(b.dataset.close); if (m) closeModalAnimated(m); };
   });
   document.addEventListener('click', (e) => {
     const closeBtn = e.target.closest ? e.target.closest('.modal-close') : null;
@@ -5371,17 +5773,17 @@ try { bindMemToggles(); } catch (_) {}
       const targetId = closeBtn.dataset && closeBtn.dataset.close;
       if (targetId) {
         const m = document.getElementById(targetId);
-        if (m) m.classList.add('hidden');
+        if (m) closeModalAnimated(m);
         return;
       }
     }
     // 点击弹窗背景关闭
     if (e.target && e.target.classList && e.target.classList.contains('modal')) {
-      e.target.classList.add('hidden');
+      closeModalAnimated(e.target);
     }
   });
   document.querySelectorAll('.modal').forEach((m) => {
-    m.addEventListener('click', (e) => { if (e.target === m) m.classList.add('hidden'); });
+    m.addEventListener('click', (e) => { if (e.target === m) closeModalAnimated(m); });
   });
 
   // 通用设置：外观（浅色/深色/跟随系统）
@@ -5414,7 +5816,8 @@ try { bindMemToggles(); } catch (_) {}
     const SIDEBAR_LS = 'academy.sidebar.collapsed';
     const applyCollapsed = (collapsed) => {
       document.body.classList.toggle('sidebar-collapsed', collapsed);
-      sidebarToggle.textContent = collapsed ? '▶' : '◀';
+      sidebarToggle.setAttribute('aria-expanded', String(!collapsed));
+      sidebarToggle.setAttribute('aria-label', collapsed ? '展开侧边栏' : '收起侧边栏');
       sidebarToggle.title = collapsed ? '展开侧边栏' : '收起侧边栏';
     };
     try { applyCollapsed(localStorage.getItem(SIDEBAR_LS) === '1'); } catch (_) {}
@@ -5463,16 +5866,35 @@ try { bindMemToggles(); } catch (_) {}
   try { bindAboutPane(); } catch (_) {}
   bindComposerModelSelect();
   initComposerGear();
-  // 多配置档案：保存 / 新建
+  // 服务商行 + 行内编辑卡：保存 / 添加 / 收起
   const btnSaveProf = $('#btnSaveProfile');
   if (btnSaveProf) btnSaveProf.onclick = saveCurrentProfile;
-  const btnNewProf = $('#btnNewProfile');
-  if (btnNewProf) btnNewProf.onclick = () => {
-    clearProfileEditor();
-    renderProfilesList();
+  const btnAddProvider = $('#btnAddProvider');
+  if (btnAddProvider) btnAddProvider.onclick = () => {
+    openProfileEditorForNew();
     /* 不能零反馈：点了像坏了（Pro 线 09-15 修过同一问题） */
-    toast('已新建配置，填写后记得「保存配置」');
+    toast('填写服务商与 Key，保存后就出现在列表里');
   };
+  const btnEditorClose = $('#editorClose');
+  if (btnEditorClose) btnEditorClose.onclick = closeProfileEditor;
+  // 模型列表：手动添加 / 移除（移除在行内）
+  const btnAddModel = $('#btnAddModel');
+  if (btnAddModel) btnAddModel.onclick = addModelFromInput;
+  const modelInputEl = $('#modelInput');
+  if (modelInputEl) modelInputEl.addEventListener('keydown', (e) => {
+    if (e.key === 'Enter') { e.preventDefault(); addModelFromInput(); }
+  });
+  // 获取可用模型：选择器
+  const pickSearch = $('#modelPickSearch');
+  if (pickSearch) pickSearch.addEventListener('input', () => renderModelPicker(pickSearch.value));
+  const btnPickAll = $('#btnPickAll');
+  if (btnPickAll) btnPickAll.onclick = () => setVisibleChecks(true);
+  const btnPickNone = $('#btnPickNone');
+  if (btnPickNone) btnPickNone.onclick = () => setVisibleChecks(false);
+  const btnPickCancel = $('#btnPickCancel');
+  if (btnPickCancel) btnPickCancel.onclick = closeModelPicker;
+  const btnPickAdd = $('#btnPickAdd');
+  if (btnPickAdd) btnPickAdd.onclick = addPickedModels;
   $('#btnClearKey').onclick = async () => {
     if (!confirm('清除当前配置保存的 API Key？（留空保存也可让 Key 不被覆盖）')) return;
     try {
@@ -5497,8 +5919,6 @@ try { bindMemToggles(); } catch (_) {}
   if (baseInput) baseInput.addEventListener('input', () => syncEndpointHint(baseInput.value));
   const btnLoad = $('#btnLoadModels');
   if (btnLoad) btnLoad.onclick = loadModels;
-  const modelSel = $('#modelSelect');
-  if (modelSel) modelSel.onchange = () => { if (modelSel.value) $('#modelInput').value = modelSel.value; };
   $('#btnTestKey').onclick = async () => {
     const apiKey = $('#apiKeyInput').value.trim();
     const model = currentModelValue();
@@ -5671,10 +6091,10 @@ async function wizardTestAndSave() {
       body: JSON.stringify({ apiKey: key, model, baseUrl }),
     });
     if (!r.ok) throw new Error(r.message || 'Key 验证失败');
-    // 2) 保存为配置档案并激活
+    // 2) 保存为服务商配置并激活（一家服务商；先落一个模型，之后可在设置里加更多）
     const save = await fetchJSON('/api/profiles', {
       method: 'POST', headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ name: profileName, baseUrl, model, apiKey: key }),
+      body: JSON.stringify({ name: profileName, baseUrl, models: [{ id: model }], model, apiKey: key }),
     });
     if (!save.ok) throw new Error(save.error || '保存失败');
     await refreshStatus();
@@ -5696,6 +6116,7 @@ function init() {
     // 旧缓存页面缺少新控件时，也保证状态检测继续执行
     console.error('[Academy] 绑定控件失败（请刷新页面或 Ctrl+F5 强制刷新）:', e);
   }
+  try { bindCloseConfirm(); } catch (e) { console.error('[Academy] 关闭确认弹窗初始化失败:', e); }
   try { initScrollFollow(); } catch (e) { console.error('[Academy] 滚动跟随初始化失败:', e); }
   try { initDialogA11y(); } catch (e) { console.error('[Academy] 对话框可达性初始化失败:', e); }
   // 应用外观 + 界面语言

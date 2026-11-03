@@ -54,19 +54,19 @@ app.whenReady().then(async () => {
   const t2 = await resultText();
   results.push({ case: '测试连接（空 Key）给反馈', pass: t2.trim().length > 0, got: t2.slice(0, 80) });
 
-  /* ---- 3. 获取模型（空 Key）→ settingsResult 或模型下拉应有变化 ---- */
-  const optBefore = await ex('document.querySelectorAll("#modelSelect option").length');
+  /* ---- 3. 获取模型（空 Key）→ settingsResult 或候选选择器应有变化 ---- */
+  const pickBefore = await ex('!!document.getElementById("modelPicker") && !document.getElementById("modelPicker").classList.contains("hidden")');
   await ex('document.getElementById("btnLoadModels").click();');
   await sleep(3000);
-  const optAfter = await ex('document.querySelectorAll("#modelSelect option").length');
+  const pickAfter = await ex('!!document.getElementById("modelPicker") && !document.getElementById("modelPicker").classList.contains("hidden")');
   const t3 = await resultText();
-  results.push({ case: '获取模型（空 Key）给反馈', pass: t3.trim().length > 0 || optAfter !== optBefore, got: (t3 || '(无文字)') + ' / 选项 ' + optBefore + '->' + optAfter });
+  results.push({ case: '获取模型（空 Key）给反馈', pass: t3.trim().length > 0 || pickAfter !== pickBefore, got: (t3 || '(无文字)') + ' / 选择器 ' + pickBefore + '->' + pickAfter });
 
-  /* ---- 4. ＋ 新建配置 → 至少给一句 toast 反馈（Pro 线同款问题已修，Flash 需对齐） ---- */
-  await ex('document.getElementById("btnNewProfile").click();');
+  /* ---- 4. ＋ 添加服务商 → 至少给一句 toast 反馈（Pro 线同款问题已修，Flash 需对齐） ---- */
+  await ex('(function(){ var b=document.getElementById("btnAddProvider"); if(b){ b.click(); return 1; } return 0; })()');
   await sleep(600);
   const toast4 = await ex('(function(){var t=document.getElementById("toast");return t&&!t.classList.contains("hidden")?t.textContent:"";})()');
-  results.push({ case: '＋新建配置给反馈', pass: toast4.trim().length > 0, got: toast4 || '(无 toast)' });
+  results.push({ case: '＋添加服务商给反馈', pass: toast4.trim().length > 0, got: toast4 || '(无 toast)' });
 
   /* ---- 5. 记忆 · ＋新增长期记忆 → #memNewBox 应出现 ---- */
   await closeModals();

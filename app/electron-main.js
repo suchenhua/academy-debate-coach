@@ -4,7 +4,7 @@
  *
  * 用 Electron（自带 Chromium）把本地 Web 应用封装成
  * 独立桌面窗口：无浏览器标签栏/地址栏；关窗行为可配
- *（直接退出 / 最小化到托盘，见设置 → 通用 → 关闭窗口时）。
+ *（每次询问 / 直接退出 / 最小化到托盘，见设置 → 通用 → 关闭窗口时）。
  *
  * 流程：
  *   1. 若本地 server 还没起来，用内置 node 隐藏启动 server.js
@@ -189,20 +189,194 @@ let mainWindow = null;
 let serverPort = 0;
 
 /* —— 关闭窗口行为（设置 → 通用 → 关闭窗口时）——
-   quit：点关闭 = 退出整个应用（默认，沿用历史行为）；tray：窗口收进系统托盘，server 继续跑。
+   ask：点关闭 = 先问一句「最小化到托盘 / 直接关闭」（默认）；quit：直接退出整个应用；
+   tray：窗口收进系统托盘，server 继续跑。
    主进程直接读 data/config.json：改完立刻生效、不必重启，也不必给 server 加新接口。 */
+const CLOSE_MODES = ['ask', 'tray', 'quit'];
 let tray = null;
 let trayHintShown = false;
 let allowClose = false;   // 已经落过盘、放行真正关闭
 let isQuitting = false;   // 退出意图已确立（托盘菜单/系统退出/僵尸自清），此后再来的 close 不再改判成隐藏
+let closeAsking = false;  // 询问框已经开着：连点关闭按钮不叠第二层
 
 function uiGeneral() {
   let cfg = {};
   try { cfg = JSON.parse(fs.readFileSync(CONFIG_FILE, 'utf8')); } catch (_) {}
   return {
-    closeBehavior: cfg.closeBehavior === 'tray' ? 'tray' : 'quit',
+    closeBehavior: CLOSE_MODES.includes(cfg.closeBehavior) ? cfg.closeBehavior : 'ask',
     locale: ['zh-CN', 'zh-TW', 'en'].includes(cfg.locale) ? cfg.locale : 'zh-CN',
   };
+}
+
+/* 「点关闭要不要退」这句问话本身也要跟界面语言走，但它是原生弹框、吃不到页面的 locale.js
+   字典 —— 所以在这里自带一套三种语言的文案。 */
+const CLOSE_ASK_TEXT = {
+  'zh-CN': {
+    title: '关闭窗口',
+    message: '要关闭 Academy 辩论教练吗？',
+    detail: '最小化到托盘：窗口收起来，教练和本地服务继续在后台跑，点托盘图标随时唤回。\n'
+      + '直接关闭：连本地服务一起退出，正在跑的任务会中断。',
+    tray: '最小化到托盘',
+    quit: '直接关闭',
+    cancel: '取消',
+    remember: '记住我的选择，下次不再询问',
+  },
+  'zh-TW': {
+    title: '關閉視窗',
+    message: '要關閉 Academy 辯論教練嗎？',
+    detail: '最小化到托盤：視窗收起來，教練和本機服務繼續在背景跑，點托盤圖示隨時喚回。\n'
+      + '直接關閉：連本機服務一起結束，正在跑的任務會中斷。',
+    tray: '最小化到托盤',
+    quit: '直接關閉',
+    cancel: '取消',
+    remember: '記住我的選擇，下次不再詢問',
+  },
+  en: {
+    title: 'Close window',
+    message: 'Close Academy Debate Coach?',
+    detail: 'Minimise to tray: the window hides while the coach and local service keep running — click the tray icon to bring it back.\n'
+      + 'Quit: shuts the local service down too; running tasks are interrupted.',
+    tray: 'Minimise to tray',
+    quit: 'Quit',
+    cancel: 'Cancel',
+    remember: "Remember my choice, don't ask again",
+  },
+};
+const closeAskText = () => CLOSE_ASK_TEXT[uiGeneral().locale] || CLOSE_ASK_TEXT['zh-CN'];
+
+/* 弹框问一句。返回 { choice: 'tray' | 'quit' | null, remember: boolean }
+   null = 取消（窗口继续开着）；出错也按取消处理 —— 关不掉总比莫名其妙没了强。 */
+async function askCloseChoice() {
+  const t = closeAskText();
+  const opts = {
+    type: 'question',
+    title: t.title,
+    message: t.message,
+    detail: t.detail,
+    buttons: [t.tray, t.quit, t.cancel],
+    defaultId: 0,      // 默认停在「最小化到托盘」：误按回车不会把正在跑的任务一起关掉
+    cancelId: 2,       // Esc / 点右上角 × = 取消
+    noLink: true,
+    checkboxLabel: t.remember,
+    checkboxChecked: false,
+  };
+  try {
+    const win = mainWindow && !mainWindow.isDestroyed() ? mainWindow : null;
+    const res = win ? await dialog.showMessageBox(win, opts) : await dialog.showMessageBox(opts);
+    const choice = res.response === 0 ? 'tray' : (res.response === 1 ? 'quit' : null);
+    log('关闭询问：' + (choice || 'cancel') + (res.checkboxChecked ? '（记住选择）' : ''));
+    return { choice, remember: !!res.checkboxChecked };
+  } catch (e) {
+    log('关闭询问弹框失败（按取消处理，窗口保留）: ' + e.message);
+    return { choice: null, remember: false };
+  }
+}
+
+/* —— 「每次询问」的应用内弹窗 ——
+   主进程画不了 HTML，所以把问题经 preload 发到渲染层（app.js 的 showCloseConfirm），
+   拿回答案再决定去留。2.5s 内没收到「已显示」就回退系统原生弹框：
+   页面还没加载完 / 渲染进程卡死时，窗口也必须关得掉。 */
+let closeConfirmPending = null;
+
+ipcMain.on('app:close-confirm-answer', (_e, payload) => {
+  const p = closeConfirmPending;
+  if (!p || !payload || payload.token !== p.token) return;
+  if (payload.shown) {
+    p.shown = true;
+    clearTimeout(p.fallbackTimer);
+    log('应用内关闭询问已显示');
+    return;
+  }
+  p.finish({
+    ok: true,
+    choice: payload.choice === 'tray' || payload.choice === 'quit' ? payload.choice : null,
+    remember: payload.remember === true,
+  });
+});
+
+function askCloseChoiceInApp() {
+  return new Promise((resolve) => {
+    if (!mainWindow || mainWindow.isDestroyed() || !mainWindow.webContents) return resolve({ ok: false });
+    const token = Date.now().toString(36) + '-' + Math.random().toString(36).slice(2, 8);
+    let settled = false;
+    const finish = (r) => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(fallbackTimer);
+      if (closeConfirmPending && closeConfirmPending.token === token) closeConfirmPending = null;
+      resolve(r);
+    };
+    const fallbackTimer = setTimeout(() => {
+      try { mainWindow.webContents.send('app:close-confirm-cancel', token); } catch (_) {}
+      log('应用内关闭询问 2.5s 未显示，回退系统弹框');
+      finish({ ok: false });
+    }, 2500);
+    closeConfirmPending = { token, shown: false, finish, fallbackTimer };
+    try { mainWindow.webContents.send('app:close-confirm', token); }
+    catch (_) { finish({ ok: false }); }
+
+    /* 测试钩子：ACADEMY_TEST_CLOSE_UI=1 时等弹窗渲染出来，程序化点那个按钮 ——
+       走的是与真人点击完全相同的 DOM 路径（不是绕过弹窗直接回答案）。 */
+    if (String(process.env.ACADEMY_TEST_CLOSE_UI || '') === '1') {
+      const target = String(process.env.ACADEMY_TEST_CLOSE_ANSWER || 'cancel').toLowerCase();
+      const btnId = target === 'tray' ? 'closeConfirmTray' : (target === 'quit' ? 'closeConfirmQuit' : 'closeConfirmCancel');
+      const rememberOn = String(process.env.ACADEMY_TEST_CLOSE_REMEMBER || '') === '1';
+      setTimeout(() => {
+        try {
+          mainWindow.webContents.executeJavaScript(
+            '(function(){var b=document.getElementById(' + JSON.stringify(btnId) + ');'
+            + 'var r=document.getElementById("closeConfirmRemember");'
+            + (rememberOn ? 'if(r)r.checked=true;' : '')
+            + 'if(b)b.click();return !!b;})()'
+          );
+        } catch (_) {}
+      }, 1500);
+    }
+  });
+}
+
+/* 自动化测试用的「直接给答案」：不开应用内弹窗时生效（UI 钩子优先）。 */
+function forcedCloseAnswer() {
+  if (String(process.env.ACADEMY_TEST_CLOSE_UI || '') === '1') return null;
+  const forced = String(process.env.ACADEMY_TEST_CLOSE_ANSWER || '').toLowerCase();
+  if (forced !== 'tray' && forced !== 'quit' && forced !== 'cancel') return null;
+  const remember = String(process.env.ACADEMY_TEST_CLOSE_REMEMBER || '') === '1';
+  log('测试模式：关闭询问直接回答 ' + forced + (remember ? '（记住选择）' : ''));
+  return { choice: forced === 'cancel' ? null : forced, remember };
+}
+
+/* 勾了「记住我的选择」→ 把答案写回 config.json，下次不再问。
+   写回走 server 的 POST /api/config：与设置页保存共用同一条归一化通道
+   （主进程自己读写这份文件会和设置页的保存互相覆盖）。server 没起来时退回本地原子写。 */
+function persistCloseBehavior(mode) {
+  if (mode !== 'tray' && mode !== 'quit') return;
+  const payload = JSON.stringify({ closeBehavior: mode });
+  const done = (how) => log('已记住关闭选择：' + mode + '（' + how + '）');
+  const writeFile = () => {
+    try {
+      let cfg = {};
+      try { cfg = JSON.parse(fs.readFileSync(CONFIG_FILE, 'utf8')) || {}; } catch (_) {}
+      cfg.closeBehavior = mode;
+      cfg.closeAskMigrated = true;
+      const tmp = CONFIG_FILE + '.tmp-' + process.pid;
+      fs.writeFileSync(tmp, JSON.stringify(cfg, null, 2), 'utf8');
+      fs.renameSync(tmp, CONFIG_FILE);
+      done('本地写回');
+    } catch (e) { log('记住关闭选择失败: ' + e.message); }
+  };
+  try {
+    const req = http.request({
+      host: '127.0.0.1', port: serverPort, path: '/api/config', method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'Content-Length': Buffer.byteLength(payload) },
+      timeout: 2000,
+    }, (res) => {
+      res.resume();
+      if (res.statusCode === 200) done('server'); else writeFile();
+    });
+    req.on('error', writeFile);
+    req.on('timeout', () => { try { req.destroy(); } catch (_) {} writeFile(); });
+    req.end(payload);
+  } catch (_) { writeFile(); }
 }
 
 const TRAY_TEXT = {
@@ -248,6 +422,21 @@ function destroyTray() {
   if (!tray) return;
   try { tray.destroy(); } catch (_) {}
   tray = null;
+}
+
+/* 把窗口收进托盘。返回 false = 托盘建不出来（调用方一律按直接退出兜底）。 */
+function hideToTray() {
+  if (!ensureTray()) return false;
+  if (!mainWindow || mainWindow.isDestroyed()) return true;
+  mainWindow.hide();
+  if (!trayHintShown && process.platform === 'win32') {
+    trayHintShown = true;
+    try {
+      tray.displayBalloon({ iconType: 'info', title: trayText('hint'), content: trayText('hintBody') });
+    } catch (_) {}
+  }
+  log('按设置最小化到托盘（server 与单实例锁保持运行）');
+  return true;
 }
 
 /* 托盘菜单「退出」：走与点关闭按钮完全相同的通道（先落盘、再由 close 处理器放行），
@@ -330,17 +519,38 @@ function createWindow(url) {
         'typeof flushChatsSync === "function" ? (flushChatsSync(), true) : true', true
       );
     } catch (_) {}
-    if (!isQuitting && uiGeneral().closeBehavior === 'tray') {
-      if (ensureTray()) {
-        mainWindow.hide();
-        if (!trayHintShown && process.platform === 'win32') {
-          trayHintShown = true;
-          try {
-            tray.displayBalloon({ iconType: 'info', title: trayText('hint'), content: trayText('hintBody') });
-          } catch (_) {}
+    if (!isQuitting) {
+      const behavior = uiGeneral().closeBehavior;
+      if (behavior === 'tray') {
+        if (hideToTray()) return;
+      } else if (behavior === 'ask') {
+        /* 没有托盘图标就没有「最小化到托盘」这个选项：与其弹一个选了也做不到的框，
+           不如按直接退出处理（与 tray 模式的兜底同一条路）。 */
+        if (!fs.existsSync(ICON)) {
+          log('没有托盘图标，跳过关闭询问，按直接退出处理');
+        } else if (closeAsking) {
+          return;   // 询问框已经开着：连点关闭不叠第二层
+        } else {
+          closeAsking = true;
+          let answer = { choice: null, remember: false };
+          const forced = forcedCloseAnswer();
+          if (forced) {
+            answer = forced;
+          } else {
+            let viaApp = false;
+            try {
+              const r = await askCloseChoiceInApp();
+              if (r && r.ok) { answer = { choice: r.choice, remember: r.remember }; viaApp = true; }
+            } catch (_) {}
+            /* 应用内弹窗没起来（页面未就绪 / 渲染进程异常）→ 退回系统原生框，别把窗口卡死 */
+            if (!viaApp) { try { answer = await askCloseChoice(); } catch (_) {} }
+          }
+          closeAsking = false;
+          if (answer.remember && answer.choice) persistCloseBehavior(answer.choice);
+          if (!answer.choice) return;                       // 取消：窗口留着
+          if (answer.choice === 'tray' && hideToTray()) return;
+          // 选「直接关闭」，或选中托盘但托盘建不出来 → 落到下面真正关闭
         }
-        log('按设置最小化到托盘（server 与单实例锁保持运行）');
-        return;
       }
     }
     allowClose = true;
@@ -736,7 +946,8 @@ app.whenReady().then(async () => {
   }
 
   /* 仅测试用：设置 ACADEMY_TEST_CLOSE_MS 后，到点走一次与「点关闭按钮」完全相同的代码路径 ——
-     托盘只能由主窗口的 close 事件触发，渲染层碰不到，只能这样真机验证两种关闭行为。 */
+     托盘只能由主窗口的 close 事件触发，渲染层碰不到，只能这样真机验证三种关闭行为。
+    配合 ACADEMY_TEST_CLOSE_ANSWER=tray|quit|cancel 给「每次询问」模式预置答案（原生弹框点不到）。 */
   const testClose = Number(process.env.ACADEMY_TEST_CLOSE_MS || 0);
   if (testClose > 0) {
     setTimeout(() => {

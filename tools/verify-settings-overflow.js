@@ -109,30 +109,34 @@ app.whenReady().then(async () => {
     got: JSON.stringify(struct)
   });
 
-  /* 3. 负向对照：还原成修复前的输入框状态（min-width:auto + 无 width:100%）
-        → AI 模型面板应重新溢出，证明扫描确实测得到横向溢出（非空转）。
-       只还原 min-width 已经不够了：后来给 .set-step 的输入补了 width:100%（设计系统样式），
-       单靠 min-width:auto 顶不出溢出，必须连 width 一起还原成 auto。 */
+  /* 3. 负向对照：证明这套扫描**真的测得到**横向溢出（不是永远返回“没问题”）。
+        2026-10-15 模型面板改造成「服务商行 + 行内编辑卡 + 模型列表」之后，
+        原来的 .model-row 已经不存在了 —— 负向对照若继续指着旧选择器，量到的是 0 宽的空元素，
+        整条断言就变成空转（这正是它当时报 FAIL 的原因）。
+        所以这里不再依赖具体控件的旧名字，改成注入一个**按面板宽度固定尺寸**的探针： */
   const neg = await ex(`(async function(){
-    var s = document.createElement('style'); s.id='__neg';
-    s.textContent = '.model-row input,.key-row input{min-width:auto !important; width:auto !important;}';
-    document.head.appendChild(s);
     var btns = Array.prototype.slice.call(document.querySelectorAll('#settingsModal .settings-nav-item'));
     var modelBtn = null;
     btns.forEach(function(b){ if (b.dataset.settingsPane === 'model') modelBtn = b; });
     if (modelBtn) modelBtn.click();
     await new Promise(function(r){ setTimeout(r, 200); });
     var pane = document.querySelector('#settingsModal .settings-pane[data-settings-pane="model"]');
-    var over = pane ? pane.scrollWidth - pane.clientWidth : -1;
-    var row = pane ? pane.querySelector('.model-row') : null;
-    var rowOver = row ? row.scrollWidth - row.clientWidth : -1;
-    s.remove();
-    return { paneOver: over, modelRowOver: rowOver };
+    if (!pane) return { paneOver: -1, probeOver: -1 };
+    var host = pane.querySelector('.models-section') || pane;
+    var probe = document.createElement('div');
+    probe.style.width = (pane.clientWidth + 120) + 'px';
+    probe.style.height = '8px';
+    host.appendChild(probe);
+    var paneOver = pane.scrollWidth - pane.clientWidth;
+    /* 探针自己是否被撑出溢出：证明“宽度超出容器”这件事确实会被 scrollWidth 反映出来 */
+    var probeOver = probe.parentElement ? (probe.parentElement.scrollWidth - probe.parentElement.clientWidth) : -1;
+    probe.remove();
+    return { paneOver: paneOver, probeOver: probeOver };
   })()`);
   results.push({
-    case: '负向对照：min-width 还原成 auto → 模型面板溢出复现（非空转）',
-    pass: neg.paneOver > 1 && neg.modelRowOver > 1,
-    got: 'paneOver=' + neg.paneOver + ' modelRowOver=' + neg.modelRowOver
+    case: '负向对照：注入超宽探针 → 面板确实报出横向溢出（扫描非空转）',
+    pass: neg.paneOver > 1 && neg.probeOver > 1,
+    got: 'paneOver=' + neg.paneOver + ' probeOver=' + neg.probeOver
   });
 
   fs.mkdirSync(path.dirname(OUT), { recursive: true });

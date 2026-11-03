@@ -4,15 +4,18 @@
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>逻敏 · Academy 辩论教练</title>
-  <link rel="stylesheet" href="/tokens.css?v=4.0.0" />
-  <link rel="stylesheet" href="/style.css?v=3.28.17" />
-  <link rel="stylesheet" href="/ui.css?v=4.1.0" />
+  <link rel="stylesheet" href="/tokens.css?v=4.1.1" />
+  <link rel="stylesheet" href="/style.css?v=3.29.5" />
+  <link rel="stylesheet" href="/ui.css?v=4.2.2" />
   <script src="/icons.js?v=4.0.1"></script>
   <link rel="icon" href="data:image/svg+xml,<svg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 100 100%22><text y=%22.9em%22 font-size=%2290%22>🎓</text></svg>" />
 </head>
 <body>
   <div id="app">
     <header class="topbar">
+      <button type="button" class="sidebar-toggle" id="sidebarToggle" title="收起侧边栏" aria-label="收起侧边栏" aria-expanded="true">
+        <svg class="ic" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><use href="#i-sidebar"></use></svg>
+      </button>
       <div class="brand">
         <span class="brand-logo"><svg class="ic" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><use href="#i-book"></use></svg></span>
         <div class="brand-text">
@@ -29,7 +32,6 @@
     </header>
 
     <div class="layout">
-      <div class="sidebar-toggle" id="sidebarToggle" title="收起 / 展开侧边栏">◀</div>
       <aside class="sidebar">
         <nav class="modes" id="modeNav">
           <button class="mode-btn active" data-mode="free"><svg class="ic" width="19" height="19" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><use href="#i-free"></use></svg><div><b>自由问答</b></div></button>
@@ -40,8 +42,7 @@
 
         <section class="side-section history-section">
           <div class="side-head">
-            <h3><svg class="ic" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><use href="#i-history"></use></svg>对话历史</h3>
-            <button id="btnClearHistory" class="link-btn" title="清空本地历史">清空</button>
+            <h2><svg class="ic" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><use href="#i-history"></use></svg>对话历史</h2>            <button id="btnClearHistory" class="link-btn" title="清空本地历史">清空</button>
           </div>
           <div class="history-search">
             <input type="text" id="historySearchInput" placeholder="搜索全部对话内容…" autocomplete="off" />
@@ -101,8 +102,10 @@
                 <div id="gearMenu" class="gear-menu hidden" role="menu">
                   <div class="gear-row gear-row-model">
                     <span class="gear-row-label">模型</span>
-                    <select id="composerModelSelect" class="gear-model-select" title="切换当前使用的 AI 配置（对话中随时切换）"></select>
+                    <span class="gear-row-value" id="gearModelValue"></span>
                   </div>
+                  <!-- 模型列表：按服务商分组（对齐 DSH 的模型面板）。点一个即可切换，对话中立即生效。 -->
+                  <div class="gear-model-list" id="gearModelList" role="group" aria-label="模型列表"></div>
                   <div class="gear-row gear-row-effort">
                     <span class="gear-row-label">推理等级</span>
                     <span id="gearEffortValue" class="gear-row-value"></span>
@@ -141,7 +144,7 @@
       <div class="modal-head">
         <h2 id="settingsTitle"><svg class="ic" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><use href="#i-settings"></use></svg>设置</h2>
         <span id="settingsBadge" class="settings-badge"></span>
-        <button class="modal-close" data-close="settingsModal"><svg class="ic" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><use href="#i-close"></use></svg></button>
+        <button class="modal-close" aria-label="关闭" data-close="settingsModal"><svg class="ic" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><use href="#i-close"></use></svg></button>
       </div>
       <div class="settings-layout">
         <!-- 左侧导航 -->
@@ -159,22 +162,27 @@
 
         <!-- 右侧面板 -->
         <div class="settings-panes">
-          <!-- 面板：AI 模型（多配置） -->
+          <!-- 面板：AI 模型（服务商行 + 行内编辑卡，对齐 DSH 设置→模型） -->
           <div class="settings-pane active" data-settings-pane="model">
             <div class="welcome-note hidden" id="welcomeNote">
-              <b>欢迎使用逻敏辩论教练！</b> 配置一套「服务商 + Key + 模型」并保存，可保存多套随时切换。
+              <b>欢迎使用逻敏辩论教练！</b> 添加一家服务商、填好 Key，就能在它的模型里随时切换。
             </div>
-            <div class="profiles-layout">
-              <!-- 左侧：配置列表 -->
-              <div class="profiles-list" id="profilesList">
-                <div class="profiles-list-head">
-                  <span>已保存配置</span>
-                  <button type="button" class="btn ghost small" id="btnNewProfile"><svg class="ic" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><use href="#i-plus"></use></svg>新建</button>
-                </div>
-                <div id="profilesListBody" class="profiles-list-body"><div class="profile-empty">加载中…</div></div>
+            <div class="models-section">
+              <p class="models-intro">一家服务商一行。点「编辑」改地址、Key 和它的模型列表；对话里可以随时换模型。</p>
+
+              <!-- 服务商行：已配置的在上，未配置的在下 -->
+              <ul class="provider-rows" id="providerRows"></ul>
+              <div class="models-add">
+                <button type="button" class="btn ghost" id="btnAddProvider"><svg class="ic" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><use href="#i-plus"></use></svg>添加服务商</button>
               </div>
-              <!-- 右侧：编辑器 -->
-              <div class="profile-editor">
+
+              <!-- 行内编辑卡：一次只开一张 -->
+              <div class="provider-editor hidden" id="providerEditor">
+                <div class="pe-head">
+                  <b id="editorTitle">编辑服务商</b>
+                  <button type="button" class="modal-close small" id="editorClose" title="收起"><svg class="ic" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><use href="#i-close"></use></svg></button>
+                </div>
+
                 <div class="set-step">
                   <div class="set-step-title">服务商</div>
                   <div class="provider-grid" id="providerGrid">
@@ -198,16 +206,19 @@
                     </button>
                   </div>
                 </div>
+
+                <div class="set-step">
+                  <div class="set-step-title">配置名称</div>
+                  <input type="text" id="profileNameInput" placeholder="如：DeepSeek 官方 / 硅基流动" autocomplete="off" />
+                </div>
+
                 <div class="set-step">
                   <div class="set-step-title">API 地址（OpenAI 兼容）</div>
                   <input type="text" id="baseUrlInput" placeholder="https://api.deepseek.com" autocomplete="off" />
                   <p class="endpoint-hint" id="endpointHint" role="status"></p>
                   <small class="field-hint">一般不用改：选服务商时已自动填好。手填到域名或 /v1 即可，程序会自动补 /chat/completions。</small>
                 </div>
-                <div class="set-step">
-                  <div class="set-step-title">配置名称</div>
-                  <input type="text" id="profileNameInput" placeholder="如：DeepSeek 主力 / 硅基流动" autocomplete="off" />
-                </div>
+
                 <div class="set-step">
                   <div class="set-step-title">API Key <span class="require-dot">*</span></div>
                   <div class="key-row">
@@ -234,7 +245,7 @@
                         <li><b>存好它（很重要）。</b>⚠️ 这串 Key <b>只显示这一次</b>，关掉页面就再也看不到了。
                           请马上粘贴到<b>电脑自带的「记事本」</b>里，保存起来备用。</li>
                         <li><b>填回本页。</b>把 Key 粘贴到上面的 <b>「API Key」</b>框 →
-                          点最下面的 <b>「保存配置」</b>。想确认能不能用，再点一下 <b>「🔌 测试连接」</b>。</li>
+                          点 <b>「保存」</b>。想确认能不能用，再点一下 <b>「测试连接」</b>。</li>
                       </ol>
                       <p class="ak-note">💡 用之前一般要给账户<b>充一点钱</b>（按用量扣费，很便宜，先充几块钱能用很久）。
                         充值入口也是登录后左边的菜单。</p>
@@ -244,13 +255,18 @@
                     </div>
                   </details>
                 </div>
+
+                <!-- 模型列表：这家服务商名下可选的模型，对话里就在这些之间切换 -->
                 <div class="set-step">
-                  <div class="set-step-title">模型</div>
-                  <div class="model-row">
-                    <input type="text" id="modelInput" list="modelPresets" placeholder="填好 Key 后点「获取模型」自动拉取；也可手动输入" autocomplete="off" />
-                    <button id="btnLoadModels" class="btn primary">获取模型</button>
+                  <div class="set-step-title">模型列表
+                    <span class="set-step-desc" id="modelListCount"></span>
+                    <button id="btnLoadModels" class="btn ghost small model-fetch-btn">获取可用模型</button>
                   </div>
-                  <select id="modelSelect" class="model-select hidden" title="从服务商获取的模型列表"></select>
+                  <div class="model-rows" id="modelRows"></div>
+                  <div class="model-add-row">
+                    <input type="text" id="modelInput" list="modelPresets" placeholder="手动添加一个模型名，如 deepseek-flash" autocomplete="off" />
+                    <button id="btnAddModel" class="btn ghost">添加</button>
+                  </div>
                   <datalist id="modelPresets">
                     <option value="deepseek-flash"></option><option value="deepseek-v4-pro"></option>
                     <option value="deepseek-chat"></option><option value="deepseek-reasoner"></option>
@@ -258,16 +274,33 @@
                     <option value="Qwen/Qwen2.5-72B-Instruct"></option><option value="deepseek-ai/DeepSeek-V3"></option>
                     <option value="moonshot-v1-8k"></option><option value="glm-4-flash"></option><option value="gpt-4o-mini"></option>
                   </datalist>
-                  <small class="field-hint" id="modelHelp">不点「获取模型」也行，直接手输模型名。</small>
+                  <small class="field-hint" id="modelHelp">左边的圆点是「对话时用哪个」。列表里的模型会在对话框的模型席里按这家服务商分组出现。</small>
+
+                  <!-- 获取可用模型：可搜索、可多选（对齐 DSH 的「添加所选」） -->
+                  <div class="model-picker hidden" id="modelPicker">
+                    <div class="mp-head">
+                      <input type="search" id="modelPickSearch" placeholder="搜索模型…" autocomplete="off" />
+                      <button type="button" class="link-btn" id="btnPickAll">全选</button>
+                      <button type="button" class="link-btn" id="btnPickNone">取消全选</button>
+                    </div>
+                    <div class="mp-list" id="modelPickList"></div>
+                    <div class="mp-foot">
+                      <span class="mp-status" id="modelPickStatus"></span>
+                      <button type="button" class="btn ghost small" id="btnPickCancel">取消</button>
+                      <button type="button" class="btn primary small" id="btnPickAdd">添加所选</button>
+                    </div>
+                  </div>
                 </div>
+
                 <div class="profile-edit-actions">
-                  <button type="button" class="btn primary" id="btnSaveProfile">保存配置</button>
+                  <button type="button" class="btn primary" id="btnSaveProfile">保存</button>
                   <button type="button" class="btn ghost" id="btnTestKey"><svg class="ic" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><use href="#i-plugin"></use></svg>测试连接</button>
                 </div>
                 <p class="profile-edit-result" id="settingsResult"></p>
               </div>
             </div>
           </div>
+
           <!-- 面板：通用 -->
           <div class="settings-pane" data-settings-pane="general">
             <div class="general-section">
@@ -290,7 +323,7 @@
               <div class="gen-row">
                 <span class="gen-label">对话字体大小</span>
                 <div class="gen-choices gen-fontsize">
-                  <input type="range" id="chatFontRange" min="12" max="22" step="1" value="15" />
+                  <input type="range" id="chatFontRange" min="12" max="22" step="1" value="15" aria-label="对话字体大小">
                   <span class="fs-value" id="chatFontValue">15px</span>
                   <button type="button" class="btn ghost small" id="btnResetFont" title="恢复默认 15px">默认</button>
                 </div>
@@ -303,7 +336,7 @@
               </div>
               <div class="gen-row gen-row-wrap">
                 <span class="gen-label">工作步骤展示</span>
-                <select class="gen-select" id="stepsDisplayChoices">
+                <select class="gen-select" id="stepsDisplayChoices" aria-label="工作步骤展示">
                   <option value="simple">简洁</option>
                   <option value="standard">标准</option>
                   <option value="detailed">详细</option>
@@ -315,7 +348,7 @@
               </div>
               <div class="gen-row gen-row-wrap">
                 <span class="gen-label">繁忙时的发送行为</span>
-                <select class="gen-select" id="busyBehaviorChoices">
+                <select class="gen-select" id="busyBehaviorChoices" aria-label="繁忙时的发送行为">
                   <option value="queue">排队发送</option>
                   <option value="interrupt">插话发送</option>
                 </select>
@@ -325,7 +358,7 @@
               </div>
               <div class="gen-row gen-row-wrap">
                 <span class="gen-label">发送消息</span>
-                <select class="gen-select" id="sendHotkeyChoices">
+                <select class="gen-select" id="sendHotkeyChoices" aria-label="发送热键">
                   <option value="ctrlEnter">Ctrl + Enter 发送</option>
                   <option value="enter">Enter 发送</option>
                 </select>
@@ -335,11 +368,12 @@
               </div>
               <div class="gen-row gen-row-wrap" id="closeBehaviorRow">
                 <span class="gen-label">关闭窗口时</span>
-                <select class="gen-select" id="closeBehaviorChoices">
-                  <option value="quit">直接退出程序</option>
+                <select class="gen-select" id="closeBehaviorChoices" aria-label="关闭窗口时">
+                  <option value="ask">每次询问我</option>
                   <option value="tray">最小化到系统托盘</option>
+                  <option value="quit">直接退出程序</option>
                 </select>
-                <small class="field-hint">点标题栏关闭按钮：<b>直接退出程序</b> = 连本地服务一起关掉；<b>最小化到系统托盘</b> = 只收起窗口，Agent 继续在后台跑；双击托盘图标（或再点一次桌面快捷方式）唤回窗口，右键托盘图标选「退出」才真正关掉程序。</small>
+                <small class="field-hint">点标题栏关闭按钮：<b>每次询问我</b> = 弹窗让你当场选（最小化到托盘 / 直接关闭 / 取消），勾了「记住我的选择」以后不再问；<b>最小化到系统托盘</b> = 只收起窗口，Agent 继续在后台跑，双击托盘图标（或再点一次桌面快捷方式）唤回窗口，右键托盘图标选「退出」才真正关掉程序；<b>直接退出程序</b> = 连本地服务一起关掉。</small>
               </div>
             </div>
             <div class="general-section" style="margin-top:14px">
@@ -347,7 +381,7 @@
               <div class="gen-row">
                 <span class="gen-label">自动学习</span>
                 <div class="gen-choices">
-                  <label class="lib-switch"><input type="checkbox" id="memAutoLearnToggle" /><span id="memAutoLearnLabel">开（默认）</span></label>
+                  <label class="lib-switch"><input type="checkbox" id="memAutoLearnToggle" aria-label="自动学习"><span id="memAutoLearnLabel">开（默认）</span></label>
                   <small class="field-hint" style="display:block;width:100%;margin-top:4px">
                     开启后，教练会自动把对话里「值得长期记住」的内容归档进记忆，并把近期流水中有价值的段落晋升为长期记忆。关闭后只有你手动添加的记忆。
                   </small>
@@ -356,7 +390,7 @@
               <div class="gen-row">
                 <span class="gen-label">自动引用</span>
                 <div class="gen-choices">
-                  <label class="lib-switch"><input type="checkbox" id="memAutoCiteToggle" /><span id="memAutoCiteLabel">开（默认）</span></label>
+                  <label class="lib-switch"><input type="checkbox" id="memAutoCiteToggle" aria-label="自动引用"><span id="memAutoCiteLabel">开（默认）</span></label>
                   <small class="field-hint" style="display:block;width:100%;margin-top:4px">
                     开启后，每次任务会自动把相关记忆注入上下文。关闭后记忆仍然保留、可在记忆中心查看，但不再影响回答。
                   </small>
@@ -365,7 +399,7 @@
               <div class="gen-row">
                 <span class="gen-label">候选审阅</span>
                 <div class="gen-choices">
-                  <label class="lib-switch"><input type="checkbox" id="memReviewToggle" /><span id="memReviewLabel">关（默认）</span></label>
+                  <label class="lib-switch"><input type="checkbox" id="memReviewToggle" aria-label="候选审阅"><span id="memReviewLabel">关（默认）</span></label>
                   <small class="field-hint" style="display:block;width:100%;margin-top:4px">
                     开启后，教练提出的记忆候选<b>先进「待审阅」</b>，你在记忆中心逐条<b>批准或否决</b>，不再自动入库。
                     被否决的内容会进否决清单，以后同样的内容不再入库也不再注入。
@@ -385,7 +419,8 @@
                 <button type="button" class="gen-choice" data-search-mode="free"><svg class="ic" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><use href="#i-bolt"></use></svg>基础检索（免费）</button>
               </div>
               <small class="field-hint" style="margin-top:8px; display:block;">
-                <b>⭐ 深度检索（推荐）</b>：用当前模型提供商的联网搜索，结果更准、覆盖更全，会消耗当前模型的额度。<br>
+                <b>⭐ 深度检索（推荐）</b>：走 DeepSeek 官方 Search API（2026-11 起从模型接口里独立出来的新接口），
+                用你填的同一把 DeepSeek Key，结果更准、覆盖更全；按<b>成功请求</b>计费（约 $0.75 / 1000 次，失败不计费）。<br>
                 <b>⚡ 基础检索</b>：不花钱，本地抓取 Bing/DuckDuckGo。但覆盖有限，
                 部分网络下免费搜索源会被限制，<b>可能搜不到相关结果</b>（届时会明确提示你切回深度检索）。<br>
                 <b>建议保持「深度检索」</b>——辩论备赛要查的多是学术概念、法条、新闻数据，
@@ -669,6 +704,17 @@ whenToUse: 可选：触发条件描述。
             </div>
 
             <div class="about-section">
+              <h3 class="about-h"><svg class="ic" width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><use href="#i-sparkle"></use></svg>产品反馈</h3>
+              <div class="about-feedback">
+                <img class="about-feedback-qr" src="/assets/feedback-qr.png" alt="Academic 系列产品反馈意见问卷二维码" width="132" height="132" />
+                <div class="about-feedback-text">
+                  <b>Academic 系列产品反馈意见</b>
+                  <p class="about-p about-muted">微信扫码填写：哪里不好用、还想要什么功能，都可以直接说。</p>
+                </div>
+              </div>
+            </div>
+
+            <div class="about-section">
               <h3 class="about-h"><svg class="ic" width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><use href="#i-free"></use></svg>联系我们</h3>
               <div class="about-contact">
                 <div class="about-contact-row">
@@ -714,7 +760,7 @@ whenToUse: 可选：触发条件描述。
     <div class="modal-box small">
       <div class="modal-head">
         <h2 id="inputModalTitle">请输入</h2>
-        <button class="modal-close" data-close="inputModal"><svg class="ic" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><use href="#i-close"></use></svg></button>
+        <button class="modal-close" aria-label="关闭" data-close="inputModal"><svg class="ic" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><use href="#i-close"></use></svg></button>
       </div>
       <div class="modal-body">
         <div id="inputModalHint" class="input-modal-hint hidden"></div>
@@ -727,12 +773,33 @@ whenToUse: 可选：触发条件描述。
     </div>
   </div>
 
+  <!-- 关闭窗口确认：应用内样式弹窗（不是 Windows 原生消息框）。主进程发起、答案经 IPC 回去。
+       文案是静态中文，简繁/英文由 locale.js 按界面语言替换。 -->
+  <div id="closeConfirmModal" class="modal hidden" role="dialog" aria-modal="true" aria-labelledby="closeConfirmTitle">
+    <div class="modal-box small close-confirm-box">
+      <div class="modal-head">
+        <h2 id="closeConfirmTitle">关闭窗口</h2>
+        <button class="modal-close" id="closeConfirmX" data-close="closeConfirmModal" aria-label="取消"><svg class="ic" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><use href="#i-close"></use></svg></button>
+      </div>
+      <div class="modal-body">
+        <p class="close-confirm-msg">要关闭 Academy 辩论教练吗？</p>
+        <p class="close-confirm-detail">最小化到托盘：窗口收起来，教练和本地服务继续在后台跑，点托盘图标随时唤回。<br>直接关闭：连本地服务一起退出，正在跑的任务会中断。</p>
+        <label class="close-confirm-remember"><input type="checkbox" id="closeConfirmRemember" /><span>记住我的选择，下次不再询问</span></label>
+        <div class="modal-actions close-confirm-actions">
+          <button type="button" class="btn ghost" id="closeConfirmCancel">取消</button>
+          <button type="button" class="btn" id="closeConfirmQuit">直接关闭</button>
+          <button type="button" class="btn primary" id="closeConfirmTray" data-autofocus>最小化到托盘</button>
+        </div>
+      </div>
+    </div>
+  </div>
+
   <!-- 工具弹窗 -->
   <div id="toolsModal" class="modal hidden" role="dialog" aria-modal="true" aria-labelledby="toolsTitle">
     <div class="modal-box small">
       <div class="modal-head">
         <h2 id="toolsTitle"><svg class="ic" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><use href="#i-toolbox"></use></svg>工具箱</h2>
-        <button class="modal-close" data-close="toolsModal"><svg class="ic" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><use href="#i-close"></use></svg></button>
+        <button class="modal-close" aria-label="关闭" data-close="toolsModal"><svg class="ic" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><use href="#i-close"></use></svg></button>
       </div>
       <div class="modal-body">
         <div id="toolsList" class="tools-list"></div>
@@ -745,7 +812,7 @@ whenToUse: 可选：触发条件描述。
     <div class="modal-box deliver-box">
       <div class="modal-head">
         <h2 id="deliverTitle"><svg class="ic" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><use href="#i-package"></use></svg>产物空间</h2>
-        <button class="modal-close" data-close="deliverModal"><svg class="ic" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><use href="#i-close"></use></svg></button>
+        <button class="modal-close" aria-label="关闭" data-close="deliverModal"><svg class="ic" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><use href="#i-close"></use></svg></button>
       </div>
       <div class="modal-body">
         <p class="memory-hint">Agent 的长篇交付会写成文件保存在 <code>data/deliverables/</code>。在这里<b>预览 / 转 Word / 转 Excel / 存 PDF / 导出到任意文件夹</b>。</p>
@@ -811,7 +878,7 @@ whenToUse: 可选：触发条件描述。
     <div class="modal-box memory-box">
       <div class="modal-head">
         <h2 id="memoryTitle"><svg class="ic" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><use href="#i-memory"></use></svg>记忆中心</h2>
-        <button class="modal-close" data-close="memoryModal"><svg class="ic" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><use href="#i-close"></use></svg></button>
+        <button class="modal-close" aria-label="关闭" data-close="memoryModal"><svg class="ic" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><use href="#i-close"></use></svg></button>
       </div>
       <div class="modal-body">
         <p class="memory-hint" id="memoryHint">记忆分两层：<b>长期记忆</b>（精炼持久事实）与<b>每日流水</b>（当天观察/备忘）。Agent 会自动读写，你也可以<b>手动新增 / 编辑 / 删除</b>任意一条 —— 鼠标移到条目上就会出现「✏️ 编辑 / 🗑 删除」。</p>
@@ -841,7 +908,7 @@ whenToUse: 可选：触发条件描述。
     <div class="modal-box library-box">
       <div class="modal-head">
         <h2 id="libraryTitle"><svg class="ic" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><use href="#i-library"></use></svg>个人资料库</h2>
-        <button class="modal-close" data-close="libraryModal"><svg class="ic" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><use href="#i-close"></use></svg></button>
+        <button class="modal-close" aria-label="关闭" data-close="libraryModal"><svg class="ic" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><use href="#i-close"></use></svg></button>
       </div>
       <div class="modal-body">
         <p class="memory-hint">
@@ -850,7 +917,7 @@ whenToUse: 可选：触发条件描述。
           资料只保存在本机 <code>data/library/</code>，不上传任何服务器。
         </p>
         <div class="lib-switch-row">
-          <label class="lib-switch"><input type="checkbox" id="libEnabledToggle" checked /><span>备赛 / 复盘时自动检索资料库</span></label>
+          <label class="lib-switch"><input type="checkbox" id="libEnabledToggle" checked aria-label="启用个人资料库"><span>备赛 / 复盘时自动检索资料库</span></label>
           <span id="libMeta" class="lib-meta">—</span>
         </div>
         <div class="lib-drop" id="libDrop">
@@ -912,7 +979,7 @@ whenToUse: 可选：触发条件描述。
     <div class="modal-box wizard-box">
       <div class="modal-head">
         <h2 id="wizardTitle">欢迎使用逻敏 · 辩论教练</h2>
-        <button class="modal-close" data-close="welcomeModal"><svg class="ic" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><use href="#i-close"></use></svg></button>
+        <button class="modal-close" aria-label="关闭" data-close="welcomeModal"><svg class="ic" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><use href="#i-close"></use></svg></button>
       </div>
       <div class="modal-body">
         <div class="wizard-progress" id="wizardProgress">
@@ -1028,7 +1095,7 @@ whenToUse: 可选：触发条件描述。
     <div class="modal-box md-reader-box">
       <div class="modal-head">
         <h2 id="mdReaderTitle"><svg class="ic" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><use href="#i-book"></use></svg>Markdown 阅读器</h2>
-        <button class="modal-close" data-close="mdModal"><svg class="ic" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><use href="#i-close"></use></svg></button>
+        <button class="modal-close" aria-label="关闭" data-close="mdModal"><svg class="ic" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><use href="#i-close"></use></svg></button>
       </div>
       <div class="modal-body md-reader-body">
         <div class="md-reader-bar">
@@ -1048,9 +1115,9 @@ whenToUse: 可选：触发条件描述。
       </div>
     </div>
   </div>
-  <script src="/locale.js?v=1.5.2"></script>
+  <script src="/locale.js?v=1.5.4"></script>
   <!-- Codex 风格「模型 + 推理等级」控件：必须早于 app.js（app.js 的 initComposerGear 要用它） -->
-  <script src="/effort-slider.js?v=1.0.0"></script>
-  <script src="/app.js?v=3.43.2"></script>
+  <script src="/effort-slider.js?v=1.0.1"></script>
+  <script src="/app.js?v=3.43.9"></script>
 </body>
 </html>

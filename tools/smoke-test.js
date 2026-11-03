@@ -916,9 +916,9 @@ async function main() {
             && /^Engine ready · /.test(applyR('引擎就绪 · deepseek-chat'))
             && applyR('1,234 字') === '1,234 chars'
             && applyR('⏳ 排队第 1 位 · 对话').includes('Chat'));
-          check('Phase5.4-5.9/6.0/6.2 缓存版本号已提升（locale v1.5.2 / app v3.43.2 / style 3.28.17 / icons 4.0.1 / ui 4.1.0）',
-            htmlSrc.includes('/locale.js?v=1.5.2') && htmlSrc.includes('/app.js?v=3.43.2')
-            && htmlSrc.includes('/style.css?v=3.28.17') && htmlSrc.includes('/ui.css?v=4.1.0'));
+          check('Phase5.4-5.9/6.0/6.2 缓存版本号已提升（locale v1.5.4 / app v3.43.9 / style 3.29.5 / icons 4.0.1 / ui 4.2.2）',
+            htmlSrc.includes('/locale.js?v=1.5.4') && htmlSrc.includes('/app.js?v=3.43.9')
+            && htmlSrc.includes('/style.css?v=3.29.5') && htmlSrc.includes('/ui.css?v=4.2.2'));
           check('Phase5.5 英文观察器同步执行且吞掉自触发记录（切模式不闪中文）',
             locSrc.includes('enObserver.takeRecords()')
             && !/setTimeout\(\s*\(\)\s*=>\s*\{[^}]*applyEnglishUI/s.test(locSrc));
@@ -1483,8 +1483,8 @@ async function main() {
           && /id:\s*'high'/.test(sliderSrc) && /id:\s*'max'/.test(sliderSrc));
         /* 颜色/能量/粒子是**位置的纯函数**：这四条的锚点值来自参考实现，
            改坏了会直接改变"一档一色、越往右越通电"这个核心观感。 */
-        check('★ 控件配色锚点：第二档以前纯蓝、high 处转紫、能量 0→0.5→1',
-          /COLOR_BLUE = \[77, 147, 248\]/.test(sliderSrc)
+        check('★ 控件配色锚点：第二档以前纯品牌靛蓝、high 处转紫、能量 0→0.5→1',
+          /COLOR_BLUE = \[18, 10, 143\]/.test(sliderSrc)
           && /COLOR_VIOLET = \[147, 51, 234\]/.test(sliderSrc)
           && /ENERGY_START = 1 \/ 3/.test(sliderSrc)
           && /ENERGY_END = 2 \/ 3/.test(sliderSrc));

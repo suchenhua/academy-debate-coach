@@ -259,7 +259,7 @@ function coverXml(title) {
   const dateStr = now.getFullYear() + ' 年 ' + (now.getMonth() + 1) + ' 月 ' + now.getDate() + ' 日';
   const blank = '<w:p><w:pPr><w:spacing w:after="0"/></w:pPr></w:p>';
   const t = '<w:p><w:pPr><w:jc w:val="center"/></w:pPr>' +
-    '<w:r><w:rPr>' + FONT_YAHEI + '<w:b/><w:color w:val="1F3864"/><w:sz w:val="44"/><w:szCs w:val="44"/></w:rPr>' +
+    '<w:r><w:rPr>' + FONT_YAHEI + '<w:b/><w:color w:val="120A8F"/><w:sz w:val="44"/><w:szCs w:val="44"/></w:rPr>' +
     '<w:t xml:space="preserve">' + escXml(title) + '</w:t></w:r></w:p>';
   const meta = paraXml('逻敏辩论教练 · ' + dateStr, null, { align: 'center', run: { size: '18', color: '8A93A6' } }, []); // 9pt
   const br = '<w:p><w:r><w:br w:type="page"/></w:r></w:p>';
@@ -303,8 +303,8 @@ const FONT_YAHEI = '<w:rFonts w:ascii="Microsoft YaHei" w:hAnsi="Microsoft YaHei
 const STYLES = `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
 <w:styles ${NS}>
 <w:style w:type="paragraph" w:styleId="Normal" w:default="1"><w:name w:val="Normal"/><w:qFormat/><w:pPr><w:spacing w:before="0" w:after="120" w:line="324" w:lineRule="auto"/></w:pPr><w:rPr>${FONT_YAHEI}<w:sz w:val="22"/><w:szCs w:val="22"/></w:rPr></w:style>
-<w:style w:type="paragraph" w:styleId="Heading1"><w:name w:val="heading 1"/><w:basedOn w:val="Normal"/><w:next w:val="Normal"/><w:pPr><w:outlineLvl w:val="0"/><w:keepNext/><w:spacing w:before="360" w:after="200"/></w:pPr><w:rPr>${FONT_YAHEI}<w:b/><w:color w:val="1F3864"/><w:sz w:val="36"/><w:szCs w:val="36"/></w:rPr></w:style>
-<w:style w:type="paragraph" w:styleId="Heading2"><w:name w:val="heading 2"/><w:basedOn w:val="Normal"/><w:next w:val="Normal"/><w:pPr><w:outlineLvl w:val="1"/><w:keepNext/><w:spacing w:before="280" w:after="140"/></w:pPr><w:rPr>${FONT_YAHEI}<w:b/><w:color w:val="2F5496"/><w:sz w:val="30"/><w:szCs w:val="30"/></w:rPr></w:style>
+<w:style w:type="paragraph" w:styleId="Heading1"><w:name w:val="heading 1"/><w:basedOn w:val="Normal"/><w:next w:val="Normal"/><w:pPr><w:outlineLvl w:val="0"/><w:keepNext/><w:spacing w:before="360" w:after="200"/></w:pPr><w:rPr>${FONT_YAHEI}<w:b/><w:color w:val="120A8F"/><w:sz w:val="36"/><w:szCs w:val="36"/></w:rPr></w:style>
+<w:style w:type="paragraph" w:styleId="Heading2"><w:name w:val="heading 2"/><w:basedOn w:val="Normal"/><w:next w:val="Normal"/><w:pPr><w:outlineLvl w:val="1"/><w:keepNext/><w:spacing w:before="280" w:after="140"/></w:pPr><w:rPr>${FONT_YAHEI}<w:b/><w:color w:val="120A8F"/><w:sz w:val="30"/><w:szCs w:val="30"/></w:rPr></w:style>
 <w:style w:type="paragraph" w:styleId="Heading3"><w:name w:val="heading 3"/><w:basedOn w:val="Normal"/><w:next w:val="Normal"/><w:pPr><w:outlineLvl w:val="2"/><w:keepNext/><w:spacing w:before="200" w:after="100"/></w:pPr><w:rPr>${FONT_YAHEI}<w:b/><w:color w:val="404040"/><w:sz w:val="26"/><w:szCs w:val="26"/></w:rPr></w:style>
 <w:style w:type="paragraph" w:styleId="Heading4"><w:name w:val="heading 4"/><w:basedOn w:val="Normal"/><w:next w:val="Normal"/><w:pPr><w:outlineLvl w:val="3"/><w:keepNext/><w:spacing w:before="160" w:after="80"/></w:pPr><w:rPr>${FONT_YAHEI}<w:b/><w:color w:val="404040"/><w:sz w:val="24"/><w:szCs w:val="24"/></w:rPr></w:style>
 <w:style w:type="paragraph" w:styleId="Heading5"><w:name w:val="heading 5"/><w:basedOn w:val="Normal"/><w:next w:val="Normal"/><w:pPr><w:outlineLvl w:val="4"/><w:keepNext/></w:pPr><w:rPr>${FONT_YAHEI}<w:b/><w:sz w:val="22"/></w:rPr></w:style>
@@ -313,7 +313,7 @@ const STYLES = `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
 <w:style w:type="paragraph" w:styleId="Code"><w:name w:val="Code"/><w:basedOn w:val="Normal"/><w:pPr><w:shd w:val="clear" w:fill="F2F4F8"/><w:spacing w:before="20" w:after="20"/><w:ind w:left="120" w:right="120"/></w:pPr><w:rPr><w:rFonts w:ascii="Consolas" w:hAnsi="Consolas" w:eastAsia="宋体"/><w:sz w:val="20"/></w:rPr></w:style>
 <w:style w:type="paragraph" w:styleId="ListParagraph"><w:name w:val="List Paragraph"/><w:basedOn w:val="Normal"/><w:pPr><w:contextualSpacing/></w:pPr></w:style>
 <w:style w:type="paragraph" w:styleId="CellHeader"><w:name w:val="Cell Header"/><w:basedOn w:val="Normal"/><w:pPr><w:spacing w:after="40"/></w:pPr><w:rPr><w:b/></w:rPr></w:style>
-<w:style w:type="character" w:styleId="Hyperlink"><w:name w:val="Hyperlink"/><w:rPr><w:color w:val="0563C1"/><w:u w:val="single"/></w:rPr></w:style>
+<w:style w:type="character" w:styleId="Hyperlink"><w:name w:val="Hyperlink"/><w:rPr><w:color w:val="120A8F"/><w:u w:val="single"/></w:rPr></w:style>
 </w:styles>`;
 
 /* 真自动编号：abstract 0 = 项目符号（• / ◦ / ▪），abstract 1 = 有序（1. / 1.1 样式）。

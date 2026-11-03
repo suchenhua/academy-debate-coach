@@ -15,6 +15,7 @@ body {
   font-family: -apple-system, BlinkMacSystemFont, "SF Pro SC", "SF Pro Text",
                "PingFang SC", "Segoe UI", "Microsoft YaHei", system-ui, sans-serif;
   font-size: var(--fs-base);
+  letter-spacing: var(--ls-body);
   line-height: var(--lh-base);
   background: var(--c-bg);
   color: var(--c-text);
@@ -32,8 +33,8 @@ body {
 
 /* 焦点可见性（键盘导航）：Apple 用柔和的强调色光晕而非粗黑框 */
 :focus-visible {
-  outline: 2px solid var(--c-accent);
-  outline-offset: 2px;
+  outline: 3px solid color-mix(in srgb, var(--c-accent) 45%, transparent);
+  outline-offset: 1px;
   border-radius: var(--r-xs);
 }
 button:focus:not(:focus-visible) { outline: none; }
@@ -70,8 +71,8 @@ button:focus:not(:focus-visible) { outline: none; }
   display: grid; place-items: center;
 }
 .brand-text h1 {
-  font-size: var(--fs-md); font-weight: var(--fw-semibold);
-  letter-spacing: -.01em; line-height: 1.25;
+  font-size: var(--fs-lg); font-weight: var(--fw-semibold);
+  letter-spacing: var(--ls-title3); line-height: 1.25;
 }
 .brand-text p {
   font-size: var(--fs-xs); color: var(--c-text-3);
@@ -91,8 +92,8 @@ button:focus:not(:focus-visible) { outline: none; }
   background: currentColor; flex: 0 0 auto;
 }
 .status-pill.ok    { background: var(--c-success-soft); color: var(--c-success); }
-.status-pill.err   { background: var(--c-danger-soft);  color: var(--c-danger); }
-.status-pill.busy  { background: var(--c-accent-soft);  color: var(--c-accent); }
+.status-pill.err   { background: var(--c-danger-soft);  color: var(--c-danger-text); }
+.status-pill.busy  { background: var(--c-accent-soft);  color: var(--c-accent-text); }
 .status-pill.warn  { background: var(--c-warn-soft);    color: var(--c-warn); }
 .status-pill.busy::before { animation: pulse 1.4s var(--ease) infinite; }
 @keyframes pulse { 0%,100% { opacity: 1 } 50% { opacity: .35 } }
@@ -134,12 +135,15 @@ button:focus:not(:focus-visible) { outline: none; }
   width: var(--control-h); height: var(--control-h); padding: 0;
   display: grid; place-items: center; border-radius: var(--r-md);
   border: none; background: transparent; color: var(--c-text-3);
-  transition: background var(--dur-fast) var(--ease), color var(--dur-fast) var(--ease);
+  transition: background var(--dur-fast) var(--ease), color var(--dur-fast) var(--ease),
+              transform var(--dur-instant) var(--ease);
 }
 .icon-btn:hover { background: var(--c-surface-hover); color: var(--c-text); }
+/* 按下去要有"按到了"的手感 —— 位移 1px 比缩放更贴合桌面鼠标（Apple 的按钮按压） */
+.icon-btn:active { transform: scale(.94); }
 
 .link-btn {
-  border: none; background: none; color: var(--c-accent);
+  border: none; background: none; color: var(--c-accent-text);
   font-size: var(--fs-sm); text-decoration: none; padding: 2px 4px;
   border-radius: var(--r-xs);
 }
@@ -175,12 +179,16 @@ button:focus:not(:focus-visible) { outline: none; }
 .mode-btn small { color: var(--c-text-3); font-size: var(--fs-xs); line-height: 1.35; }
 .mode-btn:hover { background: var(--c-surface-hover); }
 .mode-btn:hover .ic { color: var(--c-text-2); }
+.mode-btn:active { background: var(--c-surface-active); }
+/* 选中态：填充式持续高亮。文字/图标一起过渡，
+   切模式时"高亮块挪过去"而不是整块瞬间变色。 */
 .mode-btn.active {
   background: var(--c-accent-soft); border-color: transparent;
 }
-.mode-btn.active .ic { color: var(--c-accent); }
-.mode-btn.active b { font-weight: var(--fw-semibold); color: var(--c-accent); }
+.mode-btn.active .ic { color: var(--c-accent-text); }
+.mode-btn.active b { font-weight: var(--fw-semibold); color: var(--c-accent-text); }
 .mode-btn.active small { color: color-mix(in srgb, var(--c-accent) 74%, var(--c-text-3)); }
+.mode-btn b, .mode-btn small { transition: color var(--dur-fast) var(--ease), font-weight var(--dur-fast) var(--ease); }
 
 /* 分区标题：Apple 用小号大写灰字做分组标签 */
 .side-section h3, .side-head h3 {
@@ -228,7 +236,7 @@ button:focus:not(:focus-visible) { outline: none; }
 .history-more:hover { background: var(--c-surface-hover); color: var(--c-text); }
 .history-item:hover { background: var(--c-surface-hover); border-color: transparent; }
 .history-item.active,
-.history-item[aria-current="true"] { background: var(--c-accent-soft); color: var(--c-accent); }
+.history-item[aria-current="true"] { background: var(--c-accent-soft); color: var(--c-accent-text); }
 .history-item .h-title {
   font-size: var(--fs-base);
   overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
@@ -246,7 +254,7 @@ button:focus:not(:focus-visible) { outline: none; }
   color: var(--c-text-3); padding: 0; background: none; border: none;
 }
 .history-del:hover, .history-edit:hover { background: var(--c-surface-active); color: var(--c-text); }
-.history-del:hover { color: var(--c-danger); }
+.history-del:hover { color: var(--c-danger-text); }
 .history-empty { color: var(--c-text-3); font-size: var(--fs-sm); padding: var(--sp-2) var(--sp-3); }
 
 /* 搜索框 */
@@ -260,7 +268,7 @@ button:focus:not(:focus-visible) { outline: none; }
 }
 .history-search input::placeholder { color: var(--c-text-4); }
 .history-search input:focus {
-  border-color: var(--c-accent); background: var(--c-surface);
+  border-color: var(--c-accent-text); background: var(--c-surface);
   box-shadow: 0 0 0 3px var(--c-accent-ring);
 }
 .history-search::before {
@@ -284,21 +292,10 @@ button:focus:not(:focus-visible) { outline: none; }
   font-size: var(--fs-xs); color: var(--c-text-3); line-height: 1.6;
 }
 
-/* 侧栏收起把手：更细，悬停才显形 */
-/* 侧栏收起把手：贴在中缝上的小圆钮，悬停才明显（不抢注意力） */
-.sidebar-toggle {
-  width: 16px; height: 40px;
-  display: grid; place-items: center;
-  background: var(--c-bg-elevated);
-  border: 1px solid var(--c-line); border-left: none;
-  color: var(--c-text-4); font-size: 9px;
-  border-radius: 0 var(--r-sm) var(--r-sm) 0;
-  transition: color var(--dur-fast) var(--ease), background var(--dur-fast) var(--ease);
-}
-.sidebar-toggle:hover { color: var(--c-accent); background: var(--c-accent-soft); }
+/* （侧栏按钮样式统一在 style.css，这里不再覆盖） */
 
 /* 空状态统一：居中的一行灰字，不搞大图标 */
-.skill-empty, .profile-empty, .history-empty, .deliver-empty {
+.skill-empty, .provider-empty, .model-empty, .history-empty, .deliver-empty {
   color: var(--c-text-3); font-size: var(--fs-sm);
   text-align: center; padding: var(--sp-8) var(--sp-4); line-height: 1.7;
 }
@@ -307,6 +304,9 @@ button:focus:not(:focus-visible) { outline: none; }
    4. 主区 —— 内容优先，区块头轻量化
    ══════════════════════════════════════════════════════════════════════════ */
 .main { background: var(--c-bg); }
+/* 模式切换进场：只做透明度，不做位移（Apple：「将 x、y 和 z 轴的过渡替换为渐变」）。
+   由 switchMode() 挂/摘，动画播完即摘下，不占后续渲染。 */
+.main.mode-enter { animation: pane-in var(--dur-fast) var(--ease-out); }
 .chat-head {
   padding: var(--sp-3) var(--sp-6);
   background: var(--c-bg);
@@ -342,7 +342,7 @@ button:focus:not(:focus-visible) { outline: none; }
   border: 1px solid var(--c-line); border-radius: var(--r-lg);
   background: var(--c-surface);
 }
-.wm-icon { color: var(--c-accent); display: grid; place-items: center; line-height: 1; }
+.wm-icon { color: var(--c-accent-text); display: grid; place-items: center; line-height: 1; }
 .wm-title { font-size: var(--fs-md); font-weight: var(--fw-semibold); letter-spacing: -.005em; }
 .wm-desc { font-size: var(--fs-base); color: var(--c-text-3); margin-top: 2px; line-height: 1.5; }
 
@@ -373,7 +373,7 @@ button:focus:not(:focus-visible) { outline: none; }
 .msg.assistant .avatar {
   background: var(--c-accent-soft);
   border: 1px solid color-mix(in srgb, var(--c-accent) 24%, transparent);
-  color: var(--c-accent);
+  color: var(--c-accent-text);
 }
 .msg.user .avatar { background: var(--c-surface-sunken); color: var(--c-text-3); border: 1px solid var(--c-line); }
 
@@ -406,7 +406,7 @@ button:focus:not(:focus-visible) { outline: none; }
   border-top-left-radius: var(--r-xs); box-shadow: var(--sh-xs);
   flex: 1; min-width: 0;
 }
-.msg.assistant .bubble.error { border-color: var(--c-danger); background: var(--c-danger-soft); }
+.msg.assistant .bubble.error { border-color: var(--c-danger-text); background: var(--c-danger-soft); }
 
 /* 消息头：把「谁 · 何时」和操作按钮收进一条细线，默认极淡、hover 才显形，
    避免一排按钮常驻在正文顶部抢注意力。 */
@@ -449,7 +449,7 @@ button:focus:not(:focus-visible) { outline: none; }
 .md li::marker { color: var(--c-text-3); }
 .md blockquote {
   margin: var(--sp-4) 0; padding: var(--sp-2) var(--sp-4);
-  border-left: 2px solid var(--c-accent);
+  border-left: 1px solid var(--c-accent);
   background: var(--c-accent-soft); border-radius: 0 var(--r-sm) var(--r-sm) 0;
   color: var(--c-text-2);
 }
@@ -473,7 +473,7 @@ button:focus:not(:focus-visible) { outline: none; }
 .md th, .md td { border: none; border-bottom: 1px solid var(--c-line); padding: 8px 12px; text-align: left; }
 .md th { background: var(--c-surface-sunken); font-weight: var(--fw-semibold); }
 .md tr:last-child td { border-bottom: none; }
-.md a { color: var(--c-accent); text-decoration: none; }
+.md a { color: var(--c-accent-text); text-decoration: none; }
 .md a:hover { text-decoration: underline; }
 .md hr { border: none; border-top: 1px solid var(--c-line); margin: var(--sp-6) 0; }
 .md img { max-width: 100%; border-radius: var(--r-md); }
@@ -487,7 +487,7 @@ button:focus:not(:focus-visible) { outline: none; }
   background: var(--c-surface-sunken); border: 1px solid var(--c-line);
   color: var(--c-text-2); gap: var(--sp-2);
 }
-.tool-item.active { border-color: var(--c-accent); background: var(--c-accent-soft); }
+.tool-item.active { border-color: var(--c-accent-text); background: var(--c-accent-soft); }
 .tool-item.done { opacity: .8; }
 .tool-item .ic { color: var(--c-text-3); }
 .tool-detail { color: var(--c-text-3); font-size: var(--fs-xs); }
@@ -506,7 +506,7 @@ button:focus:not(:focus-visible) { outline: none; }
 }
 .usage-item b { font-weight: var(--fw-semibold); color: var(--c-text-2); }
 .usage-hit b { color: var(--c-success); }
-.usage-ctx b { color: var(--c-accent); }
+.usage-ctx b { color: var(--c-accent-text); }
 
 /* ══════════════════════════════════════════════════════════════════════════
    5. 输入区 —— 视觉重心，但不过度装饰
@@ -521,7 +521,7 @@ button:focus:not(:focus-visible) { outline: none; }
   background: var(--c-surface); padding: var(--sp-2); box-shadow: var(--sh-xs);
   transition: border-color var(--dur-fast) var(--ease), box-shadow var(--dur-fast) var(--ease);
 }
-.composer:focus-within { border-color: var(--c-accent); box-shadow: 0 0 0 3px var(--c-accent-ring); }
+.composer:focus-within { border-color: var(--c-accent-text); box-shadow: 0 0 0 3px var(--c-accent-ring); }
 
 /* ── Phase 6.1（2026-09-27 子涵）：紧凑两行结构，参考 HIG ──
    上行=输入本体（左对齐，随内容长高），下行=工具条（附件·模型·思考 | 字数·发送） */
@@ -615,10 +615,10 @@ button:focus:not(:focus-visible) { outline: none; }
   width: 20px; height: 20px; border-radius: var(--r-xs);
   display: grid; place-items: center; flex: 0 0 auto; padding: 0;
 }
-.attach-chip .ac-del:hover { color: var(--c-danger); background: var(--c-danger-soft); }
+.attach-chip .ac-del:hover { color: var(--c-danger-text); background: var(--c-danger-soft); }
 .attach-chip.loading { opacity: .7; }
-.attach-chip.error { border-color: var(--c-danger); color: var(--c-danger); }
-.attach-chip.error .ac-icon { color: var(--c-danger); }
+.attach-chip.error { border-color: var(--c-danger-text); color: var(--c-danger-text); }
+.attach-chip.error .ac-icon { color: var(--c-danger-text); }
 
 /* 已发消息里的附件标记：跟气泡的强调色走，不用写死的白色 */
 .msg-attachments {
@@ -630,7 +630,7 @@ button:focus:not(:focus-visible) { outline: none; }
   font-size: var(--fs-xs); font-weight: var(--fw-medium);
   background: var(--c-surface);
   border: 1px solid color-mix(in srgb, var(--c-accent) 32%, transparent);
-  color: var(--c-accent);
+  color: var(--c-accent-text);
   border-radius: var(--r-sm); padding: 3px 9px; max-width: 100%;
 }
 .msg-attach .ic { flex: 0 0 auto; opacity: .9; }
@@ -661,11 +661,22 @@ button:focus:not(:focus-visible) { outline: none; }
   background: var(--c-bg-elevated); border: 1px solid var(--c-line);
   border-radius: var(--r-xl); box-shadow: var(--sh-lg); width: min(560px, 100%);
   max-height: 88vh; display: flex; flex-direction: column;
-  animation: modal-in var(--dur-slow) var(--ease-out);
 }
+/* 弹窗进出：遮罩淡入 + 卡片轻微放大淡入（Apple 的模态从"更小、更远"浮现）。
+   is-closing 是退场态 —— 由 app.js 的统一显隐接管加/摘，动画期间仍可交互。 */
+.modal:not(.hidden) { animation: scrim-in var(--dur-fast) var(--ease-out); }
+.modal:not(.hidden) .modal-box { animation: modal-in var(--dur-slow) var(--ease-out); }
+.modal.is-closing { animation: scrim-out var(--dur-fast) var(--ease) forwards; pointer-events: none; }
+.modal.is-closing .modal-box { animation: modal-out var(--dur-base) var(--ease-in) forwards; }
+@keyframes scrim-in { from { opacity: 0 } to { opacity: 1 } }
+@keyframes scrim-out { from { opacity: 1 } to { opacity: 0 } }
 @keyframes modal-in {
   from { opacity: 0; transform: scale(.97) translateY(6px); }
   to   { opacity: 1; transform: none; }
+}
+@keyframes modal-out {
+  from { opacity: 1; transform: none; }
+  to   { opacity: 0; transform: scale(.98) translateY(4px); }
 }
 .modal-body { overflow-y: auto; flex: 1; min-height: 0; }
 /* 内容区里的列表别把弹窗顶太高 */
@@ -678,7 +689,7 @@ button:focus:not(:focus-visible) { outline: none; }
 .modal-head { padding: var(--sp-4) var(--sp-5) 0; border-bottom: none; }
 .modal-head h2 {
   font-size: var(--fs-xl); font-weight: var(--fw-semibold);
-  letter-spacing: -.015em; display: flex; align-items: center; gap: var(--sp-2);
+  letter-spacing: var(--ls-title2); display: flex; align-items: center; gap: var(--sp-2);
 }
 .modal-head h2 .ic { color: var(--c-text-3); }
 .modal-close {
@@ -707,12 +718,12 @@ button:focus:not(:focus-visible) { outline: none; }
 .field textarea { height: auto; padding: var(--sp-2) var(--sp-3); resize: vertical; }
 .field input::placeholder { color: var(--c-text-4); }
 .field input:focus, .field select:focus, .field textarea:focus {
-  border-color: var(--c-accent); box-shadow: 0 0 0 3px var(--c-accent-ring);
+  border-color: var(--c-accent-text); box-shadow: 0 0 0 3px var(--c-accent-ring);
 }
 /* 「AI 模型」面板的字段用 .set-step（小标题 + 控件）排布，而上面这套输入样式只挂在 .field 下，
    于是那几个框一直是浏览器默认样（约 21px 高、直角、inset 边），跟同屏的卡片/按钮完全两套观感。
-   这里把同样的样式补给 .set-step 里的输入。只补 text/password：该面板唯一的 select 是 #modelSelect，
-   它有自己的规则，别再叠一层把它顶高。 */
+   这里把同样的样式补给 .set-step 里的输入。只补 text/password —— 该面板现在没有 select 了
+   （模型列表改成了行内列表，获取模型走可搜索多选的选择器），别叠一层把别的控件顶高。 */
 .set-step input[type="text"], .set-step input[type="password"] {
   width: 100%; height: 34px; border: 1px solid var(--c-line-strong);
   border-radius: var(--r-md); padding: 0 var(--sp-3);
@@ -722,7 +733,7 @@ button:focus:not(:focus-visible) { outline: none; }
 }
 .set-step input[type="text"]::placeholder, .set-step input[type="password"]::placeholder { color: var(--c-text-4); }
 .set-step input[type="text"]:focus, .set-step input[type="password"]:focus {
-  border-color: var(--c-accent); box-shadow: 0 0 0 3px var(--c-accent-ring);
+  border-color: var(--c-accent-text); box-shadow: 0 0 0 3px var(--c-accent-ring);
 }
 .modal-actions { gap: var(--sp-2); }
 /* 状态反馈：去掉 emoji 后靠一个前导圆点 + 语义色表达成功/失败，
@@ -736,7 +747,7 @@ button:focus:not(:focus-visible) { outline: none; }
   margin-top: .45em; background: currentColor;
 }
 .settings-result.ok  { color: var(--c-success); }
-.settings-result.err { color: var(--c-danger); }
+.settings-result.err { color: var(--c-danger-text); }
 .welcome-note {
   background: var(--c-success-soft);
   border: 1px solid color-mix(in srgb, var(--c-success) 26%, transparent);
@@ -746,6 +757,7 @@ button:focus:not(:focus-visible) { outline: none; }
 
 .toast {
   animation: toast-in var(--dur-base) var(--ease-out);
+  transition: opacity var(--dur-fast) var(--ease), transform var(--dur-fast) var(--ease);
   background: color-mix(in srgb, var(--c-text) 92%, transparent);
   color: var(--c-bg-elevated);
   padding: 10px var(--sp-5); border-radius: var(--r-full);
@@ -791,11 +803,22 @@ button:focus:not(:focus-visible) { outline: none; }
   color: var(--c-text-2); font-size: var(--fs-base); font-weight: var(--fw-medium);
   transition: background var(--dur-fast) var(--ease);
 }
-.settings-nav-item .ic { color: var(--c-text-3); }
+.settings-nav-item .ic { color: var(--c-text-3); transition: color var(--dur-fast) var(--ease); }
 .settings-nav-item:hover { background: var(--c-surface-hover); }
+.settings-nav-item:active { background: var(--c-surface-active); }
+/* 选中态用填充式持续高亮（Apple 原文：不是彩色描边/竖条），
+   颜色过渡让"选中挪过去"看得见，而不是瞬间跳。 */
 .settings-nav-item.active { background: var(--c-accent); color: #fff; }
 .settings-nav-item.active .ic { color: #fff; }
 .settings-pane { flex: 1; padding: var(--sp-4) var(--sp-5); overflow-y: auto; }
+/* 切面板淡入：原来 display:none ↔ block 是硬跳，眼睛跟不上"哪一块变了"。
+   只做透明度 + 极小位移（Apple：「尽量减少自动播放的重复动画」，位移要克制），
+   并且**不阻塞**：面板立刻可交互，动画只是叠在上面。 */
+.settings-pane.active { animation: pane-in var(--dur-base) var(--ease-out); }
+@keyframes pane-in {
+  from { opacity: 0; transform: translateY(4px); }
+  to   { opacity: 1; transform: none; }
+}
 .settings-badge { font-size: var(--fs-xs); }
 .settings-pane h3 {
   font-size: var(--fs-lg); font-weight: var(--fw-semibold);
@@ -813,6 +836,8 @@ button:focus:not(:focus-visible) { outline: none; }
   gap: var(--sp-2);
 }
 .provider-card {
+  /* 卡片是 <button>：不显式给色会落到 UA 的黑色，深色主题下黑字直接看不见 */
+  color: var(--c-text);
   border: 1px solid var(--c-line); border-radius: var(--r-md);
   background: var(--c-surface); padding: 10px var(--sp-3);
   text-align: left; display: flex; flex-direction: column; gap: 2px;
@@ -821,7 +846,7 @@ button:focus:not(:focus-visible) { outline: none; }
 }
 .provider-card:hover { border-color: var(--c-line-strong); background: var(--c-surface-hover); }
 .provider-card.active {
-  border-color: var(--c-accent); background: var(--c-accent-soft);
+  border-color: var(--c-accent-text); background: var(--c-accent-soft);
   box-shadow: inset 0 0 0 1px var(--c-accent);
 }
 .provider-card b {
@@ -834,22 +859,14 @@ button:focus:not(:focus-visible) { outline: none; }
 }
 .provider-card .tag {
   font-style: normal; font-size: 10px; font-weight: var(--fw-semibold);
-  color: var(--c-accent); background: var(--c-surface);
+  color: var(--c-accent-text); background: var(--c-surface);
   border: 1px solid color-mix(in srgb, var(--c-accent) 30%, transparent);
   padding: 0 5px; border-radius: var(--r-full);
   position: absolute; top: 6px; right: 6px;
 }
 
-.profile-item {
-  border: 1px solid var(--c-line); border-radius: var(--r-md);
-  background: var(--c-surface); padding: var(--sp-2) var(--sp-3);
-}
-.profile-item.active { border-color: var(--c-accent); background: var(--c-accent-soft); }
-.profile-op {
-  border: none; background: var(--c-surface-sunken); border-radius: var(--r-sm);
-  width: 26px; height: 26px; display: grid; place-items: center; color: var(--c-text-3);
-}
-.profile-op:hover { background: var(--c-surface-active); color: var(--c-text); }
+/* 服务商行 / 行内模型列表：视觉全部由 style.css 的 .provider-row / .model-row-item 承担，
+   这里只把「危险删除」一类动作收敛成低调灰色（见下方 .profile-op.danger）。 */
 
 /* ══════════════════════════════════════════════════════════════════════════
    8. 工具箱 / 列表类通用
@@ -860,11 +877,11 @@ button:focus:not(:focus-visible) { outline: none; }
   padding: var(--sp-3) var(--sp-4); background: var(--c-surface); gap: var(--sp-3);
   transition: border-color var(--dur-fast) var(--ease), background var(--dur-fast) var(--ease);
 }
-.tool-link:hover { border-color: var(--c-accent); background: var(--c-accent-soft); }
+.tool-link:hover { border-color: var(--c-accent-text); background: var(--c-accent-soft); }
 .tool-link b { font-size: var(--fs-md); font-weight: var(--fw-semibold); }
 .tool-link small { color: var(--c-text-3); font-size: var(--fs-sm); line-height: 1.45; }
 .tool-link-name { display: flex; align-items: center; gap: var(--sp-2); }
-.tool-link-name .ic { color: var(--c-accent); }
+.tool-link-name .ic { color: var(--c-accent-text); }
 button.tool-link { background: var(--c-surface); }
 /* 工具条目：左文右箭头，两行排版（标题 + 说明） */
 .tool-link-text { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
@@ -874,13 +891,13 @@ button.tool-link { background: var(--c-surface); }
   color: var(--c-text-4);
   transition: color var(--dur-fast) var(--ease);
 }
-.tool-link:hover .tool-link-go { color: var(--c-accent); }
+.tool-link:hover .tool-link-go { color: var(--c-accent-text); }
 
 /* 危险操作（删除）做轻：平时低调，hover 才变红 */
-.mem-act-btn.danger, .profile-op.danger { color: var(--c-text-3); }
-.mem-act-btn.danger:hover, .profile-op.danger:hover { color: var(--c-danger); background: var(--c-danger-soft); }
+.mem-act-btn.danger, .profile-op.danger, .btn.ghost.danger-inline { color: var(--c-text-3); }
+.mem-act-btn.danger:hover, .profile-op.danger:hover, .btn.ghost.danger-inline:hover { color: var(--c-danger-text); background: var(--c-danger-soft); }
 .deliver-del, .file-del { color: var(--c-text-3); }
-.deliver-del:hover, .file-del:hover { color: var(--c-danger); }
+.deliver-del:hover, .file-del:hover { color: var(--c-danger-text); }
 
 .deliver-tabs, .deliver-chips { gap: var(--sp-1); }
 .deliver-tab {
@@ -889,7 +906,7 @@ button.tool-link { background: var(--c-surface); }
   background: transparent; color: var(--c-text-3); font-weight: var(--fw-medium);
 }
 .deliver-tab:hover { background: var(--c-surface-hover); color: var(--c-text); border-color: transparent; }
-.deliver-tab.active { background: var(--c-accent-soft); color: var(--c-accent); border-color: transparent; font-weight: var(--fw-semibold); }
+.deliver-tab.active { background: var(--c-accent-soft); color: var(--c-accent-text); border-color: transparent; font-weight: var(--fw-semibold); }
 .deliver-chips .chip {
   font-size: var(--fs-sm); padding: 3px var(--sp-3);
   border-radius: var(--r-full); border: 1px solid var(--c-line);
@@ -946,7 +963,7 @@ button.tool-link { background: var(--c-surface); }
 
 /* 折叠区（details/summary）统一样式 */
 details > summary {
-  cursor: pointer; user-select: none; list-style: none;
+  cursor: pointer; user-select: none; list-style: none; max-width: 100%;
   display: flex; align-items: center; gap: 6px;
   color: var(--c-text-2); font-size: var(--fs-base);
 }
@@ -1078,6 +1095,12 @@ details > summary:hover { color: var(--c-text); }
   -webkit-backdrop-filter: blur(20px) saturate(180%);
 }
 .gear-menu.hidden { display: none; }
+/* 弹出层进场：从锚点方向轻微放大淡入（Apple 的 popover 语义），不做滑动 */
+.gear-menu:not(.hidden) { animation: pop-in var(--dur-base) var(--ease-out); transform-origin: bottom right; }
+@keyframes pop-in {
+  from { opacity: 0; transform: scale(.96) translateY(4px); }
+  to   { opacity: 1; transform: none; }
+}
 
 .gear-row {
   display: flex; align-items: center; justify-content: space-between;
@@ -1085,14 +1108,25 @@ details > summary:hover { color: var(--c-text); }
 }
 .gear-row-label { font-size: var(--fs-sm); color: var(--c-text-2); flex: 0 0 auto; }
 .gear-row-model { padding-bottom: 4px; }
-.gear-model-select {
-  border: none; background: transparent; color: var(--c-text-3);
-  font: inherit; font-size: var(--fs-sm); font-weight: var(--fw-medium);
-  text-align: right; outline: none; cursor: pointer;
-  max-width: 190px; padding: 2px 4px; border-radius: var(--r-sm);
-  text-overflow: ellipsis;
+/* 模型列表：按服务商分组（替换旧的 <select>）。选择权收在“点即切换”上，
+   所以不需要再给触发器留位置 —— 当前值由 .gear-row-value 那一行承担。 */
+.gear-model-list { max-height: 268px; overflow-y: auto; margin: 2px 0 6px; }
+.gear-model-group { padding: 2px 0; }
+.gear-model-group-title {
+  font-size: var(--fs-xs); font-weight: var(--fw-medium); color: var(--c-text-3);
+  padding: 6px 10px 3px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
 }
-.gear-model-select:hover { background: var(--c-surface-hover); color: var(--c-text); }
+.gear-model-option {
+  display: flex; align-items: center; gap: 8px; width: 100%; text-align: left;
+  border: none; background: transparent; color: var(--c-text); cursor: pointer;
+  padding: 6px 10px; border-radius: var(--r-sm); font: inherit; font-size: var(--fs-sm);
+  transition: background var(--dur-fast) var(--ease), color var(--dur-fast) var(--ease);
+}
+.gear-model-option:hover { background: var(--c-surface-hover); }
+.gear-model-option.selected { background: var(--c-accent-soft); color: var(--c-accent-text); }
+.gmo-name { flex: 1; min-width: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.gmo-check { flex: 0 0 auto; display: inline-flex; align-items: center; color: var(--c-accent-text); }
+.gear-model-empty { font-size: var(--fs-sm); color: var(--c-text-3); padding: 14px 10px; text-align: center; }
 /* 数值文字：颜色由 JS 按档位内联注入（Off 档不注入 = 保持原色） */
 .gear-row-value { font-size: var(--fs-sm); font-weight: var(--fw-semibold); color: var(--c-text-3); }
 
@@ -1158,9 +1192,37 @@ details > summary:hover { color: var(--c-text); }
 .composer-gear[data-energy='0'] .gear-star,
 .composer-gear[data-energy='0'] .gear-sweep { animation-play-state: paused; }
 
-.gear-error { margin: 4px 10px 6px; font-size: var(--fs-xs); line-height: 1.5; color: var(--c-danger); }
-/* 「减少动态效果」：放缓而不是冻住 —— 冻成静态图会让"能量在流动"整个消失 */
+.gear-error { margin: 4px 10px 6px; font-size: var(--fs-xs); line-height: 1.5; color: var(--c-danger-text); }
+/* 「减少动态效果」：减速而不是冻住 —— 冻成静态图会让"能量在流动"整个消失。
+   扫光（gear-sweep，持续横向平移）按 Apple 原文「减少自动播放的重复动画」关掉。 */
 @media (prefers-reduced-motion: reduce) {
   .gear-energy { transition: none; }
   .gear-sweep { display: none; }
+  .gear-star { animation: none !important; opacity: .6; }
 }
+
+/* ══════════════════════════════════════════════════════════════════════════
+   动效层 —— 一套曲线，三种用途（借 onetake 的动作库原则）
+   · 交互反馈：带一点回弹的弹簧，120–180ms
+   · 版面变化：指数缓出，只给侧栏宽度这一处
+   · 进场：模态/菜单 140–280ms，从锚点方向进来
+   prefers-reduced-motion 下统一归零（tokens.css 末尾）。
+   ══════════════════════════════════════════════════════════════════════════ */
+:root { --ease-spring: cubic-bezier(.2, 1.2, .35, 1); }
+
+.btn, .rail-btn, .mode-btn, .gear-seat, .link-btn, .gen-choice, .ac-btn {
+  transition: transform 120ms var(--ease-spring),
+              background-color var(--dur-fast) var(--ease),
+              color var(--dur-fast) var(--ease),
+              border-color var(--dur-fast) var(--ease);
+}
+.btn:active, .rail-btn:active, .mode-btn:active, .gear-seat:active, .link-btn:active, .gen-choice:active, .ac-btn:active {
+  transform: scale(.97);
+}
+@keyframes menu-in { from { opacity: 0; transform: scale(.98) translateY(-2px); } to { opacity: 1; transform: none; } }
+.export-dropdown:not(.hidden), .gear-menu:not(.hidden) {
+  animation: menu-in 140ms var(--ease-out);
+  transform-origin: top right;
+}
+.rail-btn .ic { transition: transform 180ms var(--ease-spring); }
+.rail-btn:hover .ic { transform: scale(1.08); }

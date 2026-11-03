@@ -19,6 +19,12 @@ contextBridge.exposeInMainWorld('academyElectron', {
   /* 产物空间：把文件另存到用户选择的任意路径（文本或二进制） */
   saveDeliverable: ({ name, text, base64 }) => ipcRenderer.invoke('deliverable:saveAs', { name, text, base64 }),
   showDeliverFolder: (fileName) => ipcRenderer.invoke('deliverable:folder', fileName),
+  /* 关闭窗口确认（应用内样式弹窗）：主进程发来询问 / 撤回，渲染层把答案发回去。
+     只在「关闭窗口时 = 每次询问」时用到；主进程那边 2.5s 收不到「已显示」会回退系统原生弹框。 */
+  onCloseConfirm: (cb) => ipcRenderer.on('app:close-confirm', (_e, token) => { try { cb(token); } catch (_) {} }),
+  onCloseConfirmCancel: (cb) => ipcRenderer.on('app:close-confirm-cancel', (_e, token) => { try { cb(token); } catch (_) {} }),
+  answerCloseConfirm: (payload) => ipcRenderer.send('app:close-confirm-answer', payload || {}),
+
   /* 在文件管理器中显示导出的备份文件 */
   showInFolder: (filePath) => ipcRenderer.invoke('shell:showItem', filePath),
   /* 打开独立工具窗：通用壳 tool-window.js 按 name 加载

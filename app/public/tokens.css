@@ -2,7 +2,9 @@
    设计令牌 —— Apple Human Interface Guidelines 落地层
    ----------------------------------------------------------------------------
    参考 https://developer.apple.com/cn/design/human-interface-guidelines/
-   三条支柱：Clarity（清晰）/ Deference（服从内容）/ Depth（层次）
+   现行准则：Apple 8 条设计原则（2026-06-08 起）。
+   注意「Clarity / Deference / Depth 三支柱」是 iOS 7–9 时代的旧表述，现行中文站已下线，
+   不要再引用（详见工作区 apple-hig-electron-rules.md 的事实核查）。
 
    本文件只放令牌（token），不放任何组件样式。所有组件一律引用 var(--*)，
    禁止再出现魔法数字。改主题 = 改这一处。
@@ -30,23 +32,28 @@
 
   --c-text:          #1d1d1f;   /* 主文字：Apple 近黑 */
   --c-text-2:        #424245;   /* 次级文字 */
-  --c-text-3:        #6e6e73;   /* 三级 / 说明文字 */
-  --c-text-4:        #74747a;   /* 最弱 / 占位符（比 Apple 的 #86868b 略深，保证 4.5:1） */
+  --c-text-3:        #6a6a70;   /* 三级 / 说明文字（在强调底上也有 4.5:1） */
+  --c-text-4:        #6f6f75;   /* 最弱 / 占位符（4.7:1） */
 
   /* ── 强调色 ────────────────────────────────────────────────────────────
-     单一强调色。Apple 系统蓝的克制版本，不用高饱和 SaaS 蓝。 */
-  --c-accent:        #0071e3;
-  --c-accent-hover:  #0077ed;
-  --c-accent-press:  #0068cc;
-  --c-accent-soft:   #e8f2fd;   /* 选中底 */
-  --c-accent-ring:   rgba(0, 113, 227, .35);
+     品牌色 #120A8F（深靛蓝）。全站只有这一个强调色：按钮、链接、选中态、
+     焦点环、进度、图表主序列都从这里取；不再出现第二种蓝。
+     hover / press 是同一色相提亮/压暗，soft 是 8% 着色底，ring 是焦点光晕。 */
+  --c-accent:        #120A8F;
+  --c-accent-hover:  #160CB0;
+  --c-accent-press:  #0E086E;
+  --c-accent-soft:   #EEEDFA;   /* 选中底 */
+  --c-accent-ring:   rgba(18, 10, 143, .32);
+  --c-accent-text:   #120A8F;   /* 文字/图标用的强调色（深色主题下自动提亮，保证 4.5:1） */
+  --c-selection:     rgba(18, 10, 143, .18);   /* 文本选区 */
 
   /* ── 语义色 ────────────────────────────────────────────────────────────── */
-  --c-success:       #0e8a5f;
+  --c-success:       #0b7a54;
   --c-success-soft:  #e6f5ef;
   --c-warn:          #9a6400;
   --c-warn-soft:     #fdf3e3;
   --c-danger:        #c7362f;
+  --c-danger-text:   #c7362f;
   --c-danger-soft:   #fdecea;
 
   /* ── 阴影 ────────────────────────────────────────────────────────────────
@@ -70,14 +77,14 @@
 
   /* ── 字号 ────────────────────────────────────────────────────────────────
      桌面端阅读基准 13-14px；层级靠字重与颜色，不靠一味放大。 */
-  --fs-xs:   11px;   /* 角标、极弱说明 */
+  --fs-xs:   11px;   /* 小标题 subhead（HIG 11/14） */
   --fs-sm:   12px;   /* 辅助文字、标签 */
   --fs-base: 13px;   /* 界面默认（按钮、导航） */
   --fs-md:   14px;   /* 正文次级 */
   --fs-lg:   15px;   /* 对话正文（--chat-fs 覆盖） */
   --fs-xl:   17px;   /* 区块标题 */
   --fs-2xl:  22px;   /* 页面主标题 */
-  --fs-3xl:  28px;   /* 欢迎语 */
+  --fs-3xl:  26px;   /* 大标题 large title（HIG 26/32） */
 
   --fw-normal:   400;
   --fw-medium:   500;
@@ -85,8 +92,16 @@
   --fw-bold:     700;
 
   --lh-tight: 1.3;
-  --lh-base:  1.55;
+  --lh-base:  1.45;   /* UI 文本；正文阅读区仍走 --lh-loose */
   --lh-loose: 1.75;
+
+  /* 字间距（HIG 6.3 折算 px） */
+  --ls-subhead:  0.06px;   /* 11pt */
+  --ls-body:    -0.08px;   /* 13pt */
+  --ls-title3:  -0.23px;   /* 15pt */
+  --ls-title2:  -0.43px;   /* 17pt */
+  --ls-title1:  -0.26px;   /* 22pt */
+  --ls-large:    0.22px;   /* 26pt */
 
   /* ── 圆角 ──────────────────────────────────────────────────────────────── */
   --r-xs:  5px;
@@ -97,12 +112,24 @@
   --r-full: 999px;
 
   /* ── 动效 ────────────────────────────────────────────────────────────────
-     Apple 的动效短促、克制、带轻微缓出。 */
-  --dur-fast:  .12s;
-  --dur-base:  .2s;
-  --dur-slow:  .32s;
-  --ease:      cubic-bezier(.25, .1, .25, 1);   /* 标准缓动 */
-  --ease-out:  cubic-bezier(.16, 1, .3, 1);     /* 出场，Apple 常用 */
+     ⚠️ 数值来源说明（诚实标注，勿当成 Apple 官方规范）：
+     Apple 中文站**没有发布任何动画时长或缓动曲线数值**（motion 页无数字，
+     且 watchOS 段明确「你无法关闭或自定义缓动」—— 动效参数是系统封装、不对外发布的）。
+     下面这些是桌面自绘动效的**工程取值**，区间参考 HIG 报告建议的 150–250ms。
+
+     硬约束来自 Apple 原文，必须满足（不是可选项）：
+       · 「有目的地添加动态效果，让其在不妨碍体验的同时提供支持」
+       · 「通常避免在频繁出现的用户界面交互中添加动态效果」
+         → 所以只给「视图/面板/浮层切换」加动效；输入、滚动、流式正文一律不动。
+       · 「让用户可取消动态效果。尽量不要让用户等待动画完成才能执行操作」
+         → 动效时长一律短于用户的下一次操作间隔，绝不阻塞。 */
+  --dur-instant: 80ms;   /* 按压 / hover 反馈 */
+  --dur-fast:   120ms;   /* 颜色、描边过渡 */
+  --dur-base:   180ms;   /* 展开折叠、菜单进出 */
+  --dur-slow:   240ms;   /* 面板 / 弹窗进出。上限，不再更长 */
+  --ease:       cubic-bezier(.25, .1, .25, 1);   /* 标准缓动（进出对称） */
+  --ease-out:   cubic-bezier(.16, 1, .3, 1);     /* 进场：快起慢收 */
+  --ease-in:    cubic-bezier(.4, 0, 1, 1);       /* 退场：慢起快收 */
 
   /* ── 布局尺寸 ──────────────────────────────────────────────────────────── */
   --sidebar-w:   264px;
@@ -132,20 +159,23 @@
 
   --c-text:          #f5f5f7;
   --c-text-2:        #d1d1d6;
-  --c-text-3:        #a1a1a6;
+  --c-text-3:        #b8b8bc;   /* 深色下 8.6:1 */
   --c-text-4:        #98989d;   /* 深色下也留够对比度 */
 
-  --c-accent:        #0a84ff;
-  --c-accent-hover:  #3d9bff;
-  --c-accent-press:  #0071e3;
-  --c-accent-soft:   #12365c;
-  --c-accent-ring:   rgba(10, 132, 255, .45);
+  --c-accent:        #5D53F3;
+  --c-accent-hover:  #655CF0;
+  --c-accent-press:  #4B40F2;
+  --c-accent-soft:   #232047;
+  --c-accent-ring:   rgba(122, 114, 245, .45);
+  --c-accent-text:   #ADA8FF;
+  --c-selection:     rgba(122, 114, 245, .35);
 
   --c-success:       #30d158;
   --c-success-soft:  #12301c;
   --c-warn:          #ffd60a;
   --c-warn-soft:     #33290a;
-  --c-danger:        #ff453a;
+  --c-danger:        #c7362f;
+  --c-danger-text:   #FF9E95;
   --c-danger-soft:   #3a1a18;
 
   --sh-xs:  0 1px 2px rgba(0, 0, 0, .3);
@@ -167,18 +197,21 @@
     --c-line-strong:   #48484a;
     --c-text:          #f5f5f7;
     --c-text-2:        #d1d1d6;
-    --c-text-3:        #a1a1a6;
+    --c-text-3:        #b8b8bc;   /* 深色下 8.6:1 */
     --c-text-4:        #98989d;   /* 深色下也留够对比度 */
-    --c-accent:        #0a84ff;
-    --c-accent-hover:  #3d9bff;
-    --c-accent-press:  #0071e3;
-    --c-accent-soft:   #12365c;
-    --c-accent-ring:   rgba(10, 132, 255, .45);
+    --c-accent:        #5D53F3;
+    --c-accent-hover:  #655CF0;
+    --c-accent-press:  #4B40F2;
+    --c-accent-soft:   #232047;
+    --c-accent-ring:   rgba(122, 114, 245, .45);
+    --c-accent-text:   #ADA8FF;
+    --c-selection:     rgba(122, 114, 245, .35);
     --c-success:       #30d158;
     --c-success-soft:  #12301c;
     --c-warn:          #ffd60a;
     --c-warn-soft:     #33290a;
-    --c-danger:        #ff453a;
+    --c-danger:        #c7362f;
+    --c-danger-text:   #FF9E95;
     --c-danger-soft:   #3a1a18;
     --sh-xs:  0 1px 2px rgba(0, 0, 0, .3);
     --sh-sm:  0 1px 3px rgba(0, 0, 0, .4), 0 1px 2px rgba(0, 0, 0, .3);
@@ -210,13 +243,32 @@
   --radius:       var(--r-lg);
 }
 
-/* ── 无障碍：尊重系统「减弱动态效果」─────────────────────────────────────── */
+/* ── 无障碍：尊重系统「减弱动态效果」───────────────────────────────────────
+   Apple 原文（accessibility）要求 App 响应「减弱动态效果」：
+     · 「减少自动播放的重复动画（包括视图缩放、尺寸缩放和边缘动态效果）」
+     · 「将 x、y 和 z 轴的过渡替换为渐变以避免动态效果」
+   所以这里把位移/缩放一律换掉、只保留淡入淡出，并摘掉滚动平滑。
+   注意：**不是**把时长压成 0 —— 完全无过渡会让状态变化变成硬跳，
+   反而更难跟上「是什么变了」。留着极短的透明度过渡更清楚。 */
 @media (prefers-reduced-motion: reduce) {
-  :root { --dur-fast: 0s; --dur-base: 0s; --dur-slow: 0s; }
+  :root {
+    --dur-instant: 1ms;
+    --dur-fast: 1ms;
+    --dur-base: 80ms;
+    --dur-slow: 80ms;
+  }
+  /* 反复播放的装饰动画（打字光标、扫光）直接停掉 */
+  .typing i, .gear-sweep { animation: none !important; opacity: .7; }
+  .gear-star { animation: none !important; }
+  /* 位移 / 缩放 / 旋转过渡一律换成透明度过渡（Apple 原文要求） */
   *, *::before, *::after {
-    animation-duration: .001ms !important;
-    animation-iteration-count: 1 !important;
-    transition-duration: .001ms !important;
+    transform: none !important;
     scroll-behavior: auto !important;
   }
+  .modal-box, .toast, .gear-menu, .settings-pane.active {
+    animation-name: fade-in !important;
+    transform: none !important;
+  }
 }
+
+@keyframes fade-in { from { opacity: 0 } to { opacity: 1 } }
